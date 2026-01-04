@@ -125,3 +125,4 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Historical Game Logs")
     st.dataframe(df)
+
