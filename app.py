@@ -7,10 +7,10 @@ import numpy as np
 st.set_page_config(
     page_title="Madden 26 GM War Room",
     layout="wide",
-    page_icon="🏈",
+    page_icon="football",
 )
 
-st.title("🏈 Madden NFL 26: Franchise Strategy Audit")
+st.title("Madden NFL 26: Franchise Strategy Audit")
 st.markdown(
     "Analysis updated for the **2026 Season**. "
     "Utilizing new **Coach DNA** and **Wear & Tear** metrics."
@@ -28,7 +28,7 @@ if uploaded_file:
             df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
-        st.sidebar.success("✅ Custom Data Loaded!")
+        st.sidebar.success("Custom Data Loaded!")
     except Exception as e:
         st.error(f"Error loading file: {e}")
         st.stop()
@@ -82,10 +82,9 @@ else:
         },
     ]
     df = pd.DataFrame(data)
-    st.sidebar.info("ℹ️ Using Demo Data")
+    st.sidebar.info("Using Demo Data")
 
 # --- DATA PRE-PROCESSING ---
-# Parse score string into numeric columns
 if "Score_Final" in df.columns:
     try:
         df[["Points_For", "Points_Against"]] = (
@@ -98,23 +97,20 @@ if "Score_Final" in df.columns:
     except Exception:
         st.warning("Could not parse Score_Final. Ensure format is '35-10'.")
 
-# Parse time of possession to minutes
 if "TOP" in df.columns:
     def parse_top(x):
         if isinstance(x, str) and ":" in x:
             mm, ss = x.split(":")
             return int(mm) + int(ss) / 60
         return x
-
     try:
         df["TOP_Mins"] = df["TOP"].apply(parse_top)
     except Exception:
         pass
 
-# --- 2. NEW FEATURE: WIN PROBABILITY PREDICTOR ---
+# --- 2. WIN PROBABILITY PREDICTOR ---
 st.sidebar.header("Coach DNA: Live Predictor")
-st.sidebar.info("Uses Madden 26's Real-Time Coaching AI logic.")
-
+st.sidebar.info("Uses Madden 26 Real-Time Coaching AI logic.")
 user_top = st.sidebar.slider(
     "Current Time of Possession (Mins)", 0, 45, 20
 )
@@ -122,17 +118,14 @@ user_fatigue = st.sidebar.slider(
     "Team Wear & Tear (%)", 0, 100, 15
 )
 
-# Simple heuristic model for demo
 win_prob = 1 / (1 + np.exp(-(0.1 * user_top - 0.05 * user_fatigue)))
-
 st.sidebar.metric(
     "Projected Win Probability", f"{win_prob * 100:.1f}%"
 )
 st.sidebar.progress(float(win_prob))
 
 # --- 3. DASHBOARD VISUALS ---
-st.markdown("### 📊 Franchise Key Performance Indicators (KPIs)")
-
+st.markdown("### Franchise Key Performance Indicators (KPIs)")
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
 avg_pts_for = df["Points_For"].mean() if "Points_For" in df.columns else 0
@@ -151,7 +144,6 @@ with kpi1:
         f"{avg_pts_for:.1f}",
         delta=f"{avg_pts_for - 24:.1f} vs League Avg",
     )
-
 with kpi2:
     st.metric(
         "Avg Points Allowed",
@@ -159,10 +151,8 @@ with kpi2:
         delta=f"{avg_pts_against - 21:.1f} vs League Avg",
         delta_color="inverse",
     )
-
 with kpi3:
     st.metric("Win Rate", f"{win_rate:.1f}%")
-
 with kpi4:
     st.metric("Games Tracked", len(df))
 
@@ -173,7 +163,6 @@ tabs = st.tabs(["Scheme Performance", "Wear & Tear Impact", "Raw Data"])
 # --- TAB 1: Scheme Performance ---
 with tabs[0]:
     col1, col2 = st.columns([2, 1])
-
     with col1:
         st.subheader("TOP vs Score Differential by Scheme")
         if "TOP_Mins" in df.columns and "Score_Diff" in df.columns:
@@ -190,7 +179,6 @@ with tabs[0]:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("Insufficient data for Strategy Map.")
-
     with col2:
         st.subheader("Scheme Efficiency")
         if "Playbook" in df.columns and "Points_For" in df.columns:
@@ -210,7 +198,7 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("The 'Wear & Tear' Cost")
     st.write(
-        "Madden 26's new system penalizes performance as fatigue rises."
+        "Madden 26 new system penalizes performance as fatigue rises."
     )
     if "Fatigue" in df.columns and "Points_For" in df.columns:
         fig_fatigue = px.bar(
@@ -229,4 +217,3 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Historical Game Logs")
     st.dataframe(df)
-Update app.py
