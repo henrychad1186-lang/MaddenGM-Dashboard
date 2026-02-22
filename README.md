@@ -1,43 +1,75 @@
 # MaddenGM-Dashboard
-Madden roster tool and AI assistant
+
+AI-powered Madden franchise management dashboard. Track game performance, analyze your coaching DNA, manage your roster, and make smarter trades.
 
 ## Quick Start
 
 ### Prerequisites
+
 - Python 3.9 or higher
 - pip (Python package manager)
-- Git
 
-### Installation & Launch (3 Simple Steps)
+### Installation & Launch
 
-#### Step 1: Clone the Repository
 ```bash
 git clone https://github.com/henrychad1186-lang/MaddenGM-Dashboard.git
 cd MaddenGM-Dashboard
-```
-
-#### Step 2: Install Dependencies
-```bash
 pip install -r requirements.txt
-```
-
-#### Step 3: Run the Dashboard
-```bash
 streamlit run app.py
 ```
 
-The app will automatically open in your browser at `http://localhost:8501`
+The app will open at `http://localhost:8501`
 
 ## Features
 
-- **Madden 26 GM War Room**: Complete franchise strategy audit dashboard
-- **Data Import**: Upload CSV/Excel game logs for analysis
-- **Coach DNA Predictor**: Real-time win probability calculations
-- **Performance Analytics**: KPIs, scheme analysis, and wear & tear impact
-- **Multi-Python Support**: Works with Python 3.9, 3.10, and 3.11
+| Tab | What It Does |
+|-----|-------------|
+| 📊 **Scheme Performance** | Strategy map, scheme head-to-head breakdown, season momentum curve |
+| 💪 **Wear & Tear** | Turnovers, defensive performance, rush/pass balance tracking |
+| 🏈 **Trade Machine** | AI trade finder, player radar charts, deal evaluator |
+| 🏛️ **Dynasty** | Season archiving, franchise timeline, career leaderboards |
+| 📋 **Roster Explorer** | Position grades, depth chart, cap overview, cut-or-keep analyzer |
+| 🏆 **Season Awards** | Auto-generated MVP, DPOY, ROY, Iron Man, Best Contract |
+| 🎯 **Coach DNA** | Coaching archetype radar chart computed from your play style |
+| 📈 **Progression** | Snapshot roster OVRs over time, track player development |
+| 🗂️ **Raw Data** | Full game log table |
+
+## Data Import
+
+Three ways to get your franchise data into the app:
+
+1. **📡 Google Sheet Sync** — Publish your Google Sheet as CSV, paste the URL in the sidebar
+2. **📤 File Upload** — Upload CSV or Excel files via the sidebar
+3. **📁 Local File** — Place `game_logs.csv` in the `data/` folder
+
+### Required Columns (game_logs.csv)
+
+| Column | Example | Required |
+|--------|---------|----------|
+| `Opponent` | DET | Yes |
+| `Points_For` | 35 | Yes |
+| `Points_Against` | 10 | Yes |
+| `Result` | W or WIN | Yes |
+| `TOP` | 27:45 | Optional |
+| `Playbook` | WestCoast Zone Run | Optional |
+| `Pass_Yards` | 285 | Optional |
+| `Rush_Yards` | 142 | Optional |
+| `Turnovers` | 1 | Optional |
+| `Takeaways` | 3 | Optional |
+| `Sacks_For` | 4 | Optional |
+
+### Roster Data (packers_roster.csv)
+
+Place your roster CSV in `data/packers_roster.csv` with columns: `Name, Pos, Age, OVR, SPD, ACC, AGI, COD, STR, AWR, Team, Dev, Savings, Penalty`
 
 ## GitHub Actions
 
-Automated Python linting and syntax validation on every push via GitHub Actions.
+Automated Python linting on every push. Check the [Actions tab](https://github.com/henrychad1186-lang/MaddenGM-Dashboard/actions) for build status.
 
-Check the [Actions tab](https://github.com/henrychad1186-lang/MaddenGM-Dashboard/actions) for build status.
+## Deploy
+
+Deploy for free on [Streamlit Community Cloud](https://share.streamlit.io):
+
+1. Push to GitHub
+2. Go to share.streamlit.io → New app
+3. Select this repo → Set main file to `app.py` → Deploy
