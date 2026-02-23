@@ -213,7 +213,10 @@ if sheet_url and sheet_url.strip():
     try:
         df = pd.read_csv(sheet_url.strip())
         # Cache locally so it works offline next time
-        df.to_csv(_GAME_LOGS_CSV, index=False)
+        try:
+            df.to_csv(_GAME_LOGS_CSV, index=False)
+        except OSError:
+            pass  # read-only filesystem (e.g. Streamlit Cloud)
         st.sidebar.success(f"📡 Live Sheet Synced — {len(df)} games!")
     except Exception as e:
         st.sidebar.warning(f"Sheet sync failed: {e}")

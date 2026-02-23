@@ -12,9 +12,12 @@ _PROG_CSV = os.path.join(_DATA_DIR, "progression_log.csv")
 def _ensure_log():
     """Create progression log CSV if it doesn't exist."""
     if not os.path.exists(_PROG_CSV):
-        pd.DataFrame(columns=["Name", "Pos", "Team", "Season", "Week", "OVR"]).to_csv(
-            _PROG_CSV, index=False
-        )
+        try:
+            pd.DataFrame(columns=["Name", "Pos", "Team", "Season", "Week", "OVR"]).to_csv(
+                _PROG_CSV, index=False
+            )
+        except OSError:
+            pass  # read-only filesystem (Streamlit Cloud)
 
 
 def snapshot_roster(team: str, season: int, week: int):
@@ -51,7 +54,10 @@ def snapshot_roster(team: str, season: int, week: int):
     else:
         combined = new_df
 
-    combined.to_csv(_PROG_CSV, index=False)
+    try:
+        combined.to_csv(_PROG_CSV, index=False)
+    except OSError:
+        return 0  # read-only filesystem
     return len(new_rows)
 
 
