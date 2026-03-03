@@ -39,10 +39,10 @@ def analyze_roster(team: str) -> list[dict]:
         verdict = "KEEP"
         reason = ""
 
-        # CUT candidates: low OVR + high dead cap + deep position
-        if ovr < 72 and penalty > 5 and pos_count >= 3:
+        # CUT candidates: low OVR + net cap savings from cutting + deep position
+        if ovr < 72 and savings > penalty and pos_count >= 3:
             verdict = "CUT"
-            reason = f"Low OVR ({ovr}), ${penalty:.1f}M dead cap, {pos_count} deep at {row['Pos']}"
+            reason = f"Low OVR ({ovr}), net ${savings - penalty:.1f}M cap relief, {pos_count} deep at {row['Pos']}"
         elif ovr < 68 and pos_count >= 2:
             verdict = "CUT"
             reason = f"Below replacement level ({ovr} OVR)"
@@ -62,7 +62,7 @@ def analyze_roster(team: str) -> list[dict]:
                 reason = "Core player — franchise cornerstone"
             elif ovr >= 78:
                 reason = "Solid contributor — good value"
-            elif age <= 24 and str(row.get("Dev", "")).lower() in ("superstar", "x-factor", "star"):
+            elif age <= 24 and str(row.get("Dev", "")).lower() in ("superstar", "superstar x", "star"):
                 reason = "Young dev talent — high ceiling"
             else:
                 reason = "Roster depth piece"
