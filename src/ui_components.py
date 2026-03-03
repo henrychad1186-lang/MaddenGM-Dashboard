@@ -26,7 +26,13 @@ COLORS = {
 
 def card(content_html: str, accent: str = COLORS["primary"],
          extra_style: str = "") -> None:
-    """Render a glassmorphism-style card with an accent left border."""
+    """Render a glassmorphism-style card with an accent left border.
+
+    Args:
+        content_html: Raw HTML string to render inside the card.
+        accent: CSS colour value used for the left border and shadow tint.
+        extra_style: Additional inline CSS appended to the card container.
+    """
     st.markdown(
         f"""
         <div style="
@@ -50,7 +56,16 @@ def card(content_html: str, accent: str = COLORS["primary"],
 
 def stat_card(label: str, value: str, delta: str = "",
               accent: str = COLORS["primary"]) -> None:
-    """Render a compact stat card with label, value, and optional delta."""
+    """Render a compact stat card with label, value, and optional delta.
+
+    Args:
+        label: Short description shown above the value (e.g. "Win Rate").
+        value: Primary metric value to display (e.g. "87.5%").
+        delta: Optional change indicator string.  Strings starting with '-'
+            are coloured red (decline); all others are coloured green (gain).
+            Example: "+3.2" or "-1.5".
+        accent: CSS colour value for the card's top accent border.
+    """
     delta_html = ""
     if delta:
         positive = not delta.startswith("-")
@@ -89,7 +104,12 @@ def stat_card(label: str, value: str, delta: str = "",
 # ── Badge / pill helpers ───────────────────────────────────────────────────────
 
 def badge(text: str, color: str = COLORS["primary"]) -> str:
-    """Return an inline HTML badge string (use inside f-strings)."""
+    """Return an inline HTML badge string (use inside f-strings).
+
+    Args:
+        text: Label text to display inside the badge.
+        color: CSS colour value for the badge border and text tint.
+    """
     return (
         f'<span style="background:{color}22; color:{color}; '
         f'border:1px solid {color}55; border-radius:6px; '
@@ -99,7 +119,12 @@ def badge(text: str, color: str = COLORS["primary"]) -> str:
 
 
 def pill(text: str, color: str = COLORS["primary"]) -> str:
-    """Return an inline HTML pill string (fully rounded)."""
+    """Return an inline HTML pill string (fully rounded).
+
+    Args:
+        text: Label text to display inside the pill.
+        color: CSS colour value for the pill border and text tint.
+    """
     return (
         f'<span style="background:{color}22; color:{color}; '
         f'border:1px solid {color}55; border-radius:999px; '
@@ -113,7 +138,15 @@ def pill(text: str, color: str = COLORS["primary"]) -> str:
 def progress_bar(value: float, max_value: float = 100.0,
                  color: str = COLORS["primary"],
                  height: int = 8, label: str = "") -> None:
-    """Render a custom styled progress bar (value 0–max_value)."""
+    """Render a custom styled progress bar (value 0–max_value).
+
+    Args:
+        value: Current progress value.
+        max_value: Maximum value (determines 100 % fill).  Defaults to 100.
+        color: CSS colour value used as the right-side gradient stop.
+        height: Bar height in pixels.
+        label: Optional text displayed above the bar.
+    """
     pct = min(max(value / max_value * 100, 0), 100)
     label_html = (
         f'<div style="color:{COLORS["text_muted"]}; font-size:0.78rem; '
@@ -153,9 +186,12 @@ def section_divider() -> None:
 # ── Status indicator ───────────────────────────────────────────────────────────
 
 def status_indicator(state: str, message: str) -> None:
-    """
-    Show a coloured status banner.
-    state: 'success' | 'warning' | 'error' | 'info'
+    """Show a colored status banner.
+
+    Args:
+        state: One of ``'success'``, ``'warning'``, ``'error'``, or
+            ``'info'``.  Controls the accent color and leading icon.
+        message: Text to display inside the banner.
     """
     _map = {
         "success": (COLORS["success"], "✅"),
@@ -180,7 +216,12 @@ def status_indicator(state: str, message: str) -> None:
 # ── Data table styling ─────────────────────────────────────────────────────────
 
 def styled_dataframe(df, height: int = 400) -> None:
-    """Display a dataframe with consistent dark-theme styling."""
+    """Display a dataframe with consistent dark-theme styling.
+
+    Args:
+        df: A ``pandas.DataFrame`` to render.
+        height: Table height in pixels.
+    """
     st.dataframe(
         df,
         use_container_width=True,

@@ -25,6 +25,14 @@ from src.roster import (
     TEAMS,
     POSITION_GROUPS,
 )
+from src.ui_components import section_divider, status_indicator, stat_card
+from src.file_handler import (
+    load_uploaded_file,
+    get_game_log_template,
+    get_roster_template,
+    validate_dataframe,
+    REQUIRED_GAME_LOG_COLS,
+)
 
 # --- CONFIGURATION ---
 st.set_page_config(
@@ -180,31 +188,150 @@ st.markdown("""
 }
 .dc-starter { border-left: 3px solid #00e676; }
 .dc-backup  { border-left: 3px solid #ffc107; opacity: 0.85; }
+
+/* ── Hero Banner ── */
+.hero-banner {
+    background: linear-gradient(135deg, rgba(99,102,241,0.18) 0%,
+        rgba(16,185,129,0.12) 50%, rgba(15,23,42,0.95) 100%);
+    border: 1px solid rgba(99,102,241,0.3);
+    border-radius: 20px;
+    padding: 2rem 2.5rem;
+    margin-bottom: 1.5rem;
+    position: relative;
+    overflow: hidden;
+}
+.hero-banner::before {
+    content: '';
+    position: absolute;
+    top: -60%; right: -10%;
+    width: 45%; height: 220%;
+    background: radial-gradient(ellipse,
+        rgba(99,102,241,0.12) 0%, transparent 70%);
+    pointer-events: none;
+}
+.hero-title {
+    font-size: 2rem;
+    font-weight: 900;
+    background: linear-gradient(90deg, #e0e7ff, #a5b4fc, #6ee7b7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin: 0 0 0.3rem 0;
+    line-height: 1.15;
+}
+.hero-subtitle {
+    color: #94a3b8;
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+/* ── KPI Row ── */
+.kpi-card {
+    background: linear-gradient(135deg, rgba(20,20,50,0.85),
+        rgba(40,40,70,0.7));
+    border: 1px solid rgba(99,102,241,0.2);
+    border-top: 3px solid var(--kpi-accent, #6366f1);
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    text-align: center;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(99,102,241,0.18);
+}
+.kpi-label {
+    color: #94a3b8;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+}
+.kpi-value {
+    color: #f1f5f9;
+    font-size: 1.7rem;
+    font-weight: 800;
+    line-height: 1.1;
+}
+.kpi-delta-pos { color: #10b981; font-size: 0.78rem; font-weight: 700; }
+.kpi-delta-neg { color: #ef4444; font-size: 0.78rem; font-weight: 700; }
+
+/* ── Sidebar Import Section ── */
+.sidebar-section-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #6366f1;
+    margin: 0.8rem 0 0.3rem 0;
+}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Madden NFL 26: Franchise Strategy Audit")
-st.markdown(
-    "Analysis updated for the **2028 Season**. "
-    "Utilizing new **Coach DNA** and **Wear & Tear** metrics."
-)
+st.markdown("""
+<div class="hero-banner">
+    <p class="hero-title">🏈 Madden NFL 26 — GM War Room</p>
+    <p class="hero-subtitle">
+        Franchise Strategy Audit &nbsp;·&nbsp; 2028 Season &nbsp;·&nbsp;
+        Coach DNA &amp; Wear &amp; Tear analytics
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
 # --- 1. DATA ENGINE ---
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
 
-st.sidebar.header("Data Import")
+st.sidebar.markdown("## 📥 Data Import")
+
+# ── Sample template downloads ──
+st.sidebar.markdown(
+    '<p class="sidebar-section-title">📄 Download Templates</p>',
+    unsafe_allow_html=True,
+)
+dl_c1, dl_c2 = st.sidebar.columns(2)
+with dl_c1:
+    st.download_button(
+        "Game Log",
+        data=get_game_log_template(),
+        file_name="game_log_template.csv",
+        mime="text/csv",
+        use_container_width=True,
+        help="Download a sample game log CSV to fill in",
+    )
+with dl_c2:
+    st.download_button(
+        "Roster",
+        data=get_roster_template(),
+        file_name="roster_template.csv",
+        mime="text/csv",
+        use_container_width=True,
+        help="Download a sample roster CSV to fill in",
+    )
 
 # ── Live Google Sheet Sync ──
+st.sidebar.markdown(
+    '<p class="sidebar-section-title">📡 Google Sheet Sync</p>',
+    unsafe_allow_html=True,
+)
 sheet_url = st.sidebar.text_input(
-    "📡 Google Sheet CSV URL",
+    "CSV URL",
     value="",
     placeholder="Paste your published CSV link",
     help="Publish your Google Sheet (File → Share → Publish to web → CSV) and paste the URL here.",
+    label_visibility="collapsed",
 )
 
+# ── File upload ──
+st.sidebar.markdown(
+    '<p class="sidebar-section-title">📤 Upload CSV / Excel</p>',
+    unsafe_allow_html=True,
+)
 uploaded_file = st.sidebar.file_uploader(
-    "Or upload CSV/Excel", type=["csv", "xlsx"]
+    "Upload game log or roster file",
+    type=["csv", "xlsx"],
+    label_visibility="collapsed",
+    help="Accepted formats: .csv, .xlsx",
 )
 
 df = None  # will be set by one of the branches
@@ -223,15 +350,17 @@ if sheet_url and sheet_url.strip():
         st.sidebar.info("Falling back to local data.")
 
 if df is None and uploaded_file:
-    try:
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
-        st.sidebar.success("Custom Data Loaded!")
-    except Exception as e:
-        st.error(f"Error loading file: {e}")
-        st.stop()
+    df, msg = load_uploaded_file(uploaded_file)
+    if df is None:
+        st.sidebar.error(f"❌ {msg}")
+    else:
+        valid, v_msg = validate_dataframe(df, REQUIRED_GAME_LOG_COLS)
+        if not valid:
+            st.sidebar.warning(
+                f"⚠️ Columns look unusual: {v_msg} "
+                "— loading anyway, some charts may be empty."
+            )
+        st.sidebar.success(msg)
 
 if df is None and os.path.exists(_GAME_LOGS_CSV):
     df = pd.read_csv(_GAME_LOGS_CSV)
@@ -312,21 +441,29 @@ st.sidebar.progress(float(win_prob))
 
 # --- EMPTY DATA GUARD ---
 if df.empty or len(df) == 0:
-    st.warning("🚀 **No game data loaded yet!**")
     st.markdown("""
-    Get started by importing your franchise data:
-    1. **Google Sheet Sync** — Paste a published CSV URL in the sidebar
-    2. **Upload CSV/Excel** — Use the sidebar file uploader
-    3. **Local CSV** — Place `game_logs.csv` in the `data/` folder
+    <div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.25);
+        border-radius:16px; padding:1.5rem 2rem; margin-bottom:1rem;">
+        <h3 style="color:#a5b4fc; margin:0 0 0.8rem 0;">🚀 No game data loaded yet</h3>
+        <p style="color:#94a3b8; margin:0 0 0.6rem 0;">
+            Get started by importing your franchise data from the sidebar:
+        </p>
+        <ul style="color:#cbd5e1; line-height:1.9; margin:0; padding-left:1.2rem;">
+            <li><strong style="color:#a5b4fc;">Google Sheet Sync</strong>
+                — Paste a published CSV URL</li>
+            <li><strong style="color:#a5b4fc;">Upload CSV/Excel</strong>
+                — Drag a file onto the sidebar uploader</li>
+            <li><strong style="color:#a5b4fc;">Local CSV</strong>
+                — Place <code>game_logs.csv</code> in the <code>data/</code> folder</li>
+        </ul>
+        <p style="color:#64748b; font-size:0.82rem; margin:0.8rem 0 0 0;">
+            💡 Use the <strong>Download Templates</strong> buttons in the sidebar
+            to get starter CSV files.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    The Roster Explorer, Season Awards, Coach DNA, and Progression tabs
-    will still work using your roster data.
-    """)
-
-# --- 3. DASHBOARD VISUALS ---
-st.markdown("### Franchise Key Performance Indicators (KPIs)")
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-
+# --- 3. DASHBOARD VISUALS --- KPI Row
 avg_pts_for = df["Points_For"].mean() if "Points_For" in df.columns else 0
 avg_pts_against = (
     df["Points_Against"].mean() if "Points_Against" in df.columns else 0
@@ -336,26 +473,48 @@ win_rate = (
     if "Result" in df.columns
     else 0
 )
+games_tracked = len(df)
 
-with kpi1:
-    st.metric(
-        "Avg Points Scored",
-        f"{avg_pts_for:.1f}",
-        delta=f"{avg_pts_for - 24:.1f} vs League Avg",
-    )
-with kpi2:
-    st.metric(
-        "Avg Points Allowed",
-        f"{avg_pts_against:.1f}",
-        delta=f"{avg_pts_against - 21:.1f} vs League Avg",
-        delta_color="inverse",
-    )
-with kpi3:
-    st.metric("Win Rate", f"{win_rate:.1f}%")
-with kpi4:
-    st.metric("Games Tracked", len(df))
+pts_delta = avg_pts_for - 24
+pts_delta_cls = "kpi-delta-pos" if pts_delta >= 0 else "kpi-delta-neg"
+pts_delta_arrow = "▲" if pts_delta >= 0 else "▼"
 
-st.divider()
+pa_delta = avg_pts_against - 21
+pa_delta_cls = "kpi-delta-pos" if pa_delta <= 0 else "kpi-delta-neg"
+pa_delta_arrow = "▼" if pa_delta <= 0 else "▲"
+
+wr_cls = "kpi-delta-pos" if win_rate >= 50 else "kpi-delta-neg"
+
+st.markdown(
+    f"""
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.8rem;
+        margin-bottom:1rem;">
+        <div class="kpi-card" style="--kpi-accent:#6366f1;">
+            <div class="kpi-label">Avg Points Scored</div>
+            <div class="kpi-value">{avg_pts_for:.1f}</div>
+            <div class="{pts_delta_cls}">{pts_delta_arrow} {abs(pts_delta):.1f} vs League Avg</div>
+        </div>
+        <div class="kpi-card" style="--kpi-accent:#ef4444;">
+            <div class="kpi-label">Avg Points Allowed</div>
+            <div class="kpi-value">{avg_pts_against:.1f}</div>
+            <div class="{pa_delta_cls}">{pa_delta_arrow} {abs(pa_delta):.1f} vs League Avg</div>
+        </div>
+        <div class="kpi-card" style="--kpi-accent:#10b981;">
+            <div class="kpi-label">Win Rate</div>
+            <div class="kpi-value">{win_rate:.1f}%</div>
+            <div class="{wr_cls}">{'Above' if win_rate >= 50 else 'Below'} .500</div>
+        </div>
+        <div class="kpi-card" style="--kpi-accent:#f59e0b;">
+            <div class="kpi-label">Games Tracked</div>
+            <div class="kpi-value">{games_tracked}</div>
+            <div style="color:#64748b; font-size:0.78rem;">franchise games</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+section_divider()
 
 # ──────────────────────────────────────────────────────
 # TABS — Original + New Features

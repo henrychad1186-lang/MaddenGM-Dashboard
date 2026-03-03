@@ -27,9 +27,13 @@ _ROSTER_TEMPLATE_COLS = [
 # ── Validation ────────────────────────────────────────────────────────────────
 
 def validate_file_type(filename: str) -> tuple[bool, str]:
-    """
-    Return (is_valid, message).
+    """Return (is_valid, message).
+
     Checks that the file extension is one of ACCEPTED_TYPES.
+
+    Args:
+        filename: The full filename string including extension
+            (e.g. ``"game_log.csv"`` or ``"roster.xlsx"``).
     """
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ACCEPTED_TYPES:
@@ -42,9 +46,14 @@ def validate_file_type(filename: str) -> tuple[bool, str]:
 
 def validate_dataframe(df: pd.DataFrame,
                        required_cols: set) -> tuple[bool, str]:
-    """
-    Return (is_valid, message).
-    Checks that all required columns are present.
+    """Return (is_valid, message).
+
+    Checks that all required columns are present and the frame is non-empty.
+
+    Args:
+        df: The ``pandas.DataFrame`` to validate.
+        required_cols: A ``set`` of column name strings that must be present
+            in *df* (e.g. ``{"Game_ID", "Team", "Opponent"}``).
     """
     missing = required_cols - set(df.columns)
     if missing:
@@ -60,9 +69,19 @@ def validate_dataframe(df: pd.DataFrame,
 # ── Loading ───────────────────────────────────────────────────────────────────
 
 def load_uploaded_file(uploaded_file) -> tuple[pd.DataFrame | None, str]:
-    """
-    Load an uploaded Streamlit file object into a DataFrame.
-    Returns (df, message).  df is None on failure.
+    """Load an uploaded Streamlit file object into a DataFrame.
+
+    Validates the file type, parses CSV or Excel content, and returns a
+    result tuple.
+
+    Args:
+        uploaded_file: A Streamlit ``UploadedFile`` object as returned by
+            ``st.file_uploader()``.  Must expose ``.name`` and be readable
+            as a file-like object.
+
+    Returns:
+        A tuple ``(df, message)`` where *df* is a ``pandas.DataFrame`` on
+        success or ``None`` on failure, and *message* describes the outcome.
     """
     valid, msg = validate_file_type(uploaded_file.name)
     if not valid:
@@ -85,7 +104,12 @@ def load_uploaded_file(uploaded_file) -> tuple[pd.DataFrame | None, str]:
 # ── Preview ───────────────────────────────────────────────────────────────────
 
 def get_preview(df: pd.DataFrame, n_rows: int = 5) -> pd.DataFrame:
-    """Return the first *n_rows* rows for a preview display."""
+    """Return the first *n_rows* rows for a preview display.
+
+    Args:
+        df: The source ``pandas.DataFrame``.
+        n_rows: Number of rows to include in the preview.  Defaults to 5.
+    """
     return df.head(n_rows)
 
 
