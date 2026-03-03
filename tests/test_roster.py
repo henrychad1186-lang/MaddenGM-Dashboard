@@ -1,13 +1,8 @@
 """Tests for roster module functionality."""
 
-import pytest
 from src.roster import (
     _normalize_pos,
-    _assign_group,
     _POS_ORDER,
-    ovr_color,
-    ovr_label,
-    _letter_grade,
 )
 
 

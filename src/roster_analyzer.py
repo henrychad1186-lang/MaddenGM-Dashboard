@@ -5,7 +5,6 @@ Combines trade value, cap savings/penalties, positional depth, age,
 and OVR to recommend: KEEP / TRADE / CUT for every player.
 """
 
-import pandas as pd
 from src.roster import get_roster, get_cap_summary
 from src.trade_engine import get_trade_value
 

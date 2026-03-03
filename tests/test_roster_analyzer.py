@@ -1,6 +1,5 @@
 """Tests for roster analyzer verdict logic."""
 
-import pytest
 from src.roster_analyzer import analyze_roster
 
 
