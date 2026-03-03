@@ -29,6 +29,7 @@ The app will open at `http://localhost:8501`
 | 🏈 **Trade Machine** | AI trade finder, player radar charts, deal evaluator |
 | 🏛️ **Dynasty** | Season archiving, franchise timeline, career leaderboards |
 | 📋 **Roster Explorer** | Position grades, depth chart, cap overview, cut-or-keep analyzer |
+| 🔭 **Scouting** | Browse free agents & draft prospects, position needs analysis |
 | 🏆 **Season Awards** | Auto-generated MVP, DPOY, ROY, Iron Man, Best Contract |
 | 🎯 **Coach DNA** | Coaching archetype radar chart computed from your play style |
 | 📈 **Progression** | Snapshot roster OVRs over time, track player development |

@@ -15,6 +15,7 @@ from src.trade_engine import (
 from src.dynasty import load_history, archive_season, get_career_leaders
 from src.roster_analyzer import analyze_roster
 from src.progression import snapshot_roster, get_progression, get_movers
+from src.scouting import get_prospects, get_position_needs, get_prospect_positions
 from src.roster import (
     get_roster,
     get_team_summary,
@@ -366,6 +367,7 @@ tabs = st.tabs([
     "🏈 Trade Machine",
     "🏛️ Dynasty",
     "📋 Roster Explorer",
+    "🔭 Scouting",
     "🏆 Season Awards",
     "🎯 Coach DNA",
     "📈 Progression",
@@ -1262,8 +1264,155 @@ with tabs[4]:
                 st.markdown("<div class='dc-card' style='color:#666;'>Empty</div>",
                             unsafe_allow_html=True)
 
-# ── TAB 6: Season Awards ──
+# ── TAB 6: Scouting ──
 with tabs[5]:
+    st.subheader("🔭 Free Agent & Draft Scout")
+    st.markdown(
+        "Browse available free agents and draft prospects. "
+        "Identify roster needs and target the best available upgrades."
+    )
+
+    # ── Filters ──
+    scout_col1, scout_col2, scout_col3 = st.columns([1, 1, 2])
+    with scout_col1:
+        prospect_type = st.selectbox(
+            "Prospect Type:",
+            ["All", "Free Agent", "Draft Prospect"],
+            key="scout_type_filter",
+        )
+    with scout_col2:
+        prospect_pos = st.selectbox(
+            "Position:",
+            get_prospect_positions(),
+            key="scout_pos_filter",
+        )
+    with scout_col3:
+        st.markdown("")  # spacer
+
+    prospects = get_prospects(prospect_pos, prospect_type)
+
+    if prospects.empty:
+        st.info("No prospects found for the selected filters.")
+    else:
+        # ── Prospect Board ──
+        st.markdown("#### 📋 Prospect Board")
+
+        dev_colors = {
+            "Superstar X": "#f59e0b", "Superstar": "#a78bfa",
+            "Star": "#60a5fa", "Normal": "#94a3b8",
+        }
+        type_icon = {"Free Agent": "🆓", "Draft Prospect": "🎓"}
+
+        board_cols = st.columns(3)
+        for i, (_, p) in enumerate(prospects.iterrows()):
+            ovr = int(p["OVR"])
+            oc = ovr_color(ovr)
+            dc = dev_colors.get(str(p.get("Dev", "Normal")), "#94a3b8")
+            icon = type_icon.get(str(p.get("Type", "")), "")
+            tv = p.get("Trade_Value", 0)
+            spd = int(p["SPD"]) if pd.notna(p.get("SPD")) else None
+            awr = int(p["AWR"]) if pd.notna(p.get("AWR")) else None
+
+            spd_pill = (f'<span style="background:rgba(99,102,241,0.2);'
+                        f'border:1px solid rgba(99,102,241,0.4);border-radius:12px;'
+                        f'padding:2px 8px;font-size:0.75rem;color:#c7d2fe;">'
+                        f'SPD {spd}</span>' if spd else "")
+            awr_pill = (f'<span style="background:rgba(16,185,129,0.2);'
+                        f'border:1px solid rgba(16,185,129,0.4);border-radius:12px;'
+                        f'padding:2px 8px;font-size:0.75rem;color:#6ee7b7;">'
+                        f'AWR {awr}</span>' if awr else "")
+
+            with board_cols[i % 3]:
+                st.markdown(f"""
+                <div style="background:linear-gradient(135deg,rgba(25,25,55,0.9),
+                    rgba(45,45,75,0.7));border:1px solid {oc}30;border-left:3px solid {oc};
+                    border-radius:12px;padding:0.8rem;margin-bottom:0.6rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-weight:800;color:{oc};font-size:1.2rem;">{ovr}</span>
+                        <span style="font-size:0.75rem;background:{dc}20;color:{dc};
+                            padding:2px 8px;border-radius:10px;border:1px solid {dc}50;">
+                            {p.get('Dev', 'Normal')}</span>
+                    </div>
+                    <div style="font-weight:700;color:white;margin:4px 0;">
+                        {icon} {p['Name']}</div>
+                    <div style="color:#94a3b8;font-size:0.82rem;">
+                        {p['Pos']} · Age {int(p['Age'])}</div>
+                    <div style="margin-top:6px;">{spd_pill} {awr_pill}</div>
+                    <div style="margin-top:6px;color:#64748b;font-size:0.78rem;">
+                        Trade Value: <span style="color:#6366f1;font-weight:700;">
+                        {tv:,.0f}</span></div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # ── Prospect Table ──
+        st.markdown("---")
+        st.markdown("#### 📊 Sortable Prospect Rankings")
+        _cols = ["Name", "Pos", "Age", "OVR", "Dev", "SPD", "AWR", "Trade_Value", "Type"]
+        display_cols = [c for c in _cols if c in prospects.columns]
+        tbl = prospects[display_cols].copy()
+        tbl.index = range(1, len(tbl) + 1)
+        tbl.index.name = "Rank"
+
+        def _style_ovr(val):
+            return f"color: {ovr_color(int(val))}; font-weight: bold"
+
+        def _style_tv(val):
+            if val >= 700:
+                return "color: #00e676; font-weight: bold"
+            elif val >= 500:
+                return "color: #2196f3; font-weight: bold"
+            elif val >= 300:
+                return "color: #ffc107; font-weight: bold"
+            return "color: #ff5252; font-weight: bold"
+
+        styled_tbl = tbl.style.map(_style_ovr, subset=["OVR"]).map(
+            _style_tv, subset=["Trade_Value"]
+        ).format({"Trade_Value": "{:.0f}"})
+        st.dataframe(styled_tbl, use_container_width=True, height=400)
+
+    # ── Position Needs Analysis ──
+    st.markdown("---")
+    st.markdown("#### 🎯 Position Needs Analysis")
+    st.caption(
+        f"Comparing {MY_TEAM}'s current depth to the best available prospect at each position."
+    )
+
+    needs = get_position_needs(MY_TEAM)
+    if needs:
+        priority_colors = {
+            "Urgent": "#ef4444", "Need": "#f59e0b",
+            "Monitor": "#6366f1", "Set": "#10b981",
+        }
+        need_cols = st.columns(4)
+        for i, n in enumerate(needs):
+            pc = priority_colors.get(n["priority"], "#aaa")
+            type_badge = "🆓" if n["best_prospect_type"] == "Free Agent" else "🎓"
+            with need_cols[i % 4]:
+                st.markdown(f"""
+                <div style="background:linear-gradient(135deg,rgba(25,25,55,0.9),
+                    rgba(45,45,75,0.7));border:1px solid {pc}30;border-left:4px solid {pc};
+                    border-radius:12px;padding:0.8rem;margin-bottom:0.6rem;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:900;color:white;">{n['pos']}</div>
+                    <div style="font-size:0.75rem;background:{pc}20;color:{pc};
+                        padding:2px 10px;border-radius:10px;border:1px solid {pc}50;
+                        display:inline-block;margin:4px 0;">{n['priority']}</div>
+                    <div style="color:#aaa;font-size:0.78rem;margin-top:4px;">
+                        Team: <span style="color:white;font-weight:700;">{n['grade']}
+                        ({n['team_avg_ovr']:.0f} avg)</span></div>
+                    <div style="color:#94a3b8;font-size:0.78rem;margin-top:2px;">
+                        Best avail: {type_badge}
+                        <span style="color:#c7d2fe;">{n['best_prospect_name']}</span>
+                        <span style="color:{ovr_color(n['best_prospect_ovr'])};">
+                        ({n['best_prospect_ovr']} OVR)</span></div>
+                    <div style="color:#64748b;font-size:0.72rem;margin-top:2px;">
+                        Potential +{n['upgrade']:.1f} OVR upgrade</div>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.info("No position needs data available.")
+
+# ── TAB 7: Season Awards ──
+with tabs[6]:
     st.subheader("🏆 Season Awards")
     st.markdown("Auto-generated awards based on your current roster data.")
 
@@ -1340,8 +1489,8 @@ with tabs[5]:
     else:
         st.info("No roster data available for awards.")
 
-# ── TAB 7: Coach DNA ──
-with tabs[6]:
+# ── TAB 8: Coach DNA ──
+with tabs[7]:
     st.subheader("🎯 Head Coach DNA Profile")
     st.markdown(
         "Your coaching identity, computed from your franchise game data.")
@@ -1438,8 +1587,8 @@ with tabs[6]:
         st.warning(
             "Need at least 3 games with Pass/Rush data for Coach DNA analysis.")
 
-# ── TAB 8: Progression Tracker ──
-with tabs[7]:
+# ── TAB 9: Progression Tracker ──
+with tabs[8]:
     st.subheader("📈 Player Progression Tracker")
     st.markdown("Snapshot your roster OVRs over time to track development.")
 
@@ -1474,13 +1623,14 @@ with tabs[7]:
                 """, unsafe_allow_html=True)
         with mov2:
             st.markdown("##### 📉 Biggest Declines")
-            for l in movers["losers"]:
+            for loser in movers["losers"]:
                 st.markdown(f"""
                 <div style="background: rgba(255,82,82,0.1); border-left: 3px solid #ff5252;
                     border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.4rem;">
-                    <span style="font-weight:700; color:white;">{l['Name']}</span>
-                    <span style="color:#aaa;"> {l['Pos']}</span>
-                    <span style="float:right; color:#ff5252; font-weight:800;">{l['Delta']} ({l['Start_OVR']}→{l['Current_OVR']})</span>
+                    <span style="font-weight:700; color:white;">{loser['Name']}</span>
+                    <span style="color:#aaa;"> {loser['Pos']}</span>
+                    <span style="float:right; color:#ff5252; font-weight:800;">
+                        {loser['Delta']} ({loser['Start_OVR']}→{loser['Current_OVR']})</span>
                 </div>
                 """, unsafe_allow_html=True)
     else:
@@ -1494,7 +1644,7 @@ with tabs[7]:
         st.dataframe(prog_log, hide_index=True,
                      use_container_width=True, height=300)
 
-# ── TAB 9: Raw Data ──
-with tabs[8]:
+# ── TAB 10: Raw Data ──
+with tabs[9]:
     st.subheader("Historical Game Logs")
     st.dataframe(df)
