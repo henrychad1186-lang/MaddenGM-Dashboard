@@ -74,8 +74,7 @@ class TestAnalyzeRosterIntegration:
         prev = -1
         for v in verdicts:
             curr = order[v["Verdict"]]
-            assert curr >= prev or curr == prev, (
+            assert curr >= prev, (
                 f"Sort order violated: {v['Verdict']} after previous order {prev}"
             )
-            if curr > prev:
-                prev = curr
+            prev = curr

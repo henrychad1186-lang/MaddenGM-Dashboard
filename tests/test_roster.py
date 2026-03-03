@@ -48,6 +48,6 @@ class TestPosOrder:
         assert "FB" in _POS_ORDER
 
     def test_all_standard_positions_present(self):
-        expected = {"QB", "HB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
-                    "EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"}
-        assert expected == set(_POS_ORDER)
+        expected = ["QB", "HB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
+                    "EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
+        assert list(_POS_ORDER) == expected
