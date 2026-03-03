@@ -396,7 +396,7 @@ with tabs[0]:
                 template="plotly_dark",
                 title="Madden 26 Strategy Map",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.warning("Insufficient data for Strategy Map.")
     with col2:
@@ -497,7 +497,7 @@ with tabs[0]:
         )
         fig_compare.update_layout(yaxis_title="Per Game Average",
                                   xaxis_title="")
-        st.plotly_chart(fig_compare, use_container_width=True)
+        st.plotly_chart(fig_compare, width="stretch")
 
         # GM Text Analysis
         st.markdown("#### 🧠 GM Analysis")
@@ -569,7 +569,7 @@ with tabs[0]:
             legend=dict(x=0.01, y=0.99),
             hovermode="x unified",
         )
-        st.plotly_chart(fig_momentum, use_container_width=True)
+        st.plotly_chart(fig_momentum, width="stretch")
 
         # Quick insights
         best_streak = 0
@@ -603,7 +603,7 @@ with tabs[1]:
             title="Fatigue Level vs Offensive Production",
             template="plotly_dark",
         )
-        st.plotly_chart(fig_fatigue, use_container_width=True)
+        st.plotly_chart(fig_fatigue, width="stretch")
 
     # Turnovers impact
     if "Turnovers" in df.columns and "Points_For" in df.columns:
@@ -618,7 +618,7 @@ with tabs[1]:
                 title="Turnovers vs Points Scored",
                 template="plotly_dark",
             )
-            st.plotly_chart(fig_to, use_container_width=True)
+            st.plotly_chart(fig_to, width="stretch")
         with wt2:
             if "Total_Yards_Allowed" in df.columns and "Takeaways" in df.columns:
                 fig_def = px.scatter(
@@ -629,7 +629,7 @@ with tabs[1]:
                     title="Yards Allowed vs Takeaways",
                     template="plotly_dark",
                 )
-                st.plotly_chart(fig_def, use_container_width=True)
+                st.plotly_chart(fig_def, width="stretch")
 
     # Rush vs Pass balance
     if "Pass_Yards" in df.columns and "Rush_Yards" in df.columns:
@@ -645,7 +645,7 @@ with tabs[1]:
         fig_bal.update_layout(legend_title="Yard Type",
                               yaxis_title="Yards",
                               xaxis_title="Opponent")
-        st.plotly_chart(fig_bal, use_container_width=True)
+        st.plotly_chart(fig_bal, width="stretch")
 
 # ── TAB 3: Trade Machine ──
 with tabs[2]:
@@ -770,7 +770,7 @@ with tabs[2]:
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
             )
-            st.plotly_chart(fig_radar, use_container_width=True)
+            st.plotly_chart(fig_radar, width="stretch")
         else:
             st.caption(
                 "📊 _Radar chart available when SPD/ACC/AGI data is filled in._")
@@ -843,7 +843,7 @@ with tabs[2]:
         ]
         st.markdown('</div>', unsafe_allow_html=True)
 
-        if st.button("📋 Evaluate Trade", key="eval_trade_btn", use_container_width=True):
+        if st.button("📋 Evaluate Trade", key="eval_trade_btn", width="stretch"):
             if not offered or not requested:
                 st.warning("Select at least one player on each side.")
             else:
@@ -887,7 +887,7 @@ with tabs[2]:
                                gridcolor='rgba(0,0,0,0)'),
                     bargap=0.35,
                 )
-                st.plotly_chart(fig_compare, use_container_width=True)
+                st.plotly_chart(fig_compare, width="stretch")
 
                 # Diff metric
                 diff = result['diff']
@@ -930,7 +930,7 @@ with tabs[3]:
         fig_timeline.update_traces(marker=dict(
             line=dict(width=2, color="white")))
         fig_timeline.update_layout(xaxis=dict(dtick=1))
-        st.plotly_chart(fig_timeline, use_container_width=True)
+        st.plotly_chart(fig_timeline, width="stretch")
 
         # Season detail cards
         st.markdown("#### 📜 The Chronicles")
@@ -970,7 +970,7 @@ with tabs[3]:
                 "Total Yds": "{:,.0f}",
             }),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     else:
         st.info("No career leaders data available yet.")
@@ -1076,7 +1076,7 @@ with tabs[4]:
             )
 
             st.dataframe(styled, hide_index=True,
-                         use_container_width=True, height=500)
+                         width="stretch", height=500)
 
             # Position breakdown chart
             st.markdown("#### Position Breakdown")
@@ -1091,7 +1091,7 @@ with tabs[4]:
                 color_continuous_scale="Viridis",
             )
             fig_pos.update_layout(showlegend=False)
-            st.plotly_chart(fig_pos, use_container_width=True)
+            st.plotly_chart(fig_pos, width="stretch")
 
     # ── Trade Value Leaderboard ──
     st.markdown("---")
@@ -1126,7 +1126,7 @@ with tabs[4]:
         styled_tv = tv_df.style.map(style_tv, subset=["Trade Value"]).map(
             style_ovr, subset=["OVR"]).format({"Trade Value": "{:.1f}"})
 
-        st.dataframe(styled_tv, use_container_width=True, height=450)
+        st.dataframe(styled_tv, width="stretch", height=450)
 
     # ── Position Group Grades ──
     st.markdown("---")
@@ -1173,7 +1173,7 @@ with tabs[4]:
                 lambda x: f"${x:.2f}M")
             dead_df["Savings"] = dead_df["Savings"].apply(
                 lambda x: f"${x:.2f}M")
-            st.dataframe(dead_df, hide_index=True, use_container_width=True)
+            st.dataframe(dead_df, hide_index=True, width="stretch")
         else:
             st.info("No dead cap obligations found.")
     else:
@@ -1368,7 +1368,7 @@ with tabs[5]:
         styled_tbl = tbl.style.map(_style_ovr, subset=["OVR"]).map(
             _style_tv, subset=["Trade_Value"]
         ).format({"Trade_Value": "{:.0f}"})
-        st.dataframe(styled_tbl, use_container_width=True, height=400)
+        st.dataframe(styled_tbl, width="stretch", height=400)
 
     # ── Position Needs Analysis ──
     st.markdown("---")
@@ -1569,7 +1569,7 @@ with tabs[7]:
             title="Coaching DNA Radar",
             margin=dict(t=60, b=30),
         )
-        st.plotly_chart(fig_dna, use_container_width=True)
+        st.plotly_chart(fig_dna, width="stretch")
 
         # Stat breakdown
         dna1, dna2, dna3, dna4, dna5 = st.columns(5)
@@ -1642,7 +1642,7 @@ with tabs[8]:
     if not prog_log.empty:
         st.markdown("##### 📚 Full Progression Log")
         st.dataframe(prog_log, hide_index=True,
-                     use_container_width=True, height=300)
+                     width="stretch", height=300)
 
 # ── TAB 10: Raw Data ──
 with tabs[9]:
