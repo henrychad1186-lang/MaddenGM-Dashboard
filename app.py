@@ -28,7 +28,7 @@ from src.roster import (
 
 # --- CONFIGURATION ---
 st.set_page_config(
-    page_title="Madden 27 GM War Room",
+    page_title="Madden 26 GM War Room",
     layout="wide",
     page_icon="🏈",
 )
@@ -183,10 +183,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Madden NFL 27: Franchise Strategy Audit")
+st.title("Madden NFL 26: Franchise Strategy Audit")
 st.markdown(
-    "UI optimized for **Madden 27** franchise workflows. "
-    "Featuring upgraded **Coach DNA** and **Wear & Tear** insights."
+    "Analysis updated for the **2028 Season**. "
+    "Utilizing new **Coach DNA** and **Wear & Tear** metrics."
 )
 
 # --- 1. DATA ENGINE ---
@@ -287,53 +287,6 @@ if "TOP" in df.columns:
     except Exception:
         pass
 
-# --- DASHBOARD QUICK FILTERS ---
-st.sidebar.header("Dashboard View")
-all_game_count = len(df)
-
-result_options = ["WIN", "LOSS"] if "Result" in df.columns else []
-selected_results = (
-    st.sidebar.multiselect("Results", result_options, default=result_options)
-    if result_options else []
-)
-
-playbook_options = (
-    sorted(df["Playbook"].dropna().unique().tolist())
-    if "Playbook" in df.columns else []
-)
-selected_playbooks = (
-    st.sidebar.multiselect(
-        "Playbooks",
-        playbook_options,
-        default=playbook_options,
-    )
-    if playbook_options else []
-)
-
-games_window = st.sidebar.selectbox(
-    "Games Window",
-    ["All Games", "Last 4", "Last 8", "Last 12"],
-    index=0,
-)
-
-filtered_df = df.copy()
-if "Result" in filtered_df.columns:
-    filtered_df = (
-        filtered_df[filtered_df["Result"].isin(selected_results)]
-        if selected_results else filtered_df.iloc[0:0]
-    )
-if "Playbook" in filtered_df.columns and playbook_options:
-    filtered_df = (
-        filtered_df[filtered_df["Playbook"].isin(selected_playbooks)]
-        if selected_playbooks else filtered_df.iloc[0:0]
-    )
-if games_window != "All Games" and not filtered_df.empty:
-    recent_games = int(games_window.split(" ")[1])
-    filtered_df = filtered_df.tail(recent_games)
-
-df = filtered_df
-st.sidebar.caption(f"Showing {len(df)} of {all_game_count} games")
-
 # --- GLOBAL TEAM SELECTOR ---
 st.sidebar.header("My Team")
 MY_TEAM = st.sidebar.selectbox(
@@ -343,7 +296,7 @@ MY_TEAM = st.sidebar.selectbox(
 
 # --- 2. WIN PROBABILITY PREDICTOR ---
 st.sidebar.header("Coach DNA: Live Predictor")
-st.sidebar.info("Uses Madden 27 Real-Time Coaching AI logic.")
+st.sidebar.info("Uses Madden 26 Real-Time Coaching AI logic.")
 user_top = st.sidebar.slider(
     "Current Time of Possession (Mins)", 0, 45, 20
 )
@@ -439,7 +392,7 @@ with tabs[0]:
                 hover_data=[
                     "Opponent"] if "Opponent" in scatter_df.columns else None,
                 template="plotly_dark",
-                title="Madden 27 Strategy Map",
+                title="Madden 26 Strategy Map",
             )
             st.plotly_chart(fig, use_container_width=True)
         else:
