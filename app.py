@@ -27,6 +27,48 @@ from src.roster import (
     POSITION_GROUPS,
 )
 
+
+# ── CACHING LAYER — avoid recomputation on every interaction ──
+@st.cache_data(ttl=300)
+def _cached_load_csv(path: str) -> pd.DataFrame:
+    """Cache CSV loading to avoid repeated disk I/O."""
+    return pd.read_csv(path)
+
+
+@st.cache_data
+def _cached_trade_values(roster_json: str) -> pd.DataFrame:
+    """Compute trade values for an entire roster once and cache."""
+    roster = pd.read_json(roster_json)
+    tv_rows = []
+    for _, p in roster.iterrows():
+        tv = get_trade_value(p.to_dict())
+        tv_rows.append({
+            "Name": p["Name"], "Pos": p["Pos"], "OVR": int(p["OVR"]),
+            "Age": int(p["Age"]), "Dev": p.get("Dev", "Normal"),
+            "Trade Value": tv,
+        })
+    return pd.DataFrame(tv_rows).sort_values(
+        "Trade Value", ascending=False).reset_index(drop=True)
+
+
+@st.cache_data
+def _cached_position_grades(team: str) -> list:
+    """Cache position grade computation."""
+    return get_position_grades(team)
+
+
+@st.cache_data
+def _cached_cap_summary(team: str) -> dict:
+    """Cache cap summary computation."""
+    return get_cap_summary(team)
+
+
+@st.cache_data
+def _cached_roster_analysis(team: str) -> list:
+    """Cache the Cut/Keep analysis."""
+    return analyze_roster(team)
+
+
 # --- CONFIGURATION ---
 st.set_page_config(
     page_title="Madden 26 GM War Room",
@@ -181,20 +223,119 @@ st.markdown("""
 }
 .dc-starter { border-left: 3px solid #00e676; }
 .dc-backup  { border-left: 3px solid #ffc107; opacity: 0.85; }
+
+/* ── Hero Banner ── */
+.hero-banner {
+    background: linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(16,185,129,0.08) 50%, rgba(99,102,241,0.1) 100%);
+    border: 1px solid rgba(99,102,241,0.25);
+    border-radius: 20px;
+    padding: 1.8rem 2.2rem;
+    margin-bottom: 1.5rem;
+    position: relative;
+    overflow: hidden;
+}
+.hero-banner::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    width: 300px; height: 100%;
+    background: radial-gradient(ellipse at right, rgba(16,185,129,0.08), transparent);
+    pointer-events: none;
+}
+.hero-title {
+    font-size: 2.4rem;
+    font-weight: 900;
+    background: linear-gradient(90deg, #6366f1, #a78bfa, #10b981);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin: 0;
+    line-height: 1.2;
+}
+.hero-subtitle {
+    color: #94a3b8;
+    font-size: 1rem;
+    margin-top: 0.4rem;
+}
+
+/* ── KPI Cards Row ── */
+.kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.kpi-card {
+    background: linear-gradient(135deg, rgba(20,20,50,0.85), rgba(40,40,70,0.65));
+    border: 1px solid rgba(99,102,241,0.2);
+    border-radius: 16px;
+    padding: 1.2rem 1rem;
+    text-align: center;
+    transition: transform 0.2s, border-color 0.2s;
+}
+.kpi-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(99,102,241,0.5);
+}
+.kpi-value {
+    font-size: 2rem;
+    font-weight: 900;
+    color: #f1f5f9;
+    margin: 0;
+}
+.kpi-label {
+    font-size: 0.8rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 4px;
+}
+.kpi-delta {
+    font-size: 0.78rem;
+    margin-top: 4px;
+    font-weight: 600;
+}
+.kpi-delta-pos { color: #10b981; }
+.kpi-delta-neg { color: #ef4444; }
+
+/* ── Footer ── */
+.app-footer {
+    text-align: center;
+    padding: 2rem 0 1rem;
+    margin-top: 3rem;
+    border-top: 1px solid rgba(99,102,241,0.15);
+    color: #475569;
+    font-size: 0.8rem;
+}
+.app-footer a { color: #6366f1; text-decoration: none; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Madden NFL 26: Franchise Strategy Audit")
-st.markdown(
-    "Analysis updated for the **2028 Season**. "
-    "Utilizing new **Coach DNA** and **Wear & Tear** metrics."
-)
+# ── Hero Banner ──
+st.markdown("""
+<div class="hero-banner">
+    <p class="hero-title">🏈 Madden NFL 26: GM War Room</p>
+    <p class="hero-subtitle">
+        Franchise Strategy Audit · 2028 Season ·
+        Powered by <strong>Coach DNA</strong> & <strong>Wear & Tear</strong> analytics
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
 # --- 1. DATA ENGINE ---
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
 
-st.sidebar.header("Data Import")
+st.sidebar.markdown("""
+<div style="text-align:center; padding: 0.5rem 0 1rem;">
+    <span style="font-size:1.4rem; font-weight:800;
+        background: linear-gradient(90deg, #6366f1, #10b981);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+        ⚙️ Control Panel
+    </span>
+</div>
+""", unsafe_allow_html=True)
+
+st.sidebar.header("📂 Data Import")
 
 # ── Live Google Sheet Sync ──
 sheet_url = st.sidebar.text_input(
@@ -289,15 +430,17 @@ if "TOP" in df.columns:
         pass
 
 # --- GLOBAL TEAM SELECTOR ---
-st.sidebar.header("My Team")
+st.sidebar.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+st.sidebar.header("🏟️ My Team")
 MY_TEAM = st.sidebar.selectbox(
     "Select Your Franchise Team", TEAMS, index=TEAMS.index("GB") if "GB" in TEAMS else 0,
     key="global_team_select",
 )
 
 # --- 2. WIN PROBABILITY PREDICTOR ---
-st.sidebar.header("Coach DNA: Live Predictor")
-st.sidebar.info("Uses Madden 26 Real-Time Coaching AI logic.")
+st.sidebar.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+st.sidebar.header("🧠 Coach DNA: Live Predictor")
+st.sidebar.caption("Uses Madden 26 Real-Time Coaching AI logic.")
 user_top = st.sidebar.slider(
     "Current Time of Possession (Mins)", 0, 45, 20
 )
@@ -325,9 +468,6 @@ if df.empty or len(df) == 0:
     """)
 
 # --- 3. DASHBOARD VISUALS ---
-st.markdown("### Franchise Key Performance Indicators (KPIs)")
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-
 avg_pts_for = df["Points_For"].mean() if "Points_For" in df.columns else 0
 avg_pts_against = (
     df["Points_Against"].mean() if "Points_Against" in df.columns else 0
@@ -338,25 +478,39 @@ win_rate = (
     else 0
 )
 
-with kpi1:
-    st.metric(
-        "Avg Points Scored",
-        f"{avg_pts_for:.1f}",
-        delta=f"{avg_pts_for - 24:.1f} vs League Avg",
-    )
-with kpi2:
-    st.metric(
-        "Avg Points Allowed",
-        f"{avg_pts_against:.1f}",
-        delta=f"{avg_pts_against - 21:.1f} vs League Avg",
-        delta_color="inverse",
-    )
-with kpi3:
-    st.metric("Win Rate", f"{win_rate:.1f}%")
-with kpi4:
-    st.metric("Games Tracked", len(df))
+# Enhanced KPI cards
+pf_delta = avg_pts_for - 24
+pa_delta = avg_pts_against - 21
+pf_delta_class = "kpi-delta-pos" if pf_delta > 0 else "kpi-delta-neg"
+pa_delta_class = "kpi-delta-pos" if pa_delta < 0 else "kpi-delta-neg"
 
-st.divider()
+st.markdown(f"""
+<div class="kpi-row">
+    <div class="kpi-card">
+        <p class="kpi-value">{avg_pts_for:.1f}</p>
+        <p class="kpi-label">Avg Points Scored</p>
+        <p class="kpi-delta {pf_delta_class}">{pf_delta:+.1f} vs League Avg</p>
+    </div>
+    <div class="kpi-card">
+        <p class="kpi-value">{avg_pts_against:.1f}</p>
+        <p class="kpi-label">Avg Points Allowed</p>
+        <p class="kpi-delta {pa_delta_class}">{pa_delta:+.1f} vs League Avg</p>
+    </div>
+    <div class="kpi-card">
+        <p class="kpi-value">{win_rate:.1f}%</p>
+        <p class="kpi-label">Win Rate</p>
+        <p class="kpi-delta {'kpi-delta-pos' if win_rate >= 50 else 'kpi-delta-neg'}">
+            {'▲ Winning' if win_rate >= 50 else '▼ Below .500'}</p>
+    </div>
+    <div class="kpi-card">
+        <p class="kpi-value">{len(df)}</p>
+        <p class="kpi-label">Games Tracked</p>
+        <p class="kpi-delta" style="color:#6366f1;">Season {2028}</p>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────
 # TABS — Original + New Features
@@ -1101,16 +1255,7 @@ with tabs[4]:
 
     all_gb = get_roster(selected_team, "All")
     if not all_gb.empty:
-        tv_rows = []
-        for _, p in all_gb.iterrows():
-            tv = get_trade_value(p.to_dict())
-            tv_rows.append({
-                "Name": p["Name"], "Pos": p["Pos"], "OVR": int(p["OVR"]),
-                "Age": int(p["Age"]), "Dev": p.get("Dev", "Normal"),
-                "Trade Value": tv,
-            })
-        tv_df = pd.DataFrame(tv_rows).sort_values(
-            "Trade Value", ascending=False).reset_index(drop=True)
+        tv_df = _cached_trade_values(all_gb.to_json())
         tv_df.index += 1
         tv_df.index.name = "Rank"
 
@@ -1131,7 +1276,7 @@ with tabs[4]:
     # ── Position Group Grades ──
     st.markdown("---")
     st.markdown("#### 📊 Position Group Grades")
-    grades = get_position_grades(selected_team)
+    grades = _cached_position_grades(selected_team)
     if grades:
         grade_cols = st.columns(4)
         for i, g in enumerate(grades):
@@ -1151,7 +1296,7 @@ with tabs[4]:
     # ── Cap Overview Widget ──
     st.markdown("---")
     st.markdown("#### 💰 Cap Overview")
-    cap = get_cap_summary(selected_team)
+    cap = _cached_cap_summary(selected_team)
     if cap["players"]:
         cap_c1, cap_c2, cap_c3 = st.columns(3)
         with cap_c1:
@@ -1182,7 +1327,7 @@ with tabs[4]:
     # ── Cut or Keep Analyzer ──
     st.markdown("---")
     st.markdown("#### ✂️ Cut or Keep Analyzer")
-    verdicts = analyze_roster(selected_team)
+    verdicts = _cached_roster_analysis(selected_team)
     if verdicts:
         # Summary counts
         n_keep = sum(1 for v in verdicts if v["Verdict"] == "KEEP")
@@ -1646,5 +1791,61 @@ with tabs[8]:
 
 # ── TAB 10: Raw Data ──
 with tabs[9]:
-    st.subheader("Historical Game Logs")
-    st.dataframe(df)
+    st.subheader("📄 Historical Game Logs")
+    st.markdown("Search, filter, and export your franchise game data.")
+
+    # Search and filter controls
+    raw_col1, raw_col2, raw_col3 = st.columns([2, 1, 1])
+    with raw_col1:
+        search_term = st.text_input(
+            "🔍 Search games",
+            placeholder="Search by opponent, playbook, etc.",
+            key="raw_search",
+        )
+    with raw_col2:
+        if "Result" in df.columns:
+            result_filter = st.selectbox(
+                "Result", ["All", "WIN", "LOSS"], key="raw_result_filter")
+        else:
+            result_filter = "All"
+    with raw_col3:
+        sort_col = st.selectbox(
+            "Sort by",
+            [c for c in df.columns if c not in ["_size"]],
+            key="raw_sort_col",
+        )
+
+    # Apply filters
+    display_df = df.copy()
+    if search_term:
+        mask = display_df.astype(str).apply(
+            lambda row: row.str.contains(search_term, case=False, na=False).any(),
+            axis=1,
+        )
+        display_df = display_df[mask]
+    if result_filter != "All" and "Result" in display_df.columns:
+        display_df = display_df[display_df["Result"] == result_filter]
+    if sort_col in display_df.columns:
+        display_df = display_df.sort_values(sort_col, ascending=False)
+
+    # Stats row
+    st.caption(f"Showing {len(display_df)} of {len(df)} games")
+    st.dataframe(display_df, hide_index=True, width="stretch", height=500)
+
+    # Download button
+    csv_data = display_df.to_csv(index=False)
+    st.download_button(
+        "⬇️ Export as CSV",
+        data=csv_data,
+        file_name="madden_game_logs.csv",
+        mime="text/csv",
+    )
+
+# ── Footer ──
+st.markdown("""
+<div class="app-footer">
+    <div class="section-glow" style="margin-bottom:1rem;"></div>
+    🏈 <strong>Madden GM War Room</strong> · Built for franchise dominance<br>
+    <span style="color:#64748b;">Powered by Streamlit · Plotly · Pandas</span>
+</div>
+""", unsafe_allow_html=True)
