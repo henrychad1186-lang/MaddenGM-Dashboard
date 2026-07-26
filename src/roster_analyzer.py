@@ -5,7 +5,6 @@ Combines trade value, cap savings/penalties, positional depth, age,
 and OVR to recommend: KEEP / TRADE / CUT for every player.
 """
 
-import pandas as pd
 from src.roster import get_roster, get_cap_summary
 from src.trade_engine import get_trade_value
 
@@ -18,22 +17,27 @@ def analyze_roster(team: str) -> list[dict]:
         Depth, Verdict, Verdict_Reason
     """
     roster = get_roster(team, "All")
+    if roster.empty:
+        return []
     cap = get_cap_summary(team)
     # Build cap lookup
     cap_lookup = {p["Name"]: p for p in cap["players"]}
+    # Precompute positional depth counts once instead of filtering per player.
+    pos_counts = roster["Pos"].value_counts().to_dict()
+    players = roster.to_dict("records")
+    trade_values = [get_trade_value(player) for player in players]
 
     results = []
-    for _, row in roster.iterrows():
-        player = row.to_dict()
-        tv = get_trade_value(player)
-        cap_info = cap_lookup.get(row["Name"], {"Savings": 0, "Penalty": 0})
+    for player, tv in zip(players, trade_values):
+        cap_info = cap_lookup.get(player["Name"], {"Savings": 0, "Penalty": 0})
         savings = cap_info["Savings"]
         penalty = cap_info["Penalty"]
 
         # Count positional depth (how many players at this position)
-        pos_count = len(roster[roster["Pos"] == row["Pos"]])
-        ovr = int(row["OVR"])
-        age = int(row["Age"])
+        pos = player["Pos"]
+        pos_count = int(pos_counts.get(pos, 0))
+        ovr = int(player["OVR"])
+        age = int(player["Age"])
 
         # ── Verdict Logic ──
         verdict = "KEEP"
@@ -42,7 +46,7 @@ def analyze_roster(team: str) -> list[dict]:
         # CUT candidates: low OVR + high dead cap + deep position
         if ovr < 72 and penalty > 5 and pos_count >= 3:
             verdict = "CUT"
-            reason = f"Low OVR ({ovr}), ${penalty:.1f}M dead cap, {pos_count} deep at {row['Pos']}"
+            reason = f"Low OVR ({ovr}), ${penalty:.1f}M dead cap, {pos_count} deep at {pos}"
         elif ovr < 68 and pos_count >= 2:
             verdict = "CUT"
             reason = f"Below replacement level ({ovr} OVR)"
@@ -62,17 +66,17 @@ def analyze_roster(team: str) -> list[dict]:
                 reason = "Core player — franchise cornerstone"
             elif ovr >= 78:
                 reason = "Solid contributor — good value"
-            elif age <= 24 and str(row.get("Dev", "")).lower() in ("superstar", "x-factor", "star"):
+            elif age <= 24 and str(player.get("Dev", "")).lower() in ("superstar", "x-factor", "star"):
                 reason = "Young dev talent — high ceiling"
             else:
                 reason = "Roster depth piece"
 
         results.append({
-            "Name": row["Name"],
-            "Pos": row["Pos"],
+            "Name": player["Name"],
+            "Pos": pos,
             "OVR": ovr,
             "Age": age,
-            "Dev": str(row.get("Dev", "Normal")),
+            "Dev": str(player.get("Dev", "Normal")),
             "Trade_Value": round(tv, 1),
             "Savings": savings,
             "Penalty": penalty,
