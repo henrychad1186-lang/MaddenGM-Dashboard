@@ -69,6 +69,17 @@ ALL_ROSTERS = _load_rosters()
 
 TEAMS = sorted(ALL_ROSTERS["Team"].unique().tolist())
 POSITION_GROUPS = ["All", "Offense", "Defense", "Special Teams"]
+VALID_POSITIONS = sorted(_OFFENSE_POS | _DEFENSE_POS | _ST_POS)
+
+
+def normalize_position(pos: str) -> str:
+    """Public wrapper around position normalization (e.g. REDG → EDGE)."""
+    return _normalize_pos(pos)
+
+
+def assign_group(pos: str) -> str:
+    """Public wrapper to classify a position into Offense/Defense/Special Teams."""
+    return _assign_group(pos)
 
 
 # ──────────────────────────────────────────────
@@ -148,6 +159,7 @@ def _grade_color(grade: str) -> str:
 # Position display order for depth chart / grading
 _POS_ORDER = ["QB", "HB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
               "EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
+POSITION_ORDER = _POS_ORDER
 
 
 def get_position_grades(team: str) -> list[dict]:

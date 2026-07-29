@@ -33,6 +33,7 @@ The app will open at `http://localhost:8501`
 | 🎯 **Coach DNA** | Coaching archetype radar chart computed from your play style |
 | 📈 **Progression** | Snapshot roster OVRs over time, track player development |
 | 🗂️ **Raw Data** | Full game log table |
+| 🤖 **AI GM Assistant** | Plug in a new draft pick, UDFA, or trade target and get an instant AI scouting report + roster injection |
 
 ## Data Import
 
@@ -61,6 +62,25 @@ Three ways to get your franchise data into the app:
 ### Roster Data (packers_roster.csv)
 
 Place your roster CSV in `data/packers_roster.csv` with columns: `Name, Pos, Age, OVR, SPD, ACC, AGI, COD, STR, AWR, Team, Dev, Savings, Penalty`
+
+## AI GM Assistant
+
+The **🤖 AI GM Assistant** tab lets you plug new players into your franchise
+on the fly — no CSV editing required:
+
+1. Fill out the scout form (name, position, age, OVR, attributes, dev trait, contract)
+2. Click **Scout & Add to Roster** — the player is validated and injected into the
+   live roster immediately, showing up across Roster Explorer, Cap Overview,
+   Cut/Keep Analyzer, the Depth Chart, and the Trade Machine
+3. Get an instant AI-generated scouting report: grade tier, strengths/weaknesses
+   from the attribute profile, positional-need context, trade value, and a
+   SIGN / DEVELOP / DEPTH / PASS verdict
+4. Check the **Positional Needs Board** to see which position groups are
+   Critical, Moderate, or Set before you scout your next target
+
+Additions live in memory for the running app session; check "Save to roster CSV"
+to persist them to `data/packers_roster.csv` (skipped automatically on
+read-only deployments like Streamlit Cloud).
 
 ## GitHub Actions
 
