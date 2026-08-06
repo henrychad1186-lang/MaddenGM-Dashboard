@@ -15,6 +15,7 @@ from src.trade_engine import (
 from src.dynasty import load_history, archive_season, get_career_leaders
 from src.roster_analyzer import analyze_roster
 from src import ai_gm
+from src import ai_client
 from src.progression import snapshot_roster, get_progression, get_movers
 from src.roster import (
     get_roster,
@@ -1576,6 +1577,19 @@ with tabs[9]:
                 unsafe_allow_html=True)
     st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
 
+    if ai_client.is_available():
+        st.markdown('<span style="background:#00e67620; color:#00e676; '
+                    'padding:3px 10px; border-radius:20px; font-size:0.78rem; '
+                    'font-weight:700; border:1px solid #00e67650;">'
+                    '🟢 Live Claude scouting narratives</span>',
+                    unsafe_allow_html=True)
+    else:
+        st.markdown('<span style="background:#ffffff10; color:#94a3b8; '
+                    'padding:3px 10px; border-radius:20px; font-size:0.78rem; '
+                    'font-weight:600; border:1px solid #ffffff20;">'
+                    '⚪ Heuristic scouting (set ANTHROPIC_API_KEY for live Claude writeups)</span>',
+                    unsafe_allow_html=True)
+
     if "ai_gm_log" not in st.session_state:
         st.session_state.ai_gm_log = []
     if "ai_gm_form_version" not in st.session_state:
@@ -1642,6 +1656,26 @@ with tabs[9]:
             else:
                 report = ai_gm.scout_player(
                     result["player"], MY_TEAM, AI_GM_EXTRA)
+
+                # The verdict/grade/trade-value above are always the
+                # deterministic heuristic output. If a Claude API key is
+                # configured, ask it to rewrite just the narrative blurb
+                # grounded in those already-computed facts; otherwise the
+                # templated heuristic blurb stands as-is.
+                if ai_client.is_available():
+                    with st.spinner("Consulting AI GM..."):
+                        ai_blurb = ai_client.generate_scouting_narrative(
+                            result["player"], report, MY_TEAM)
+                    if ai_blurb:
+                        report["blurb"] = ai_blurb
+                        report["ai_generated"] = True
+                    else:
+                        report["ai_generated"] = False
+                        st.warning(
+                            "Claude request failed — showing heuristic scouting report instead.")
+                else:
+                    report["ai_generated"] = False
+
                 st.session_state.ai_gm_players.append(result["player"])
                 st.session_state.ai_gm_log.insert(0, report)
                 if f_persist:
@@ -1676,6 +1710,9 @@ with tabs[9]:
         else:
             for idx, rep in enumerate(st.session_state.ai_gm_log):
                 vc = rep["verdict_color"]
+                source_badge = ('<span style="color:#a78bfa; font-size:0.7rem; font-weight:700;">✨ Claude</span>'
+                                if rep.get("ai_generated") else
+                                '<span style="color:#64748b; font-size:0.7rem;">⚙️ Heuristic</span>')
                 st.markdown(f"""
                 <div class="trade-card" style="border-left: 4px solid {vc};">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -1687,6 +1724,7 @@ with tabs[9]:
                             border-radius:8px; font-size:0.75rem; white-space:nowrap;">{rep['verdict']}</span>
                     </div>
                     <div style="color:#cbd5e1; font-size:0.85rem; margin-top:8px; line-height:1.5;">{rep['blurb']}</div>
+                    <div style="margin-top:6px;">{source_badge}</div>
                 </div>
                 """, unsafe_allow_html=True)
                 if st.button(f"🗑️ Remove {rep['Name']}", key=f"ai_gm_remove_{rep['_id']}"):
