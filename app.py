@@ -352,7 +352,11 @@ if "ai_gm_players" not in st.session_state:
 AI_GM_EXTRA = st.session_state.ai_gm_players
 
 if AI_GM_EXTRA:
-    _ai_gm_trade_df = pd.DataFrame(AI_GM_EXTRA).drop(columns=["_id"], errors="ignore")
+    # Keep _id (unlike the roster/cap paths, which never expose it to the
+    # UI) — the Trade Machine selects players by Name, and _id is the only
+    # thing that could disambiguate same-named players there later. It's
+    # an inert extra column for get_trade_value() and the CPU-side rows.
+    _ai_gm_trade_df = pd.DataFrame(AI_GM_EXTRA)
     EFFECTIVE_TRADE_ROSTERS = pd.concat(
         [TRADE_ROSTERS, _ai_gm_trade_df], ignore_index=True)
 else:

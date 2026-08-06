@@ -15,7 +15,7 @@ break because of this being unavailable.
 
 import os
 
-_MODEL = "claude-sonnet-5"
+_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
 _MAX_TOKENS = 300
 
 _client = None

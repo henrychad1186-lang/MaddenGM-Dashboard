@@ -99,6 +99,8 @@ To turn on live Claude scouting narratives, set an Anthropic API key:
 - **Local:** `export ANTHROPIC_API_KEY=sk-ant-...` before running `streamlit run app.py`
 - **Streamlit Cloud:** add `ANTHROPIC_API_KEY = "sk-ant-..."` under your app's Settings → Secrets (this writes to `.streamlit/secrets.toml`, which is gitignored — never commit a key to the repo)
 
+Optionally set `ANTHROPIC_MODEL` to override the model used (defaults to `claude-sonnet-5`) — useful if a model is deprecated or you want to trade quality for cost/latency without a code change.
+
 Without a key configured, the tab falls back to the heuristic-written
 blurb automatically — the grade/verdict/trade-value logic is unaffected
 either way. The AI GM Assistant tab shows a badge (🟢 Live Claude
