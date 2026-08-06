@@ -236,6 +236,25 @@ def get_trade_value(player: dict) -> float:
     return round(base, 1)
 
 
+_TRADE_VALUES_READY = False
+
+
+def _ensure_trade_values() -> None:
+    """Compute TradeVal once for loaded rosters to avoid repeated apply() work."""
+    global DEMO_ROSTERS, _TRADE_VALUES_READY
+    if _TRADE_VALUES_READY or DEMO_ROSTERS.empty:
+        _TRADE_VALUES_READY = True
+        return
+    if "TradeVal" in DEMO_ROSTERS.columns:
+        _TRADE_VALUES_READY = True
+        return
+    rosters = DEMO_ROSTERS.copy()
+    rosters["TradeVal"] = rosters.apply(
+        lambda row: get_trade_value(row.to_dict()), axis=1)
+    DEMO_ROSTERS = rosters
+    _TRADE_VALUES_READY = True
+
+
 def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
     """
     Scan CPU teams for potential trade partners interested in the offered player.
@@ -244,6 +263,7 @@ def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
     offered_pos = player.get("Pos", "WR")
     offered_ovr = player.get("OVR", 70)
     offered_scheme = player.get("Scheme", "")
+    _ensure_trade_values()
 
     partners = []
     for team in DEMO_ROSTERS["Team"].unique():
@@ -291,11 +311,7 @@ def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
         non_qb = team_roster[team_roster["Pos"] != "QB"].copy()
         if non_qb.empty:
             non_qb = team_roster.copy()
-        non_qb = non_qb.copy()
-        non_qb["TradeVal"] = non_qb.apply(
-            lambda r: get_trade_value(r.to_dict()), axis=1)
-        best_offer_row = non_qb.sort_values(
-            "TradeVal", ascending=False).iloc[0]
+        best_offer_row = non_qb.loc[non_qb["TradeVal"].idxmax()]
 
         partners.append({
             "team": team,
