@@ -195,6 +195,13 @@ st.markdown(
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
 
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _read_csv_cached(path_or_url: str) -> pd.DataFrame:
+    """Cache game log CSV reads to avoid repeated disk/network fetches on rerun."""
+    return pd.read_csv(path_or_url)
+
+
 st.sidebar.header("Data Import")
 
 # ── Live Google Sheet Sync ──
@@ -213,7 +220,7 @@ df = None  # will be set by one of the branches
 
 if sheet_url and sheet_url.strip():
     try:
-        df = pd.read_csv(sheet_url.strip())
+        df = _read_csv_cached(sheet_url.strip())
         # Cache locally so it works offline next time
         try:
             df.to_csv(_GAME_LOGS_CSV, index=False)
@@ -236,7 +243,7 @@ if df is None and uploaded_file:
         st.stop()
 
 if df is None and os.path.exists(_GAME_LOGS_CSV):
-    df = pd.read_csv(_GAME_LOGS_CSV)
+    df = _read_csv_cached(_GAME_LOGS_CSV)
     st.sidebar.success("📊 Local Franchise Data Loaded!")
 
 if df is None:
