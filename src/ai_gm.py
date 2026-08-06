@@ -3,23 +3,39 @@ AI GM Assistant — dynamically plug new players into the franchise and get
 an AI-generated scouting report on the spot.
 
 A rookie draft pick, UDFA signing, or trade acquisition can be entered
-through the UI; this module validates it, injects it into the live roster
-(`src.roster.ALL_ROSTERS`) and trade pool (`src.trade_engine.DEMO_ROSTERS`)
-so it immediately shows up across Roster Explorer, Cap Overview, Cut/Keep,
-the Depth Chart, and the Trade Machine, and returns a grade/strengths/
-weaknesses/verdict writeup driven by the same heuristics the rest of the
-app uses (trade value curve, positional need, dev traits, athleticism).
+through the UI. This module validates it and grades it against the team's
+existing roster (trade value curve, positional need, dev traits,
+athleticism) using the same heuristics the rest of the app uses.
+
+Additions are intentionally NOT written into the shared module-level
+`roster.ALL_ROSTERS` / `trade_engine.DEMO_ROSTERS` globals. Streamlit runs
+one process per deployment but one script rerun per browser session, so a
+shared-global mutation here would leak one visitor's roster edits into
+every other visitor's view (and race under concurrent submits). Instead,
+the caller (app.py) keeps the added players in `st.session_state` and
+passes them through as `extra_players` to every read — see
+`get_effective_roster`, `positional_needs`, and `scout_player` below, and
+the matching `extra_players` parameters added to `src.roster` /
+`src.roster_analyzer`.
 """
+
+import uuid
 
 import pandas as pd
 
 from src import roster as roster_mod
-from src import trade_engine as trade_mod
 from src.trade_engine import get_trade_value
 
 REQUIRED_FIELDS = ["Name", "Pos", "Age", "OVR"]
 ATTR_FIELDS = ["SPD", "ACC", "AGI", "COD", "STR", "AWR"]
 DEV_TRAITS = ["Normal", "Star", "Superstar", "Superstar X"]
+
+# Only positions the rest of the app can actually grade/chart — Position
+# Group Grades, the Positional Needs Board, and the Depth Chart all key off
+# src.roster.POSITION_ORDER, so restricting scoutable positions to that
+# same list keeps every view in sync instead of silently dropping players
+# added at positions (K, P, FB, generic OL/LB/S...) nothing else renders.
+SCOUTABLE_POSITIONS = roster_mod.POSITION_ORDER
 
 _ATTR_LABELS = {
     "SPD": "Speed", "ACC": "Acceleration", "AGI": "Agility",
@@ -41,7 +57,7 @@ def validate_player(player: dict) -> list[str]:
     pos = str(player.get("Pos", "")).strip().upper()
     if not pos:
         errors.append("Position is required.")
-    elif roster_mod.normalize_position(pos) not in roster_mod.VALID_POSITIONS:
+    elif roster_mod.normalize_position(pos) not in SCOUTABLE_POSITIONS:
         errors.append(f"Unrecognized position '{pos}'.")
 
     try:
@@ -72,8 +88,10 @@ def validate_player(player: dict) -> list[str]:
     return errors
 
 
-def _normalize(player: dict, team: str) -> dict:
+def normalize_player(player: dict, team: str) -> dict:
+    """Validate-adjacent normalization: coerce types, tag with a unique id."""
     normalized = {
+        "_id": uuid.uuid4().hex,
         "Name": str(player["Name"]).strip(),
         "Pos": roster_mod.normalize_position(str(player["Pos"])),
         "Age": int(player["Age"]),
@@ -82,6 +100,7 @@ def _normalize(player: dict, team: str) -> dict:
         "Dev": str(player.get("Dev") or "Normal"),
         "Savings": str(player.get("Savings") or "$0"),
         "Penalty": str(player.get("Penalty") or "$0"),
+        "Scheme": str(player.get("Scheme") or "WestCoast"),
     }
     for attr in ATTR_FIELDS:
         val = player.get(attr)
@@ -90,15 +109,64 @@ def _normalize(player: dict, team: str) -> dict:
     return normalized
 
 
+def add_player(player: dict, team: str) -> dict:
+    """Validate and normalize a player for a team.
+
+    Returns {"ok": bool, "errors": [...], "player": normalized dict|None}.
+    Does NOT mutate any shared roster — the caller is responsible for
+    appending the returned player dict to its own session-scoped list.
+    """
+    errors = validate_player(player)
+    if errors:
+        return {"ok": False, "errors": errors, "player": None}
+    return {"ok": True, "errors": [], "player": normalize_player(player, team)}
+
+
+# ──────────────────────────────────────────────
+# SESSION-SCOPED LIST HELPERS
+# ──────────────────────────────────────────────
+
+def remove_from_list(players: list[dict], player_id: str) -> list[dict]:
+    """Return `players` with the entry matching `_id` removed.
+
+    Matches on the unique id assigned in `normalize_player`, never on
+    Name — two added players (or an added player and a real roster
+    player) can legitimately share a name.
+    """
+    return [p for p in players if p.get("_id") != player_id]
+
+
+def get_effective_roster(team: str, group: str = "All", extra_players: "list[dict] | None" = None) -> pd.DataFrame:
+    """Thin pass-through to roster.get_roster with session-scoped extras."""
+    return roster_mod.get_roster(team, group, extra_players)
+
+
+def persist_roster(team: str, extra_players: "list[dict] | None" = None) -> bool:
+    """Best-effort write of the team's full roster (base + session extras)
+    back to data/packers_roster.csv. Returns True on success.
+
+    Skipped silently on read-only filesystems (e.g. Streamlit Cloud) —
+    the additions still live for the rest of this browser session either
+    way since they're tracked in st.session_state, not this file.
+    """
+    try:
+        df = roster_mod.get_roster(team, "All", extra_players)
+        df = df.drop(columns=["Group", "_id"], errors="ignore")
+        df.to_csv(roster_mod._ROSTER_CSV, index=False)
+        return True
+    except OSError:
+        return False
+
+
 # ──────────────────────────────────────────────
 # POSITIONAL NEEDS
 # ──────────────────────────────────────────────
 
-def positional_needs(team: str) -> list[dict]:
+def positional_needs(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Grade every starting position by depth + average OVR for a team."""
-    df = roster_mod.get_roster(team, "All")
+    df = roster_mod.get_roster(team, "All", extra_players)
     needs = []
-    for pos in roster_mod.POSITION_ORDER:
+    for pos in SCOUTABLE_POSITIONS:
         pos_df = df[df["Pos"] == pos]
         count = len(pos_df)
         avg_ovr = round(pos_df["OVR"].mean(), 1) if count else 0.0
@@ -152,11 +220,12 @@ def _write_blurb(name, pos, tier, age, dev, strengths, weaknesses, need, verdict
     return " ".join([s1, s2, s3, s4, s5])
 
 
-def scout_player(player: dict, team: str) -> dict:
+def scout_player(player: dict, team: str, extra_players: "list[dict] | None" = None) -> dict:
     """Generate an AI scouting report for a player against a team's roster.
 
-    `player` is not required to already be on the roster — this can be
-    called on a prospective add before it's committed.
+    `extra_players` should be the session's already-added players (NOT
+    including `player` itself) so positional need reflects the roster the
+    player is actually walking into.
     """
     pos = roster_mod.normalize_position(str(player.get("Pos", "")))
     ovr = int(player.get("OVR", 0))
@@ -165,7 +234,7 @@ def scout_player(player: dict, team: str) -> dict:
 
     trade_value = get_trade_value({**player, "Pos": pos})
 
-    needs = {n["pos"]: n for n in positional_needs(team)}
+    needs = {n["pos"]: n for n in positional_needs(team, extra_players)}
     need = needs.get(pos, {"pos": pos, "count": 0, "avg_ovr": 0.0,
                            "level": "Moderate", "color": "#ffc107"})
 
@@ -206,6 +275,7 @@ def scout_player(player: dict, team: str) -> dict:
                          strengths, weaknesses, need, verdict, reason, trade_value)
 
     return {
+        "_id": player.get("_id"),
         "Name": player.get("Name", "Unnamed"),
         "Pos": pos, "OVR": ovr, "Age": age, "Dev": dev,
         "tier": tier, "trade_value": trade_value,
@@ -215,57 +285,3 @@ def scout_player(player: dict, team: str) -> dict:
         "verdict": verdict, "verdict_color": verdict_color, "reason": reason,
         "blurb": blurb,
     }
-
-
-# ──────────────────────────────────────────────
-# DYNAMIC ROSTER INJECTION
-# ──────────────────────────────────────────────
-
-def add_player(player: dict, team: str, persist: bool = False) -> dict:
-    """Validate a player and inject them into the live roster + trade pool.
-
-    Returns {"ok": bool, "errors": [...], "player": normalized dict|None}.
-    On success, `src.roster.ALL_ROSTERS` and `src.trade_engine.DEMO_ROSTERS`
-    are updated in place so every tab that reads them picks the player up
-    on the next Streamlit rerun. When `persist` is True, the team's roster
-    is also written back to `data/packers_roster.csv` (best-effort — silently
-    skipped on read-only filesystems like Streamlit Cloud).
-    """
-    errors = validate_player(player)
-    if errors:
-        return {"ok": False, "errors": errors, "player": None}
-
-    normalized = _normalize(player, team)
-
-    roster_row = dict(normalized)
-    roster_row["Group"] = roster_mod.assign_group(normalized["Pos"])
-    roster_mod.ALL_ROSTERS = pd.concat(
-        [roster_mod.ALL_ROSTERS, pd.DataFrame([roster_row])], ignore_index=True)
-
-    trade_row = dict(normalized)
-    trade_row["Scheme"] = trade_mod.DEMO_ROSTERS.loc[
-        trade_mod.DEMO_ROSTERS["Team"] == team, "Scheme"
-    ].iloc[0] if (trade_mod.DEMO_ROSTERS["Team"] == team).any() else "WestCoast"
-    trade_mod.DEMO_ROSTERS = pd.concat(
-        [trade_mod.DEMO_ROSTERS, pd.DataFrame([trade_row])], ignore_index=True)
-
-    if persist:
-        try:
-            roster_mod.ALL_ROSTERS.drop(columns=["Group"], errors="ignore").to_csv(
-                roster_mod._ROSTER_CSV, index=False)
-        except OSError:
-            pass  # read-only filesystem — player still lives in memory
-
-    return {"ok": True, "errors": [], "player": normalized}
-
-
-def remove_player(name: str, team: str) -> bool:
-    """Remove a player by exact name from the live roster + trade pool."""
-    before = len(roster_mod.ALL_ROSTERS)
-    roster_mod.ALL_ROSTERS = roster_mod.ALL_ROSTERS[
-        ~((roster_mod.ALL_ROSTERS["Team"] == team) & (roster_mod.ALL_ROSTERS["Name"] == name))
-    ].reset_index(drop=True)
-    trade_mod.DEMO_ROSTERS = trade_mod.DEMO_ROSTERS[
-        ~((trade_mod.DEMO_ROSTERS["Team"] == team) & (trade_mod.DEMO_ROSTERS["Name"] == name))
-    ].reset_index(drop=True)
-    return len(roster_mod.ALL_ROSTERS) < before

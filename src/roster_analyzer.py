@@ -5,28 +5,48 @@ Combines trade value, cap savings/penalties, positional depth, age,
 and OVR to recommend: KEEP / TRADE / CUT for every player.
 """
 
+from collections import defaultdict
+
 import pandas as pd
 from src.roster import get_roster, get_cap_summary
 from src.trade_engine import get_trade_value
 
 
-def analyze_roster(team: str) -> list[dict]:
+def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Return a list of player analysis dicts with verdicts.
 
     Each dict contains:
         Name, Pos, OVR, Age, Dev, Trade_Value, Savings, Penalty,
         Depth, Verdict, Verdict_Reason
     """
-    roster = get_roster(team, "All")
-    cap = get_cap_summary(team)
-    # Build cap lookup
-    cap_lookup = {p["Name"]: p for p in cap["players"]}
+    roster = get_roster(team, "All", extra_players)
+    cap = get_cap_summary(team, extra_players)
+
+    # cap["players"] is sorted by Penalty and can't be zipped positionally
+    # against `roster`. A plain {Name: entry} dict would let same-named
+    # players (AI GM explicitly allows duplicate names) silently overwrite
+    # each other's cap lookup. Instead keep a per-name queue and consume
+    # the best Pos+OVR match for each roster row, so duplicates each get
+    # paired with their own cap entry instead of all sharing the last one.
+    cap_by_name = defaultdict(list)
+    for p in cap["players"]:
+        cap_by_name[p["Name"]].append(p)
 
     results = []
     for _, row in roster.iterrows():
         player = row.to_dict()
         tv = get_trade_value(player)
-        cap_info = cap_lookup.get(row["Name"], {"Savings": 0, "Penalty": 0})
+
+        candidates = cap_by_name.get(row["Name"], [])
+        if candidates:
+            match_idx = next(
+                (i for i, c in enumerate(candidates)
+                 if c["Pos"] == row["Pos"] and c["OVR"] == int(row["OVR"])),
+                0,
+            )
+            cap_info = candidates.pop(match_idx)
+        else:
+            cap_info = {"Savings": 0, "Penalty": 0}
         savings = cap_info["Savings"]
         penalty = cap_info["Penalty"]
 
