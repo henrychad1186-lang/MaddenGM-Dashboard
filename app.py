@@ -1503,13 +1503,13 @@ with tabs[7]:
                 """, unsafe_allow_html=True)
         with mov2:
             st.markdown("##### 📉 Biggest Declines")
-            for l in movers["losers"]:
+            for loser in movers["losers"]:
                 st.markdown(f"""
                 <div style="background: rgba(255,82,82,0.1); border-left: 3px solid #ff5252;
                     border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.4rem;">
-                    <span style="font-weight:700; color:white;">{l['Name']}</span>
-                    <span style="color:#aaa;"> {l['Pos']}</span>
-                    <span style="float:right; color:#ff5252; font-weight:800;">{l['Delta']} ({l['Start_OVR']}→{l['Current_OVR']})</span>
+                    <span style="font-weight:700; color:white;">{loser['Name']}</span>
+                    <span style="color:#aaa;"> {loser['Pos']}</span>
+                    <span style="float:right; color:#ff5252; font-weight:800;">{loser['Delta']} ({loser['Start_OVR']}→{loser['Current_OVR']})</span>
                 </div>
                 """, unsafe_allow_html=True)
     else:

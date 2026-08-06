@@ -29,5 +29,8 @@ desktop.ini
 # Streamlit
 .streamlit/secrets.toml
 
+# Testing
+.pytest_cache/
+
 # Secrets
 .env

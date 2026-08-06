@@ -29,10 +29,12 @@ def _assign_group(pos: str) -> str:
 
 
 def _normalize_pos(pos: str) -> str:
-    """Normalize position names (e.g., REDG/LEDG → EDGE)."""
+    """Normalize position names (e.g., REDG/LEDG → EDGE, LOLB/ROLB → OLB)."""
     pos_upper = pos.upper().strip()
     if pos_upper in ("REDG", "LEDG"):
         return "EDGE"
+    if pos_upper in ("LOLB", "ROLB"):
+        return "OLB"
     return pos_upper
 
 
@@ -175,7 +177,7 @@ def _grade_color(grade: str) -> str:
 
 
 # Position display order for depth chart / grading
-_POS_ORDER = ["QB", "HB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
+_POS_ORDER = ["QB", "HB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
               "EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
 POSITION_ORDER = _POS_ORDER
 
