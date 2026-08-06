@@ -78,9 +78,11 @@ on the fly — no CSV editing required:
 4. Check the **Positional Needs Board** to see which position groups are
    Critical, Moderate, or Set before you scout your next target
 
-Additions live in memory for the running app session; check "Save to roster CSV"
-to persist them to `data/packers_roster.csv` (skipped automatically on
-read-only deployments like Streamlit Cloud).
+Additions are scoped to your browser session (they won't leak into or get
+overwritten by other visitors on a shared deployment) and reset if the
+session ends. Check "Save to roster CSV" to persist them to
+`data/packers_roster.csv` (skipped automatically on read-only deployments
+like Streamlit Cloud).
 
 ## GitHub Actions
 

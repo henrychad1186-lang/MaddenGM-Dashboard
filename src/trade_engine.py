@@ -210,9 +210,17 @@ def get_trade_value(player: dict) -> float:
 
     # ── PHYSICAL ATTRIBUTES BONUS ──
     # SPD, ACC, AGI complement OVR — elite athletes are worth more
-    spd = player.get("SPD") or player.get("Speed")
-    acc = player.get("ACC") or player.get("Acceleration")
-    agi = player.get("AGI") or player.get("Agility")
+    # (explicit None checks — a real rating of 0 must still count, not
+    # get treated as "missing" and silently excluded)
+    spd = player.get("SPD")
+    if spd is None:
+        spd = player.get("Speed")
+    acc = player.get("ACC")
+    if acc is None:
+        acc = player.get("Acceleration")
+    agi = player.get("AGI")
+    if agi is None:
+        agi = player.get("Agility")
 
     phys_ratings = [r for r in [spd, acc, agi]
                     if r is not None and not (isinstance(r, float) and math.isnan(r))]

@@ -10,15 +10,15 @@ from src.roster import get_roster, get_cap_summary
 from src.trade_engine import get_trade_value
 
 
-def analyze_roster(team: str) -> list[dict]:
+def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Return a list of player analysis dicts with verdicts.
 
     Each dict contains:
         Name, Pos, OVR, Age, Dev, Trade_Value, Savings, Penalty,
         Depth, Verdict, Verdict_Reason
     """
-    roster = get_roster(team, "All")
-    cap = get_cap_summary(team)
+    roster = get_roster(team, "All", extra_players)
+    cap = get_cap_summary(team, extra_players)
     # Build cap lookup
     cap_lookup = {p["Name"]: p for p in cap["players"]}
 
