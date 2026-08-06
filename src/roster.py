@@ -71,23 +71,52 @@ ALL_ROSTERS = _load_rosters()
 
 TEAMS = sorted(ALL_ROSTERS["Team"].unique().tolist())
 POSITION_GROUPS = ["All", "Offense", "Defense", "Special Teams"]
+VALID_POSITIONS = sorted(_OFFENSE_POS | _DEFENSE_POS | _ST_POS)
+
+
+def normalize_position(pos: str) -> str:
+    """Public wrapper around position normalization (e.g. REDG → EDGE)."""
+    return _normalize_pos(pos)
+
+
+def assign_group(pos: str) -> str:
+    """Public wrapper to classify a position into Offense/Defense/Special Teams."""
+    return _assign_group(pos)
+
+
+def _effective_all(extra_players: "list[dict] | None" = None) -> pd.DataFrame:
+    """ALL_ROSTERS plus optional session-scoped extra players.
+
+    `extra_players` is never merged into the module-level ALL_ROSTERS
+    global — callers (e.g. the AI GM Assistant) pass their own
+    per-session list so additions stay isolated per browser session
+    instead of leaking across every visitor sharing this process.
+    """
+    if not extra_players:
+        return ALL_ROSTERS
+    extra_df = pd.DataFrame(extra_players)
+    if "Group" not in extra_df.columns:
+        extra_df["Group"] = extra_df["Pos"].apply(_assign_group)
+    return pd.concat([ALL_ROSTERS, extra_df], ignore_index=True)
 
 
 # ──────────────────────────────────────────────
 # CORE FUNCTIONS
 # ──────────────────────────────────────────────
 
-def get_roster(team: str, group: str = "All") -> pd.DataFrame:
+def get_roster(team: str, group: str = "All", extra_players: "list[dict] | None" = None) -> pd.DataFrame:
     """Return the roster DataFrame for a team, optionally filtered by group."""
-    df = ALL_ROSTERS[ALL_ROSTERS["Team"] == team].copy()
+    df = _effective_all(extra_players)
+    df = df[df["Team"] == team].copy()
     if group and group != "All":
         df = df[df["Group"] == group]
     return df.reset_index(drop=True)
 
 
-def get_team_summary(team: str) -> dict:
+def get_team_summary(team: str, extra_players: "list[dict] | None" = None) -> dict:
     """Return summary stats for a team's roster."""
-    df = ALL_ROSTERS[ALL_ROSTERS["Team"] == team]
+    df = _effective_all(extra_players)
+    df = df[df["Team"] == team]
     if df.empty:
         return {"count": 0, "avg_ovr": 0, "avg_age": 0, "best_player": "N/A"}
     return {
@@ -150,14 +179,16 @@ def _grade_color(grade: str) -> str:
 # Position display order for depth chart / grading
 _POS_ORDER = ["QB", "HB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
               "EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
+POSITION_ORDER = _POS_ORDER
 
 
-def get_position_grades(team: str) -> list[dict]:
+def get_position_grades(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Return letter grades per position group for a team.
 
     Returns list of dicts: {pos, count, avg_ovr, grade, color}.
     """
-    df = ALL_ROSTERS[ALL_ROSTERS["Team"] == team]
+    df = _effective_all(extra_players)
+    df = df[df["Team"] == team]
     if df.empty:
         return []
     grades = []
@@ -194,13 +225,14 @@ def _parse_sal(val) -> float:
         return 0.0
 
 
-def get_cap_summary(team: str) -> dict:
+def get_cap_summary(team: str, extra_players: "list[dict] | None" = None) -> dict:
     """Return cap summary for a team.
 
     Returns dict with total_savings, total_penalty, and a list of
     per-player dicts sorted by penalty descending.
     """
-    df = ALL_ROSTERS[ALL_ROSTERS["Team"] == team].copy()
+    df = _effective_all(extra_players)
+    df = df[df["Team"] == team].copy()
     if df.empty or "Savings" not in df.columns:
         return {"total_savings": 0, "total_penalty": 0, "players": []}
 

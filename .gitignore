@@ -31,3 +31,6 @@ desktop.ini
 
 # Testing
 .pytest_cache/
+
+# Secrets
+.env

@@ -14,6 +14,8 @@ from src.trade_engine import (
 )
 from src.dynasty import load_history, archive_season, get_career_leaders
 from src.roster_analyzer import analyze_roster
+from src import ai_gm
+from src import ai_client
 from src.progression import snapshot_roster, get_progression, get_movers
 from src.roster import (
     get_roster,
@@ -193,6 +195,13 @@ st.markdown(
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
 
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _read_csv_cached(path_or_url: str) -> pd.DataFrame:
+    """Cache game log CSV reads to avoid repeated disk/network fetches on rerun."""
+    return pd.read_csv(path_or_url)
+
+
 st.sidebar.header("Data Import")
 
 # ── Live Google Sheet Sync ──
@@ -211,7 +220,7 @@ df = None  # will be set by one of the branches
 
 if sheet_url and sheet_url.strip():
     try:
-        df = pd.read_csv(sheet_url.strip())
+        df = _read_csv_cached(sheet_url.strip())
         # Cache locally so it works offline next time
         try:
             df.to_csv(_GAME_LOGS_CSV, index=False)
@@ -234,7 +243,7 @@ if df is None and uploaded_file:
         st.stop()
 
 if df is None and os.path.exists(_GAME_LOGS_CSV):
-    df = pd.read_csv(_GAME_LOGS_CSV)
+    df = _read_csv_cached(_GAME_LOGS_CSV)
     st.sidebar.success("📊 Local Franchise Data Loaded!")
 
 if df is None:
@@ -293,6 +302,25 @@ MY_TEAM = st.sidebar.selectbox(
     "Select Your Franchise Team", TEAMS, index=TEAMS.index("GB") if "GB" in TEAMS else 0,
     key="global_team_select",
 )
+
+# --- AI GM ASSISTANT — SESSION-SCOPED ROSTER ADDITIONS ---
+# Players added via the AI GM Assistant tab live only in this browser
+# session's state, never in the shared roster/trade_engine module globals,
+# so one visitor's additions never leak into another visitor's view.
+if "ai_gm_players" not in st.session_state:
+    st.session_state.ai_gm_players = []
+AI_GM_EXTRA = st.session_state.ai_gm_players
+
+if AI_GM_EXTRA:
+    # Keep _id (unlike the roster/cap paths, which never expose it to the
+    # UI) — the Trade Machine selects players by Name, and _id is the only
+    # thing that could disambiguate same-named players there later. It's
+    # an inert extra column for get_trade_value() and the CPU-side rows.
+    _ai_gm_trade_df = pd.DataFrame(AI_GM_EXTRA)
+    EFFECTIVE_TRADE_ROSTERS = pd.concat(
+        [TRADE_ROSTERS, _ai_gm_trade_df], ignore_index=True)
+else:
+    EFFECTIVE_TRADE_ROSTERS = TRADE_ROSTERS
 
 # --- 2. WIN PROBABILITY PREDICTOR ---
 st.sidebar.header("Coach DNA: Live Predictor")
@@ -370,6 +398,7 @@ tabs = st.tabs([
     "🎯 Coach DNA",
     "📈 Progression",
     "🗂️ Raw Data",
+    "🤖 AI GM Assistant",
 ])
 
 # ── TAB 1: Scheme Performance ──
@@ -663,7 +692,7 @@ with tabs[2]:
     # ── LEFT COLUMN — Player Scout & Partner Finder ──
     with tmcol1:
         st.markdown("#### 🔍 Player Scout")
-        user_roster = TRADE_ROSTERS[TRADE_ROSTERS["Team"] == MY_TEAM].copy()
+        user_roster = EFFECTIVE_TRADE_ROSTERS[EFFECTIVE_TRADE_ROSTERS["Team"] == MY_TEAM].copy()
         player_names = user_roster["Name"].tolist()
         selected_player_name = st.selectbox(
             "Select a player to shop:", player_names, key="trade_player_select"
@@ -1033,7 +1062,7 @@ with tabs[4]:
         selected_group = st.selectbox(
             "Position Group:", POSITION_GROUPS, key="roster_group_select")
 
-        summary = get_team_summary(selected_team)
+        summary = get_team_summary(selected_team, AI_GM_EXTRA)
         st.markdown("---")
         st.metric("Players", summary["count"])
         st.metric("Avg OVR", summary["avg_ovr"])
@@ -1042,7 +1071,7 @@ with tabs[4]:
             f"⭐ **Best Player:** {summary.get('best_player', 'N/A')} ({summary.get('best_ovr', 'N/A')} OVR)")
 
     with rcol2:
-        roster_df = get_roster(selected_team, selected_group)
+        roster_df = get_roster(selected_team, selected_group, AI_GM_EXTRA)
         if roster_df.empty:
             st.info(f"No players found for {selected_team} — {selected_group}")
         else:
@@ -1097,7 +1126,7 @@ with tabs[4]:
     st.caption(
         "Players ranked by trade value — factors in OVR, age, position, dev trait, contract, and athleticism.")
 
-    all_gb = get_roster(selected_team, "All")
+    all_gb = get_roster(selected_team, "All", AI_GM_EXTRA)
     if not all_gb.empty:
         tv_rows = []
         for _, p in all_gb.iterrows():
@@ -1129,7 +1158,7 @@ with tabs[4]:
     # ── Position Group Grades ──
     st.markdown("---")
     st.markdown("#### 📊 Position Group Grades")
-    grades = get_position_grades(selected_team)
+    grades = get_position_grades(selected_team, AI_GM_EXTRA)
     if grades:
         grade_cols = st.columns(4)
         for i, g in enumerate(grades):
@@ -1149,7 +1178,7 @@ with tabs[4]:
     # ── Cap Overview Widget ──
     st.markdown("---")
     st.markdown("#### 💰 Cap Overview")
-    cap = get_cap_summary(selected_team)
+    cap = get_cap_summary(selected_team, AI_GM_EXTRA)
     if cap["players"]:
         cap_c1, cap_c2, cap_c3 = st.columns(3)
         with cap_c1:
@@ -1180,7 +1209,7 @@ with tabs[4]:
     # ── Cut or Keep Analyzer ──
     st.markdown("---")
     st.markdown("#### ✂️ Cut or Keep Analyzer")
-    verdicts = analyze_roster(selected_team)
+    verdicts = analyze_roster(selected_team, AI_GM_EXTRA)
     if verdicts:
         # Summary counts
         n_keep = sum(1 for v in verdicts if v["Verdict"] == "KEEP")
@@ -1231,7 +1260,7 @@ with tabs[4]:
     _DEF_POSITIONS = ["EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
     dc_positions = _OFF_POSITIONS if dc_side == "Offense" else _DEF_POSITIONS
 
-    full_roster = get_roster(selected_team, "All")
+    full_roster = get_roster(selected_team, "All", AI_GM_EXTRA)
     dc_cols = st.columns(len(dc_positions))
     for i, pos in enumerate(dc_positions):
         with dc_cols[i]:
@@ -1244,7 +1273,7 @@ with tabs[4]:
                 ovr = int(p['OVR'])
                 oc = ovr_color(ovr)
                 cls = 'dc-starter' if j == 0 else 'dc-backup'
-                dev_icon = {'X-Factor': '⭐', 'Superstar': '🌟',
+                dev_icon = {'Superstar X': '⭐', 'Superstar': '🌟',
                             'Star': '✨', 'Normal': ''}.get(
                     str(p.get('Dev', 'Normal')), '')
                 st.markdown(f"""
@@ -1498,3 +1527,173 @@ with tabs[7]:
 with tabs[8]:
     st.subheader("Historical Game Logs")
     st.dataframe(df)
+
+# ── TAB 10: AI GM Assistant — plug in new players dynamically ──
+with tabs[9]:
+    st.markdown('<div style="text-align:center;"><h2 style="'
+                'background: linear-gradient(90deg, #6366f1, #10b981);'
+                '-webkit-background-clip: text; -webkit-text-fill-color: transparent;'
+                'font-size: 2rem; margin-bottom: 0;">'
+                '🤖 AI GM Assistant</h2>'
+                '<p style="color:#94a3b8; font-size:0.95rem;">'
+                'Scout a draft pick, UDFA, or trade target — plug them into the '
+                f'{MY_TEAM} roster and get an instant AI grade.</p></div>',
+                unsafe_allow_html=True)
+    st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+
+    if ai_client.is_available():
+        st.markdown('<span style="background:#00e67620; color:#00e676; '
+                    'padding:3px 10px; border-radius:20px; font-size:0.78rem; '
+                    'font-weight:700; border:1px solid #00e67650;">'
+                    '🟢 Live Claude scouting narratives</span>',
+                    unsafe_allow_html=True)
+    else:
+        st.markdown('<span style="background:#ffffff10; color:#94a3b8; '
+                    'padding:3px 10px; border-radius:20px; font-size:0.78rem; '
+                    'font-weight:600; border:1px solid #ffffff20;">'
+                    '⚪ Heuristic scouting (set ANTHROPIC_API_KEY for live Claude writeups)</span>',
+                    unsafe_allow_html=True)
+
+    if "ai_gm_log" not in st.session_state:
+        st.session_state.ai_gm_log = []
+    if "ai_gm_form_version" not in st.session_state:
+        st.session_state.ai_gm_form_version = 0
+
+    gm_col1, gm_col2 = st.columns([1, 1], gap="large")
+
+    # ── LEFT — Add Player Form ──
+    with gm_col1:
+        st.markdown("#### ➕ Scout & Add a Player")
+        # Keying the form on a version counter (bumped only after a
+        # successful add) resets the fields for the next entry without
+        # wiping them out from under a failed validation.
+        form_key = f"ai_gm_add_player_form_{st.session_state.ai_gm_form_version}"
+        with st.form(form_key, clear_on_submit=False):
+            f_name = st.text_input("Name", placeholder="e.g. J. Smith")
+            fc1, fc2, fc3 = st.columns(3)
+            with fc1:
+                f_pos = st.selectbox("Position", ai_gm.SCOUTABLE_POSITIONS)
+            with fc2:
+                f_age = st.number_input(
+                    "Age", min_value=18, max_value=45, value=22)
+            with fc3:
+                f_ovr = st.number_input(
+                    "OVR", min_value=1, max_value=99, value=70)
+
+            f_dev = st.selectbox("Dev Trait", ai_gm.DEV_TRAITS)
+
+            st.caption("Physical attributes (optional — powers the AI scouting read)")
+            ac1, ac2, ac3 = st.columns(3)
+            with ac1:
+                f_spd = st.slider("SPD", 0, 99, 80)
+                f_cod = st.slider("COD", 0, 99, 80)
+            with ac2:
+                f_acc = st.slider("ACC", 0, 99, 80)
+                f_str = st.slider("STR", 0, 99, 70)
+            with ac3:
+                f_agi = st.slider("AGI", 0, 99, 80)
+                f_awr = st.slider("AWR", 0, 99, 70)
+
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                f_savings = st.text_input("Cap Savings", value="$0")
+            with cc2:
+                f_penalty = st.text_input("Dead Cap Penalty", value="$0")
+
+            f_persist = st.checkbox(
+                "💾 Save to roster CSV (persists across restarts)", value=False)
+
+            submitted = st.form_submit_button(
+                "🔮 Scout & Add to Roster", use_container_width=True)
+
+        if submitted:
+            new_player = {
+                "Name": f_name, "Pos": f_pos, "Age": f_age, "OVR": f_ovr,
+                "Dev": f_dev, "SPD": f_spd, "ACC": f_acc, "AGI": f_agi,
+                "COD": f_cod, "STR": f_str, "AWR": f_awr,
+                "Savings": f_savings, "Penalty": f_penalty,
+            }
+            result = ai_gm.add_player(new_player, MY_TEAM)
+            if not result["ok"]:
+                for err in result["errors"]:
+                    st.error(err)
+            else:
+                report = ai_gm.scout_player(
+                    result["player"], MY_TEAM, AI_GM_EXTRA)
+
+                # The verdict/grade/trade-value above are always the
+                # deterministic heuristic output. If a Claude API key is
+                # configured, ask it to rewrite just the narrative blurb
+                # grounded in those already-computed facts; otherwise the
+                # templated heuristic blurb stands as-is.
+                if ai_client.is_available():
+                    with st.spinner("Consulting AI GM..."):
+                        ai_blurb = ai_client.generate_scouting_narrative(
+                            result["player"], report, MY_TEAM)
+                    if ai_blurb:
+                        report["blurb"] = ai_blurb
+                        report["ai_generated"] = True
+                    else:
+                        report["ai_generated"] = False
+                        st.warning(
+                            "Claude request failed — showing heuristic scouting report instead.")
+                else:
+                    report["ai_generated"] = False
+
+                st.session_state.ai_gm_players.append(result["player"])
+                st.session_state.ai_gm_log.insert(0, report)
+                if f_persist:
+                    ai_gm.persist_roster(MY_TEAM, st.session_state.ai_gm_players)
+                st.session_state.ai_gm_form_version += 1
+                st.success(
+                    f"✅ **{result['player']['Name']}** added to the {MY_TEAM} roster.")
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("#### 🧭 Positional Needs Board")
+        st.caption("AI-computed depth + quality grade per position — use this to decide who to scout next.")
+        needs = ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA)
+        need_cols = st.columns(4)
+        for i, n in enumerate(needs):
+            with need_cols[i % 4]:
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(30,30,60,0.9), rgba(50,50,80,0.7));
+                    border: 1px solid {n['color']}40; border-left: 4px solid {n['color']};
+                    border-radius: 12px; padding: 0.7rem; margin-bottom: 0.6rem; text-align:center;">
+                    <div style="font-weight:800; color:white;">{n['pos']}</div>
+                    <div style="color:{n['color']}; font-weight:700; font-size:0.85rem;">{n['level']}</div>
+                    <div style="color:#888; font-size:0.72rem;">{n['count']} plyr · {n['avg_ovr']:.0f} avg</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ── RIGHT — Scouting Report Feed ──
+    with gm_col2:
+        st.markdown("#### 📋 AI Scouting Reports")
+        if not st.session_state.ai_gm_log:
+            st.info("Add a player on the left to generate an AI scouting report.")
+        else:
+            for idx, rep in enumerate(st.session_state.ai_gm_log):
+                vc = rep["verdict_color"]
+                source_badge = ('<span style="color:#a78bfa; font-size:0.7rem; font-weight:700;">✨ Claude</span>'
+                                if rep.get("ai_generated") else
+                                '<span style="color:#64748b; font-size:0.7rem;">⚙️ Heuristic</span>')
+                st.markdown(f"""
+                <div class="trade-card" style="border-left: 4px solid {vc};">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:1.15rem; font-weight:800; color:#f1f5f9;">
+                            {rep['Name']} <span style="color:#94a3b8; font-weight:500; font-size:0.85rem;">
+                            {rep['Pos']} · {rep['Age']}yo · {rep['OVR']} OVR</span>
+                        </span>
+                        <span style="background:{vc}; color:#000; font-weight:800; padding:2px 10px;
+                            border-radius:8px; font-size:0.75rem; white-space:nowrap;">{rep['verdict']}</span>
+                    </div>
+                    <div style="color:#cbd5e1; font-size:0.85rem; margin-top:8px; line-height:1.5;">{rep['blurb']}</div>
+                    <div style="margin-top:6px;">{source_badge}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button(f"🗑️ Remove {rep['Name']}", key=f"ai_gm_remove_{rep['_id']}"):
+                    st.session_state.ai_gm_players = ai_gm.remove_from_list(
+                        st.session_state.ai_gm_players, rep["_id"])
+                    st.session_state.ai_gm_log = [
+                        r for r in st.session_state.ai_gm_log if r["_id"] != rep["_id"]]
+                    st.rerun()
