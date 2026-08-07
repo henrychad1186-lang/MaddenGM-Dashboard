@@ -1,5 +1,8 @@
 """Tests for roster analyzer verdict logic."""
 
+import pandas as pd
+
+from src import roster_analyzer
 from src.roster_analyzer import analyze_roster
 
 
@@ -38,19 +41,42 @@ class TestCutLogic:
 
 
 class TestDevTraitMatching:
-    """Tests for dev trait recognition in KEEP reasons."""
+    """Tests for dev trait recognition in KEEP reasons.
 
-    def test_superstar_x_recognized(self):
-        """Superstar X dev trait should match for young dev talent identification."""
-        # The string "superstar x" should be in the recognized dev traits
-        dev_trait = "Superstar X"
-        assert dev_trait.lower() in ("superstar", "superstar x", "star")
+    Exercises the real analyze_roster() verdict logic (not just the
+    membership check in isolation) by monkeypatching its roster/cap/
+    trade-value dependencies with a single controlled player, so a
+    regression in the actual KEEP-reason branch fails this test.
+    """
 
-    def test_all_dev_traits_recognized(self):
-        """All standard Madden dev traits should be recognized."""
-        recognized = {"superstar", "superstar x", "star"}
-        for trait in ["Superstar", "Superstar X", "Star"]:
-            assert trait.lower() in recognized, f"{trait} not recognized"
+    def _analyze_single_player(self, monkeypatch, player: dict) -> dict:
+        roster_df = pd.DataFrame([player])
+        monkeypatch.setattr(
+            roster_analyzer, "get_roster",
+            lambda team, group, extra_players=None: roster_df)
+        monkeypatch.setattr(
+            roster_analyzer, "get_cap_summary",
+            lambda team, extra_players=None: {"players": []})
+        monkeypatch.setattr(
+            roster_analyzer, "get_trade_value", lambda p: 50.0)
+        verdicts = roster_analyzer.analyze_roster("GB")
+        assert len(verdicts) == 1
+        return verdicts[0]
+
+    def test_young_superstar_x_gets_dev_talent_reason(self, monkeypatch):
+        player = {"Name": "Test Rookie", "Pos": "WR", "OVR": 74,
+                 "Age": 22, "Dev": "Superstar X"}
+        verdict = self._analyze_single_player(monkeypatch, player)
+        assert verdict["Verdict"] == "KEEP"
+        assert verdict["Reason"] == "Young dev talent — high ceiling"
+
+    def test_young_normal_dev_does_not_get_dev_talent_reason(self, monkeypatch):
+        """Same age/OVR but a Normal dev trait should NOT get the high-ceiling reason."""
+        player = {"Name": "Test Depth Guy", "Pos": "WR", "OVR": 74,
+                 "Age": 22, "Dev": "Normal"}
+        verdict = self._analyze_single_player(monkeypatch, player)
+        assert verdict["Verdict"] == "KEEP"
+        assert verdict["Reason"] == "Roster depth piece"
 
 
 class TestAnalyzeRosterIntegration:
