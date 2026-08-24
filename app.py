@@ -197,13 +197,13 @@ _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
 
 
-@st.cache_data(show_spinner=False)
-def _load_game_log_from_url(url: str) -> pd.DataFrame:
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_game_log_from_url(url: str) -> "tuple[pd.DataFrame, list[str]]":
     return _prepare_game_log(pd.read_csv(url))
 
 
 @st.cache_data(show_spinner=False)
-def _load_game_log_from_upload(file_bytes: bytes, filename: str) -> pd.DataFrame:
+def _load_game_log_from_upload(file_bytes: bytes, filename: str) -> "tuple[pd.DataFrame, list[str]]":
     buffer = io.BytesIO(file_bytes)
     if filename.lower().endswith(".csv"):
         raw_df = pd.read_csv(buffer)
@@ -213,12 +213,21 @@ def _load_game_log_from_upload(file_bytes: bytes, filename: str) -> pd.DataFrame
 
 
 @st.cache_data(show_spinner=False)
-def _load_game_log_from_disk(path: str, modified_at: float) -> pd.DataFrame:
+def _load_game_log_from_disk(path: str, modified_at: float) -> "tuple[pd.DataFrame, list[str]]":
     return _prepare_game_log(pd.read_csv(path))
 
 
-def _prepare_game_log(raw_df: pd.DataFrame) -> pd.DataFrame:
+def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
+    """Derive Points_For/Points_Against/Score_Diff/Result/TOP_Mins.
+
+    Returns (df, warnings) instead of calling st.warning() directly —
+    this runs inside @st.cache_data functions, and a live UI call there
+    only fires on a cache miss, so a persistent warning would silently
+    stop reappearing on cache hits. Returning it as data lets the
+    (uncached) caller display it on every rerun regardless of cache state.
+    """
     df = raw_df.copy()
+    warnings: list[str] = []
 
     # Handle Score_Final format (old) or direct Points_For/Points_Against (new)
     if "Score_Final" in df.columns:
@@ -231,7 +240,7 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> pd.DataFrame:
                 lambda x: "WIN" if x > 0 else "LOSS"
             )
         except Exception:
-            st.warning("Could not parse Score_Final. Ensure format is '35-10'.")
+            warnings.append("Could not parse Score_Final. Ensure format is '35-10'.")
     elif "Points_For" in df.columns and "Points_Against" in df.columns:
         df["Points_For"] = pd.to_numeric(df["Points_For"], errors="coerce")
         df["Points_Against"] = pd.to_numeric(df["Points_Against"], errors="coerce")
@@ -260,7 +269,7 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             pass
 
-    return df
+    return df, warnings
 
 
 st.sidebar.header("Data Import")
@@ -279,9 +288,11 @@ uploaded_file = st.sidebar.file_uploader(
 
 df = None  # will be set by one of the branches
 
+prep_warnings: list[str] = []
+
 if sheet_url and sheet_url.strip():
     try:
-        df = _load_game_log_from_url(sheet_url.strip())
+        df, prep_warnings = _load_game_log_from_url(sheet_url.strip())
         # Cache locally so it works offline next time
         try:
             df.to_csv(_GAME_LOGS_CSV, index=False)
@@ -294,14 +305,14 @@ if sheet_url and sheet_url.strip():
 
 if df is None and uploaded_file:
     try:
-        df = _load_game_log_from_upload(uploaded_file.getvalue(), uploaded_file.name)
+        df, prep_warnings = _load_game_log_from_upload(uploaded_file.getvalue(), uploaded_file.name)
         st.sidebar.success("Custom Data Loaded!")
     except Exception as e:
         st.error(f"Error loading file: {e}")
         st.stop()
 
 if df is None and os.path.exists(_GAME_LOGS_CSV):
-    df = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
+    df, prep_warnings = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
     st.sidebar.success("📊 Local Franchise Data Loaded!")
 
 if df is None:
@@ -310,8 +321,11 @@ if df is None:
         {"Game_ID": "G1", "Team": "DEMO", "Opponent": "JAX",
          "Score_Final": "34-10", "TOP": "27:45", "Playbook": "WestCoast", "Fatigue": 12},
     ]
-    df = pd.DataFrame(data)
+    df, prep_warnings = _prepare_game_log(pd.DataFrame(data))
     st.sidebar.info("Using Demo Data")
+
+for _w in prep_warnings:
+    st.warning(_w)
 
 # --- GLOBAL TEAM SELECTOR ---
 st.sidebar.header("My Team")
