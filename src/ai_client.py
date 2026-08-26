@@ -14,9 +14,15 @@ break because of this being unavailable.
 """
 
 import os
+import re
 
 _MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
-_MAX_TOKENS = 300
+# The prompt asks for 3-4 sentences covering grade, strengths, weaknesses,
+# and a verdict endorsement — that routinely runs past 300 tokens and gets
+# cut off mid-sentence (confirmed against a live call: stop_reason was
+# "max_tokens" at 300). 500 gives real headroom; _trim_to_last_sentence()
+# below is the backstop for whatever still gets cut.
+_MAX_TOKENS = 500
 
 _client = None
 _client_checked = False
@@ -78,6 +84,18 @@ explicitly endorsing the given verdict with your own reasoning. Scouting-
 report voice — direct, opinionated, no hedging, no markdown headers."""
 
 
+_SENTENCE_END_RE = re.compile(r'[.!?](?:["\')\]]*)(?=\s|$)')
+
+
+def _trim_to_last_sentence(text: str) -> str:
+    """If generation was cut off mid-sentence, trim back to the last
+    complete one so a dangling half-sentence never reaches the UI."""
+    matches = list(_SENTENCE_END_RE.finditer(text))
+    if not matches:
+        return text
+    return text[:matches[-1].end()].strip()
+
+
 def generate_scouting_narrative(player: dict, report: dict, team: str) -> "str | None":
     """Ask Claude to write a scouting narrative grounded in computed stats.
 
@@ -97,6 +115,10 @@ def generate_scouting_narrative(player: dict, report: dict, team: str) -> "str |
         text = "".join(
             block.text for block in resp.content if getattr(block, "type", "") == "text"
         ).strip()
+        if not text:
+            return None
+        if resp.stop_reason == "max_tokens":
+            text = _trim_to_last_sentence(text)
         return text or None
     except Exception:
         return None
