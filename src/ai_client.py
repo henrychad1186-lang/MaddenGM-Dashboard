@@ -84,15 +84,16 @@ explicitly endorsing the given verdict with your own reasoning. Scouting-
 report voice — direct, opinionated, no hedging, no markdown headers."""
 
 
-_SENTENCE_END_RE = re.compile(r'[.!?](?:["\')\]]*)(?=\s|$)')
+_SENTENCE_END_RE = re.compile(r'[.!?](?:["\')\]]*)(?=\s)')
 
 
 def _trim_to_last_sentence(text: str) -> str:
-    """If generation was cut off mid-sentence, trim back to the last
-    complete one so a dangling half-sentence never reaches the UI."""
+    """Only called when generation was cut off mid-stream, so the very end
+    of `text` is where it got cut, never a real sentence boundary — trim
+    back to the last complete sentence, or "" if none exists."""
     matches = list(_SENTENCE_END_RE.finditer(text))
     if not matches:
-        return text
+        return ""
     return text[:matches[-1].end()].strip()
 
 
