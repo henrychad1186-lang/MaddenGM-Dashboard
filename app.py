@@ -1,3 +1,4 @@
+import io
 import os
 import streamlit as st
 import pandas as pd
@@ -195,6 +196,81 @@ _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
 
 st.sidebar.header("Data Import")
 
+
+@st.cache_data(show_spinner=False)
+def _load_game_log_from_url(url: str) -> pd.DataFrame:
+    return pd.read_csv(url)
+
+
+@st.cache_data(show_spinner=False)
+def _load_game_log_from_upload(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    buffer = io.BytesIO(file_bytes)
+    if filename.lower().endswith(".csv"):
+        return pd.read_csv(buffer)
+    return pd.read_excel(buffer)
+
+
+@st.cache_data(show_spinner=False)
+def _load_game_log_from_disk(path: str, modified_at: float) -> pd.DataFrame:
+    return pd.read_csv(path)
+
+
+def _result_from_score_diff(score_diff: float) -> str:
+    return "WIN" if score_diff > 0 else "LOSS"
+
+
+def _parse_top_value(value):
+    if isinstance(value, str) and ":" in value:
+        parts = value.split(":")
+        try:
+            return int(parts[0]) + int(parts[1]) / 60
+        except ValueError:
+            return None
+    return value
+
+
+def _apply_score_columns(df: pd.DataFrame) -> None:
+    if "Score_Final" in df.columns:
+        df[["Points_For", "Points_Against"]] = (
+            df["Score_Final"].str.split("-", expand=True).astype(int)
+        )
+        df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
+        df["Result"] = df["Score_Diff"].apply(_result_from_score_diff)
+        return
+
+    if "Points_For" not in df.columns or "Points_Against" not in df.columns:
+        return
+
+    df["Points_For"] = pd.to_numeric(df["Points_For"], errors="coerce")
+    df["Points_Against"] = pd.to_numeric(df["Points_Against"], errors="coerce")
+    df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
+
+    if "Result" in df.columns:
+        df["Result"] = df["Result"].map(
+            {"W": "WIN", "L": "LOSS", "WIN": "WIN", "LOSS": "LOSS"}
+        ).fillna("LOSS")
+        return
+
+    df["Result"] = df["Score_Diff"].apply(_result_from_score_diff)
+
+
+def _preprocess_game_log(raw_df: pd.DataFrame) -> pd.DataFrame:
+    df = raw_df.copy()
+
+    try:
+        _apply_score_columns(df)
+    except Exception:
+        st.warning("Could not parse Score_Final. Ensure format is '35-10'.")
+
+    if "TOP" in df.columns:
+        try:
+            df["TOP_Mins"] = df["TOP"].apply(_parse_top_value)
+        except Exception:
+            pass
+
+    return df
+
+
 # ── Live Google Sheet Sync ──
 sheet_url = st.sidebar.text_input(
     "📡 Google Sheet CSV URL",
@@ -211,7 +287,7 @@ df = None  # will be set by one of the branches
 
 if sheet_url and sheet_url.strip():
     try:
-        df = pd.read_csv(sheet_url.strip())
+        df = _load_game_log_from_url(sheet_url.strip())
         # Cache locally so it works offline next time
         try:
             df.to_csv(_GAME_LOGS_CSV, index=False)
@@ -224,17 +300,14 @@ if sheet_url and sheet_url.strip():
 
 if df is None and uploaded_file:
     try:
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
+        df = _load_game_log_from_upload(uploaded_file.getvalue(), uploaded_file.name)
         st.sidebar.success("Custom Data Loaded!")
     except Exception as e:
         st.error(f"Error loading file: {e}")
         st.stop()
 
 if df is None and os.path.exists(_GAME_LOGS_CSV):
-    df = pd.read_csv(_GAME_LOGS_CSV)
+    df = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
     st.sidebar.success("📊 Local Franchise Data Loaded!")
 
 if df is None:
@@ -246,46 +319,7 @@ if df is None:
     df = pd.DataFrame(data)
     st.sidebar.info("Using Demo Data")
 
-# --- DATA PRE-PROCESSING ---
-# Handle Score_Final format (old) or direct Points_For/Points_Against (new)
-if "Score_Final" in df.columns:
-    try:
-        df[["Points_For", "Points_Against"]] = (
-            df["Score_Final"].str.split("-", expand=True).astype(int)
-        )
-        df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
-        df["Result"] = df["Score_Diff"].apply(
-            lambda x: "WIN" if x > 0 else "LOSS"
-        )
-    except Exception:
-        st.warning("Could not parse Score_Final. Ensure format is '35-10'.")
-elif "Points_For" in df.columns and "Points_Against" in df.columns:
-    df["Points_For"] = pd.to_numeric(df["Points_For"], errors="coerce")
-    df["Points_Against"] = pd.to_numeric(df["Points_Against"], errors="coerce")
-    df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
-    # Normalize Result: W → WIN, L → LOSS
-    if "Result" in df.columns:
-        df["Result"] = df["Result"].map(
-            {"W": "WIN", "L": "LOSS", "WIN": "WIN", "LOSS": "LOSS"}
-        ).fillna("LOSS")
-    else:
-        df["Result"] = df["Score_Diff"].apply(
-            lambda x: "WIN" if x > 0 else "LOSS"
-        )
-
-if "TOP" in df.columns:
-    def parse_top(x):
-        if isinstance(x, str) and ":" in x:
-            parts = x.split(":")
-            try:
-                return int(parts[0]) + int(parts[1]) / 60
-            except ValueError:
-                return None
-        return x
-    try:
-        df["TOP_Mins"] = df["TOP"].apply(parse_top)
-    except Exception:
-        pass
+df = _preprocess_game_log(df)
 
 # --- DASHBOARD QUICK FILTERS ---
 st.sidebar.header("Dashboard View")
@@ -837,7 +871,10 @@ with tabs[2]:
                     <span style="color:{bar_color}; font-weight:700;">{interest}%{fit_badge}</span>
                 </div>
                 <div class="interest-bar">
-                    <div class="interest-fill" style="width:{interest}%; background: linear-gradient(90deg, {bar_color}, {bar_color}aa);"></div>
+                    <div
+                        class="interest-fill"
+                        style="width:{interest}%; background: linear-gradient(90deg, {bar_color}, {bar_color}aa);"
+                    ></div>
                 </div>
                 <div style="color:#94a3b8; font-size:0.85rem; margin-bottom:4px;">↳ {p['reason']}</div>
                 <div style="color:#cbd5e1; font-size:0.9rem;">Best offer: <strong>{p['best_offer_name']}</strong>
@@ -1262,7 +1299,10 @@ with tabs[4]:
                             border-radius:8px; font-size:0.8rem;">{vi} {v['Verdict']}</div>
                     </div>
                     <div style="color:#bbb; font-size:0.78rem; margin-top:4px;">{v['Reason']}</div>
-                    <div style="color:#888; font-size:0.72rem; margin-top:2px;">TV: {v['Trade_Value']:.0f} · Sav: ${v['Savings']:.1f}M · Dead: ${v['Penalty']:.1f}M · Depth: {v['Depth']}</div>
+                    <div style="color:#888; font-size:0.72rem; margin-top:2px;">
+                        TV: {v['Trade_Value']:.0f} · Sav: ${v['Savings']:.1f}M ·
+                        Dead: ${v['Penalty']:.1f}M · Depth: {v['Depth']}
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
     else:
@@ -1516,18 +1556,22 @@ with tabs[7]:
                     border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.4rem;">
                     <span style="font-weight:700; color:white;">{g['Name']}</span>
                     <span style="color:#aaa;"> {g['Pos']}</span>
-                    <span style="float:right; color:#00e676; font-weight:800;">+{g['Delta']} ({g['Start_OVR']}→{g['Current_OVR']})</span>
+                    <span style="float:right; color:#00e676; font-weight:800;">
+                        +{g['Delta']} ({g['Start_OVR']}→{g['Current_OVR']})
+                    </span>
                 </div>
                 """, unsafe_allow_html=True)
         with mov2:
             st.markdown("##### 📉 Biggest Declines")
-            for l in movers["losers"]:
+            for loser in movers["losers"]:
                 st.markdown(f"""
                 <div style="background: rgba(255,82,82,0.1); border-left: 3px solid #ff5252;
                     border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.4rem;">
-                    <span style="font-weight:700; color:white;">{l['Name']}</span>
-                    <span style="color:#aaa;"> {l['Pos']}</span>
-                    <span style="float:right; color:#ff5252; font-weight:800;">{l['Delta']} ({l['Start_OVR']}→{l['Current_OVR']})</span>
+                    <span style="font-weight:700; color:white;">{loser['Name']}</span>
+                    <span style="color:#aaa;"> {loser['Pos']}</span>
+                    <span style="float:right; color:#ff5252; font-weight:800;">
+                        {loser['Delta']} ({loser['Start_OVR']}→{loser['Current_OVR']})
+                    </span>
                 </div>
                 """, unsafe_allow_html=True)
     else:

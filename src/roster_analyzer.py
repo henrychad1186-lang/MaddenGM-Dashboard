@@ -9,6 +9,37 @@ from src.roster import get_roster, get_cap_summary
 from src.trade_engine import get_trade_value
 
 
+def _get_roster_verdict(
+    *,
+    age: int,
+    ovr: int,
+    penalty: float,
+    pos: str,
+    pos_count: int,
+    savings: float,
+    trade_value: float,
+    dev_trait: str,
+) -> tuple[str, str]:
+    """Return the recommended roster verdict and supporting reason."""
+    if ovr < 72 and penalty > 5 and pos_count >= 3:
+        return "CUT", f"Low OVR ({ovr}), ${penalty:.1f}M dead cap, {pos_count} deep at {pos}"
+    if ovr < 68 and pos_count >= 2:
+        return "CUT", f"Below replacement level ({ovr} OVR)"
+    if trade_value > 200 and age >= 29 and pos_count >= 2:
+        return "TRADE", f"Aging ({age}yo), tradeable value ({trade_value:.0f}), backup available"
+    if trade_value > 300 and penalty > savings and age >= 27:
+        return "TRADE", f"Cap negative (${penalty:.1f}M dead > ${savings:.1f}M sav), still has value"
+    if ovr >= 75 and age >= 31 and pos_count >= 2:
+        return "TRADE", f"Veteran ({age}yo, {ovr} OVR), sell high before decline"
+    if ovr >= 85:
+        return "KEEP", "Core player — franchise cornerstone"
+    if ovr >= 78:
+        return "KEEP", "Solid contributor — good value"
+    if age <= 24 and dev_trait in ("superstar", "x-factor", "star"):
+        return "KEEP", "Young dev talent — high ceiling"
+    return "KEEP", "Roster depth piece"
+
+
 def analyze_roster(team: str) -> list[dict]:
     """Return a list of player analysis dicts with verdicts.
 
@@ -39,37 +70,16 @@ def analyze_roster(team: str) -> list[dict]:
         ovr = int(player["OVR"])
         age = int(player["Age"])
 
-        # ── Verdict Logic ──
-        verdict = "KEEP"
-        reason = ""
-
-        # CUT candidates: low OVR + high dead cap + deep position
-        if ovr < 72 and penalty > 5 and pos_count >= 3:
-            verdict = "CUT"
-            reason = f"Low OVR ({ovr}), ${penalty:.1f}M dead cap, {pos_count} deep at {pos}"
-        elif ovr < 68 and pos_count >= 2:
-            verdict = "CUT"
-            reason = f"Below replacement level ({ovr} OVR)"
-        # TRADE candidates: aging + replaceable + has value
-        elif tv > 200 and age >= 29 and pos_count >= 2:
-            verdict = "TRADE"
-            reason = f"Aging ({age}yo), tradeable value ({tv:.0f}), backup available"
-        elif tv > 300 and penalty > savings and age >= 27:
-            verdict = "TRADE"
-            reason = f"Cap negative (${penalty:.1f}M dead > ${savings:.1f}M sav), still has value"
-        elif ovr >= 75 and age >= 31 and pos_count >= 2:
-            verdict = "TRADE"
-            reason = f"Veteran ({age}yo, {ovr} OVR), sell high before decline"
-        # KEEP: everyone else (default)
-        else:
-            if ovr >= 85:
-                reason = "Core player — franchise cornerstone"
-            elif ovr >= 78:
-                reason = "Solid contributor — good value"
-            elif age <= 24 and str(player.get("Dev", "")).lower() in ("superstar", "x-factor", "star"):
-                reason = "Young dev talent — high ceiling"
-            else:
-                reason = "Roster depth piece"
+        verdict, reason = _get_roster_verdict(
+            age=age,
+            ovr=ovr,
+            penalty=penalty,
+            pos=pos,
+            pos_count=pos_count,
+            savings=savings,
+            trade_value=tv,
+            dev_trait=str(player.get("Dev", "")).lower(),
+        )
 
         results.append({
             "Name": player["Name"],
