@@ -1697,3 +1697,52 @@ with tabs[9]:
                     st.session_state.ai_gm_log = [
                         r for r in st.session_state.ai_gm_log if r["_id"] != rep["_id"]]
                     st.rerun()
+
+    # ── Ask the AI GM — free-form chat grounded in real roster data ──
+    st.markdown("---")
+    st.markdown("#### 💬 Ask the AI GM")
+    st.caption(
+        "Ask anything about your roster, cap situation, trade targets, or "
+        "needs — every answer is grounded in your actual data below, not "
+        "a generic guess.")
+
+    if "ai_gm_chat" not in st.session_state:
+        st.session_state.ai_gm_chat = []
+    # Stale chat referencing a different team's data would be misleading —
+    # reset on team switch rather than let old answers linger.
+    if st.session_state.get("ai_gm_chat_team") != MY_TEAM:
+        st.session_state.ai_gm_chat = []
+        st.session_state.ai_gm_chat_team = MY_TEAM
+
+    if not ai_client.is_available():
+        st.info(
+            "💬 Chat requires a live Claude connection — set `ANTHROPIC_API_KEY` "
+            "(env var locally, or Streamlit Cloud Settings → Secrets) to unlock it. "
+            "The scouting reports above still work either way.")
+    else:
+        for msg in st.session_state.ai_gm_chat:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        if st.session_state.ai_gm_chat:
+            if st.button("🗑️ Clear chat", key="ai_gm_chat_clear"):
+                st.session_state.ai_gm_chat = []
+                st.rerun()
+
+        if prompt := st.chat_input("e.g. Who should I trade for a pass rusher?"):
+            st.session_state.ai_gm_chat.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                with st.spinner("Consulting the AI GM..."):
+                    context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
+                    # Exclude the prompt just appended — answer_gm_question
+                    # takes it separately — and cap history length so the
+                    # prompt doesn't grow unbounded over a long session.
+                    history = st.session_state.ai_gm_chat[:-1][-12:]
+                    answer = ai_client.answer_gm_question(
+                        prompt, context_summary, history, MY_TEAM)
+                    if answer is None:
+                        answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
+                st.markdown(answer)
+            st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})

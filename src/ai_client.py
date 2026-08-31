@@ -1,16 +1,22 @@
 """
-Optional Claude-powered scouting narratives for the AI GM Assistant.
+Optional Claude-powered features for the AI GM Assistant: scouting
+narratives for a single player, and free-form chat over the team's data.
 
-The heuristic engine in `src.ai_gm` always runs first and produces the
-grade, verdict, trade value, and strengths/weaknesses — those are
-deterministic and grounded in the roster data. This module only asks
-Claude to turn those *already-computed* facts into a punchier written
-narrative; it's never given free rein to invent stats.
+The heuristic engine in `src.ai_gm` always runs first for scouting and
+produces the grade, verdict, trade value, and strengths/weaknesses —
+those are deterministic and grounded in the roster data. This module
+only asks Claude to turn those *already-computed* facts into a punchier
+written narrative; it's never given free rein to invent stats. The chat
+feature has no non-Claude equivalent (open-ended Q&A isn't something a
+rules engine can answer), so it's simply unavailable rather than
+degraded when no key is configured — but every answer is still grounded
+in a text snapshot of the real roster/cap/needs data, not invented.
 
-Falls back to `None` (heuristic blurb wins) whenever no API key is
-configured, the `anthropic` package isn't installed, or the request fails
-for any reason (network, rate limit, invalid key) — the app must never
-break because of this being unavailable.
+Both features fall back to `None` (or, for chat, are hidden by the
+caller) whenever no API key is configured, the `anthropic` package isn't
+installed, or the request fails for any reason (network, rate limit,
+invalid key) — the app must never break because of this being
+unavailable.
 """
 
 import os
@@ -111,6 +117,54 @@ def generate_scouting_narrative(player: dict, report: dict, team: str) -> "str |
             model=_MODEL,
             max_tokens=_MAX_TOKENS,
             messages=[{"role": "user", "content": _build_prompt(player, report, team)}],
+        )
+        text = "".join(
+            block.text for block in resp.content if getattr(block, "type", "") == "text"
+        ).strip()
+        if not text:
+            return None
+        if resp.stop_reason == "max_tokens":
+            text = _trim_to_last_sentence(text)
+        return text or None
+    except Exception:
+        return None
+
+
+_CHAT_MAX_TOKENS = 600
+_CHAT_SYSTEM_PROMPT = """You are the AI GM Assistant for a Madden 27 franchise \
+dashboard, answering the user's questions about their team, {team}. Base every \
+answer strictly on the data below — never invent a player, stat, contract, or \
+grade that isn't in it. If the data doesn't support an answer, say so plainly \
+instead of guessing. Keep answers focused and actionable in a direct GM voice — \
+a short paragraph or a short list, not an essay. No markdown headers.
+
+CURRENT TEAM DATA:
+{context_summary}"""
+
+
+def answer_gm_question(question: str, context_summary: str,
+                       history: "list[dict]", team: str) -> "str | None":
+    """Answer a free-form GM question grounded in a text snapshot of the
+    team's real roster/cap/needs data (see `src.ai_gm.build_context_summary`).
+
+    `history` is prior turns as [{"role": "user"|"assistant", "content": str}, ...],
+    NOT including `question` itself — that's appended here. Returns None if
+    no key is configured or the request fails; there's no non-Claude
+    fallback for open-ended chat, so callers should hide the chat UI
+    entirely when `is_available()` is False rather than call this.
+    """
+    client = _get_client()
+    if client is None:
+        return None
+
+    messages = list(history) + [{"role": "user", "content": question}]
+
+    try:
+        resp = client.messages.create(
+            model=_MODEL,
+            max_tokens=_CHAT_MAX_TOKENS,
+            system=_CHAT_SYSTEM_PROMPT.format(team=team, context_summary=context_summary),
+            messages=messages,
         )
         text = "".join(
             block.text for block in resp.content if getattr(block, "type", "") == "text"

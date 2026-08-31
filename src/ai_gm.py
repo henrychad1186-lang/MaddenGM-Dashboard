@@ -24,6 +24,7 @@ import uuid
 import pandas as pd
 
 from src import roster as roster_mod
+from src import roster_analyzer as roster_analyzer_mod
 from src.trade_engine import get_trade_value
 
 REQUIRED_FIELDS = ["Name", "Pos", "Age", "OVR"]
@@ -285,3 +286,64 @@ def scout_player(player: dict, team: str, extra_players: "list[dict] | None" = N
         "verdict": verdict, "verdict_color": verdict_color, "reason": reason,
         "blurb": blurb,
     }
+
+
+# ──────────────────────────────────────────────
+# CHAT CONTEXT — grounding data for free-form Q&A
+# ──────────────────────────────────────────────
+
+def build_context_summary(team: str, extra_players: "list[dict] | None" = None) -> str:
+    """Compact, text-only snapshot of a team's current state.
+
+    Used to ground the AI GM chat's answers in the same real data every
+    other tab reads — same functions, just serialized into a prompt
+    instead of rendered as widgets, so the model can't invent a player,
+    contract, or grade that doesn't actually exist on the roster.
+    """
+    summary = roster_mod.get_team_summary(team, extra_players)
+    grades = roster_mod.get_position_grades(team, extra_players)
+    needs = positional_needs(team, extra_players)
+    cap = roster_mod.get_cap_summary(team, extra_players)
+    verdicts = roster_analyzer_mod.analyze_roster(team, extra_players)
+
+    lines = [
+        f"TEAM: {team}",
+        f"Roster size: {summary['count']} | Avg OVR: {summary['avg_ovr']} | "
+        f"Avg Age: {summary['avg_age']} | Best player: "
+        f"{summary.get('best_player', 'N/A')} ({summary.get('best_ovr', 'N/A')} OVR)",
+        "",
+        "POSITION GRADES:",
+    ]
+    for g in grades:
+        lines.append(f"  {g['pos']}: {g['grade']} ({g['count']} players, {g['avg_ovr']} avg OVR)")
+
+    lines.append("")
+    lines.append("POSITIONAL NEEDS:")
+    for n in needs:
+        lines.append(f"  {n['pos']}: {n['level']} ({n['count']} players, {n['avg_ovr']} avg OVR)")
+
+    net_cap = cap["total_savings"] - cap["total_penalty"]
+    lines.append("")
+    lines.append(
+        f"CAP: ${cap['total_savings']:.1f}M savings, ${cap['total_penalty']:.1f}M "
+        f"dead cap, net ${net_cap:+.1f}M")
+    top_dead = [p for p in cap["players"] if p["Penalty"] > 0][:5]
+    if top_dead:
+        lines.append("  Top dead cap hits:")
+        for p in top_dead:
+            lines.append(f"    {p['Name']} ({p['Pos']}, {p['OVR']} OVR): ${p['Penalty']:.1f}M dead")
+
+    lines.append("")
+    lines.append("FULL ROSTER (Name | Pos | OVR | Age | Dev | Verdict | Trade Value | Reason):")
+    for v in verdicts:
+        lines.append(
+            f"  {v['Name']} | {v['Pos']} | {v['OVR']} OVR | Age {v['Age']} | {v['Dev']} | "
+            f"{v['Verdict']} | TV {v['Trade_Value']:.0f} | {v['Reason']}")
+
+    if extra_players:
+        lines.append("")
+        lines.append(
+            "NOTE: players added this session via the AI GM Assistant form "
+            "are included in the roster above.")
+
+    return "\n".join(lines)
