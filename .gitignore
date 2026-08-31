@@ -32,5 +32,8 @@ desktop.ini
 # Testing
 .pytest_cache/
 
+# run-maddengm-dashboard skill driver output
+.claude/skills/run-maddengm-dashboard/shots/
+
 # Secrets
 .env
