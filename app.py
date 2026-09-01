@@ -27,6 +27,7 @@ from src.roster import (
     get_cap_summary,
     TEAMS,
     POSITION_GROUPS,
+    ROSTER_WARNINGS,
 )
 
 # --- CONFIGURATION ---
@@ -543,6 +544,75 @@ with kpi3:
     st.markdown(_kpi_card_html("Win Rate", f"{win_rate:.1f}%"), unsafe_allow_html=True)
 with kpi4:
     st.markdown(_kpi_card_html("Games Tracked", str(len(df))), unsafe_allow_html=True)
+
+st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+
+# --- FRANCHISE HOME — at-a-glance summary before diving into tabs ---
+# Pulls from the same functions every tab already uses (get_cap_summary,
+# ai_gm.positional_needs, analyze_roster) — just surfaced up front so the
+# most actionable info doesn't require a full tour of all 10 tabs.
+st.markdown("#### 🏠 Franchise Home")
+
+_home_wins = int((df["Result"] == "WIN").sum()) if "Result" in df.columns else 0
+_home_losses = int((df["Result"] == "LOSS").sum()) if "Result" in df.columns else 0
+_home_cap = get_cap_summary(MY_TEAM, AI_GM_EXTRA)
+_home_net_cap = _home_cap["total_savings"] - _home_cap["total_penalty"]
+_home_needs = [n for n in ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA) if n["level"] != "Set"]
+_home_needs.sort(key=lambda n: (n["level"] != "Critical", n["avg_ovr"]))
+_home_verdicts = [v for v in analyze_roster(MY_TEAM, AI_GM_EXTRA) if v["Verdict"] != "KEEP"]
+
+home_col1, home_col2, home_col3 = st.columns(3)
+
+with home_col1:
+    net_color = "#10b981" if _home_net_cap >= 0 else "#ef4444"
+    st.markdown(f"""
+    <div class="trade-card">
+        <div style="color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em;">Record &amp; Cap — {MY_TEAM}</div>
+        <div style="font-size:1.8rem; font-weight:800; color:#f1f5f9; margin-top:4px;">{_home_wins}-{_home_losses}</div>
+        <div style="color:#94a3b8; font-size:0.85rem; margin-top:8px;">
+            Net Cap: <span style="color:{net_color}; font-weight:700;">${_home_net_cap:+.1f}M</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with home_col2:
+    if _home_needs:
+        needs_html = "".join(
+            f'<div style="display:flex; justify-content:space-between; margin-top:6px;">'
+            f'<span style="color:#e2e8f0;">{n["pos"]}</span>'
+            f'<span style="color:{n["color"]}; font-weight:700; font-size:0.85rem;">{n["level"]}</span>'
+            f'</div>'
+            for n in _home_needs[:3]
+        )
+    else:
+        needs_html = '<div style="color:#94a3b8; margin-top:6px;">No pressing needs — roster is set everywhere.</div>'
+    st.markdown(f"""
+    <div class="trade-card">
+        <div style="color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em;">Top Needs</div>
+        {needs_html}
+    </div>
+    """, unsafe_allow_html=True)
+
+with home_col3:
+    _home_verdict_colors = {"CUT": "#ff5252", "TRADE": "#ffc107"}
+    if _home_verdicts:
+        moves_html = "".join(
+            f'<div style="display:flex; justify-content:space-between; margin-top:6px;">'
+            f'<span style="color:#e2e8f0;">{v["Name"]} '
+            f'<span style="color:#64748b; font-size:0.78rem;">({v["Pos"]})</span></span>'
+            f'<span style="color:{_home_verdict_colors.get(v["Verdict"], "#94a3b8")}; '
+            f'font-weight:700; font-size:0.85rem;">{v["Verdict"]}</span>'
+            f'</div>'
+            for v in _home_verdicts[:3]
+        )
+    else:
+        moves_html = '<div style="color:#94a3b8; margin-top:6px;">No cut or trade candidates right now.</div>'
+    st.markdown(f"""
+    <div class="trade-card">
+        <div style="color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em;">Actionable Roster Moves</div>
+        {moves_html}
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
 
@@ -1209,6 +1279,19 @@ with tabs[4]:
     render_tab_header("📋", "Roster Explorer",
                       "Position grades, depth chart, cap overview, and cut-or-keep analysis")
 
+    if ROSTER_WARNINGS:
+        with st.expander(
+            f"⚠️ {len(ROSTER_WARNINGS)} data quality issue(s) found in the roster CSV",
+            expanded=False,
+        ):
+            st.caption(
+                "Found automatically when the roster loaded — fix these directly "
+                "in `data/packers_roster.csv`. They don't block the app, but "
+                "anything flagged here (a garbled name, an out-of-range stat) "
+                "will show up as-is everywhere, including AI GM answers.")
+            for w in ROSTER_WARNINGS:
+                st.markdown(f"- {w}")
+
     rcol1, rcol2 = st.columns([1, 3])
 
     with rcol1:
@@ -1838,12 +1921,36 @@ with tabs[9]:
                     <div style="margin-top:6px;">{source_badge}</div>
                 </div>
                 """, unsafe_allow_html=True)
-                if st.button(f"🗑️ Remove {rep['Name']}", key=f"ai_gm_remove_{rep['_id']}"):
-                    st.session_state.ai_gm_players = ai_gm.remove_from_list(
-                        st.session_state.ai_gm_players, rep["_id"])
-                    st.session_state.ai_gm_log = [
-                        r for r in st.session_state.ai_gm_log if r["_id"] != rep["_id"]]
-                    st.rerun()
+                rm_col, regen_col = st.columns(2)
+                with rm_col:
+                    if st.button("🗑️ Remove", key=f"ai_gm_remove_{rep['_id']}",
+                                use_container_width=True):
+                        st.session_state.ai_gm_players = ai_gm.remove_from_list(
+                            st.session_state.ai_gm_players, rep["_id"])
+                        st.session_state.ai_gm_log = [
+                            r for r in st.session_state.ai_gm_log if r["_id"] != rep["_id"]]
+                        st.rerun()
+                with regen_col:
+                    # Regenerating a heuristic blurb would just reproduce the
+                    # same deterministic text — only worth offering when
+                    # Claude is actually writing the narrative.
+                    if ai_client.is_available():
+                        if st.button("🔄 Regenerate", key=f"ai_gm_regen_{rep['_id']}",
+                                    use_container_width=True):
+                            source_player = next(
+                                (p for p in st.session_state.ai_gm_players
+                                 if p["_id"] == rep["_id"]), None)
+                            if source_player is not None:
+                                with st.spinner("Asking Claude for a fresh take..."):
+                                    new_blurb = ai_client.generate_scouting_narrative(
+                                        source_player, rep, MY_TEAM)
+                                if new_blurb:
+                                    rep["blurb"] = new_blurb
+                                    rep["ai_generated"] = True
+                                else:
+                                    st.warning(
+                                        "Regeneration failed — keeping the previous version.")
+                            st.rerun()
 
     # ── Ask the AI GM — free-form chat grounded in real roster data ──
     st.markdown("---")
@@ -1872,9 +1979,27 @@ with tabs[9]:
                 st.markdown(msg["content"])
 
         if st.session_state.ai_gm_chat:
-            if st.button("🗑️ Clear chat", key="ai_gm_chat_clear"):
-                st.session_state.ai_gm_chat = []
-                st.rerun()
+            clear_col, regen_col = st.columns(2)
+            with clear_col:
+                if st.button("🗑️ Clear chat", key="ai_gm_chat_clear", use_container_width=True):
+                    st.session_state.ai_gm_chat = []
+                    st.rerun()
+            with regen_col:
+                last_msg = st.session_state.ai_gm_chat[-1]
+                if last_msg["role"] == "assistant":
+                    if st.button("🔄 Regenerate last answer", key="ai_gm_chat_regen",
+                                use_container_width=True):
+                        st.session_state.ai_gm_chat.pop()  # drop the stale answer
+                        last_question = st.session_state.ai_gm_chat[-1]["content"]
+                        history = st.session_state.ai_gm_chat[:-1][-12:]
+                        context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
+                        with st.spinner("Asking again..."):
+                            answer = ai_client.answer_gm_question(
+                                last_question, context_summary, history, MY_TEAM)
+                            if answer is None:
+                                answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
+                        st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
+                        st.rerun()
 
         if prompt := st.chat_input("e.g. Who should I trade for a pass rusher?"):
             st.session_state.ai_gm_chat.append({"role": "user", "content": prompt})

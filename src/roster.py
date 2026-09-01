@@ -67,7 +67,59 @@ def _load_rosters() -> pd.DataFrame:
         ])
 
 
+def validate_roster_df(df: pd.DataFrame) -> list[str]:
+    """Scan a loaded roster DataFrame for data-quality issues.
+
+    Returns human-readable warning strings — never raises, and the data
+    is still used as-is either way. This exists because a corrupted name
+    ("?. ???ams") sat in data/packers_roster.csv since the repo's first
+    commit and was only ever caught by chance, when it happened to show
+    up in a screenshot. Catching the same class of issue automatically
+    means it doesn't take luck next time.
+    """
+    warnings: list[str] = []
+
+    required_cols = {"Name", "Pos", "OVR", "Age"}
+    missing_cols = required_cols - set(df.columns)
+    if missing_cols:
+        warnings.append(f"Missing expected column(s): {', '.join(sorted(missing_cols))}.")
+        return warnings  # can't safely check individual rows without these
+
+    for _, row in df.iterrows():
+        name = str(row.get("Name", "")).strip()
+        label = name if name and name.lower() not in ("nan", "none") else "Unnamed player"
+
+        if not name or name.lower() in ("nan", "none"):
+            warnings.append(f"Row with no Name (Pos={row.get('Pos', '?')}, OVR={row.get('OVR', '?')}).")
+        elif "?" in name:
+            warnings.append(f"Possibly corrupted name: '{name}' — contains '?' characters.")
+
+        try:
+            ovr = int(row.get("OVR"))
+            if not (1 <= ovr <= 99):
+                warnings.append(f"{label}: OVR {ovr} is outside the normal 1-99 range.")
+        except (TypeError, ValueError):
+            warnings.append(f"{label}: OVR value '{row.get('OVR')}' is not a number.")
+
+        try:
+            age = int(row.get("Age"))
+            if not (18 <= age <= 50):
+                warnings.append(f"{label}: Age {age} looks unrealistic.")
+        except (TypeError, ValueError):
+            warnings.append(f"{label}: Age value '{row.get('Age')}' is not a number.")
+
+    dup_cols = [c for c in ["Name", "Pos", "OVR", "Age"] if c in df.columns]
+    dup_mask = df.duplicated(subset=dup_cols, keep=False)
+    if dup_mask.any():
+        dup_names = sorted(set(df.loc[dup_mask, "Name"].astype(str).tolist()))
+        shown = ", ".join(dup_names[:5]) + ("…" if len(dup_names) > 5 else "")
+        warnings.append(f"Possible duplicate entries (identical Name/Pos/OVR/Age): {shown}.")
+
+    return warnings
+
+
 ALL_ROSTERS = _load_rosters()
+ROSTER_WARNINGS = validate_roster_df(ALL_ROSTERS)
 
 TEAMS = sorted(ALL_ROSTERS["Team"].unique().tolist())
 POSITION_GROUPS = ["All", "Offense", "Defense", "Special Teams"]
