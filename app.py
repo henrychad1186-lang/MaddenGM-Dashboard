@@ -39,9 +39,61 @@ st.set_page_config(
 # ── CUSTOM CSS — Premium Dark Theme ──
 st.markdown("""
 <style>
+:root {
+    --accent-1: #6366f1;
+    --accent-2: #10b981;
+    --accent-1-soft: rgba(99, 102, 241, 0.25);
+    --accent-2-soft: rgba(16, 185, 129, 0.20);
+    --surface-1: rgba(30, 41, 59, 0.65);
+    --surface-2: rgba(20, 20, 50, 0.75);
+    --radius-md: 14px;
+    --radius-lg: 20px;
+}
+
 /* ── Trade Tab Background & Global ── */
 [data-testid="stAppViewContainer"] {
     background: linear-gradient(160deg, #0a0e17 0%, #111827 50%, #0f172a 100%);
+}
+
+/* ── Hero Header ── */
+.hero-title {
+    background: linear-gradient(90deg, #f1f5f9 15%, var(--accent-1) 65%, var(--accent-2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    font-size: 2.3rem; font-weight: 900; margin-bottom: 0.3rem; line-height: 1.2;
+}
+.hero-tagline { color: #94a3b8; font-size: 1rem; margin-bottom: 0.5rem; }
+
+/* ── Consistent Tab Header (icon + gradient title, every tab) ── */
+.tab-header { text-align: center; margin-bottom: 0.2rem; }
+.tab-header h2 {
+    background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    font-size: 1.9rem; font-weight: 800; margin-bottom: 0;
+}
+.tab-header p { color: #94a3b8; font-size: 0.92rem; margin-top: 0.3rem; }
+
+/* ── KPI Cards ── */
+.kpi-card {
+    background: linear-gradient(135deg, var(--surface-2), rgba(40,40,70,0.55));
+    border: 1px solid var(--accent-1-soft);
+    border-radius: var(--radius-md);
+    padding: 1.1rem 1.2rem;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+}
+.kpi-label {
+    color: #94a3b8; font-size: 0.78rem; text-transform: uppercase;
+    letter-spacing: 0.06em; font-weight: 600;
+}
+.kpi-value { font-size: 1.9rem; font-weight: 800; color: #f1f5f9; margin: 0.2rem 0; }
+.kpi-delta-up { color: var(--accent-2); font-size: 0.82rem; font-weight: 700; }
+.kpi-delta-down { color: #ef4444; font-size: 0.82rem; font-weight: 700; }
+
+/* ── Sidebar Expander Grouping ── */
+[data-testid="stSidebar"] [data-testid="stExpander"] {
+    border: 1px solid rgba(99,102,241,0.18);
+    border-radius: var(--radius-md);
+    margin-bottom: 0.7rem;
+    background: rgba(20,20,45,0.35);
 }
 
 /* ── Glassmorphism Cards ── */
@@ -186,11 +238,42 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Madden NFL 27: Franchise Strategy Audit")
+
+# ── SHARED UI HELPERS — keep every tab's header/cards visually consistent ──
+
+def render_tab_header(icon: str, title: str, subtitle: str = "") -> None:
+    """Gradient icon-title header + divider, used at the top of every tab."""
+    subtitle_html = f"<p>{subtitle}</p>" if subtitle else ""
+    st.markdown(f"""
+    <div class="tab-header">
+        <h2>{icon} {title}</h2>
+        {subtitle_html}
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+
+
+def _kpi_card_html(label: str, value: str, delta: str = "", delta_positive: bool = True) -> str:
+    delta_html = ""
+    if delta:
+        cls = "kpi-delta-up" if delta_positive else "kpi-delta-down"
+        arrow = "▲" if delta_positive else "▼"
+        delta_html = f'<div class="{cls}">{arrow} {delta}</div>'
+    return f"""
+    <div class="kpi-card">
+        <div class="kpi-label">{label}</div>
+        <div class="kpi-value">{value}</div>
+        {delta_html}
+    </div>
+    """
+
+
+st.markdown('<div class="hero-title">🏈 Madden NFL 27: Franchise Strategy Audit</div>',
+            unsafe_allow_html=True)
 st.markdown(
-    "UI optimized for **Madden 27** franchise workflows. "
-    "Featuring upgraded **Coach DNA** and **Wear & Tear** insights."
-)
+    '<div class="hero-tagline">UI optimized for <b>Madden 27</b> franchise '
+    'workflows — upgraded <b>Coach DNA</b> and <b>Wear &amp; Tear</b> insights.</div>',
+    unsafe_allow_html=True)
 
 # --- 1. DATA ENGINE ---
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -272,107 +355,106 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
     return df, warnings
 
 
-st.sidebar.header("Data Import")
+with st.sidebar.expander("📡 Data Import", expanded=True):
+    # ── Live Google Sheet Sync ──
+    sheet_url = st.text_input(
+        "Google Sheet CSV URL",
+        value="",
+        placeholder="Paste your published CSV link",
+        help="Publish your Google Sheet (File → Share → Publish to web → CSV) and paste the URL here.",
+    )
 
-# ── Live Google Sheet Sync ──
-sheet_url = st.sidebar.text_input(
-    "📡 Google Sheet CSV URL",
-    value="",
-    placeholder="Paste your published CSV link",
-    help="Publish your Google Sheet (File → Share → Publish to web → CSV) and paste the URL here.",
-)
+    uploaded_file = st.file_uploader(
+        "Or upload CSV/Excel", type=["csv", "xlsx"]
+    )
 
-uploaded_file = st.sidebar.file_uploader(
-    "Or upload CSV/Excel", type=["csv", "xlsx"]
-)
+    df = None  # will be set by one of the branches
 
-df = None  # will be set by one of the branches
+    prep_warnings: list[str] = []
 
-prep_warnings: list[str] = []
-
-if sheet_url and sheet_url.strip():
-    try:
-        df, prep_warnings = _load_game_log_from_url(sheet_url.strip())
-        # Cache locally so it works offline next time
+    if sheet_url and sheet_url.strip():
         try:
-            df.to_csv(_GAME_LOGS_CSV, index=False)
-        except OSError:
-            pass  # read-only filesystem (e.g. Streamlit Cloud)
-        st.sidebar.success(f"📡 Live Sheet Synced — {len(df)} games!")
-    except Exception as e:
-        st.sidebar.warning(f"Sheet sync failed: {e}")
-        st.sidebar.info("Falling back to local data.")
+            df, prep_warnings = _load_game_log_from_url(sheet_url.strip())
+            # Cache locally so it works offline next time
+            try:
+                df.to_csv(_GAME_LOGS_CSV, index=False)
+            except OSError:
+                pass  # read-only filesystem (e.g. Streamlit Cloud)
+            st.success(f"📡 Live Sheet Synced — {len(df)} games!")
+        except Exception as e:
+            st.warning(f"Sheet sync failed: {e}")
+            st.info("Falling back to local data.")
 
-if df is None and uploaded_file:
-    try:
-        df, prep_warnings = _load_game_log_from_upload(uploaded_file.getvalue(), uploaded_file.name)
-        st.sidebar.success("Custom Data Loaded!")
-    except Exception as e:
-        st.error(f"Error loading file: {e}")
-        st.stop()
+    if df is None and uploaded_file:
+        try:
+            df, prep_warnings = _load_game_log_from_upload(uploaded_file.getvalue(), uploaded_file.name)
+            st.success("Custom Data Loaded!")
+        except Exception as e:
+            st.error(f"Error loading file: {e}")
+            st.stop()
 
-if df is None and os.path.exists(_GAME_LOGS_CSV):
-    df, prep_warnings = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
-    st.sidebar.success("📊 Local Franchise Data Loaded!")
+    if df is None and os.path.exists(_GAME_LOGS_CSV):
+        df, prep_warnings = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
+        st.success("📊 Local Franchise Data Loaded!")
 
-if df is None:
-    # Fallback demo data
-    data = [
-        {"Game_ID": "G1", "Team": "DEMO", "Opponent": "JAX",
-         "Score_Final": "34-10", "TOP": "27:45", "Playbook": "WestCoast", "Fatigue": 12},
-    ]
-    df, prep_warnings = _prepare_game_log(pd.DataFrame(data))
-    st.sidebar.info("Using Demo Data")
+    if df is None:
+        # Fallback demo data
+        data = [
+            {"Game_ID": "G1", "Team": "DEMO", "Opponent": "JAX",
+             "Score_Final": "34-10", "TOP": "27:45", "Playbook": "WestCoast", "Fatigue": 12},
+        ]
+        df, prep_warnings = _prepare_game_log(pd.DataFrame(data))
+        st.info("Using Demo Data")
 
 for _w in prep_warnings:
     st.warning(_w)
 
 # --- DASHBOARD QUICK FILTERS ---
-st.sidebar.header("Dashboard View")
 all_game_count = len(df)
 
-result_options = ["WIN", "LOSS"] if "Result" in df.columns else []
-selected_results = (
-    st.sidebar.multiselect("Results", result_options, default=result_options)
-    if result_options else []
-)
-
-playbook_options = (
-    sorted(df["Playbook"].dropna().unique().tolist())
-    if "Playbook" in df.columns else []
-)
-selected_playbooks = (
-    st.sidebar.multiselect(
-        "Playbooks",
-        playbook_options,
-        default=playbook_options,
+with st.sidebar.expander("🎚️ Dashboard Filters", expanded=False):
+    result_options = ["WIN", "LOSS"] if "Result" in df.columns else []
+    selected_results = (
+        st.multiselect("Results", result_options, default=result_options)
+        if result_options else []
     )
-    if playbook_options else []
-)
 
-games_window = st.sidebar.selectbox(
-    "Games Window",
-    ["All Games", "Last 4", "Last 8", "Last 12"],
-    index=0,
-)
-
-filtered_df = df.copy()
-if "Result" in filtered_df.columns:
-    filtered_df = (
-        filtered_df[filtered_df["Result"].isin(selected_results)]
-        if selected_results else filtered_df.iloc[0:0]
+    playbook_options = (
+        sorted(df["Playbook"].dropna().unique().tolist())
+        if "Playbook" in df.columns else []
     )
-if "Playbook" in filtered_df.columns and playbook_options:
-    filtered_df = (
-        filtered_df[filtered_df["Playbook"].isin(selected_playbooks)]
-        if selected_playbooks else filtered_df.iloc[0:0]
+    selected_playbooks = (
+        st.multiselect(
+            "Playbooks",
+            playbook_options,
+            default=playbook_options,
+        )
+        if playbook_options else []
     )
-if games_window != "All Games" and not filtered_df.empty:
-    recent_games = int(games_window.split(" ")[1])
-    filtered_df = filtered_df.tail(recent_games)
 
-df = filtered_df
-st.sidebar.caption(f"Showing {len(df)} of {all_game_count} games")
+    games_window = st.selectbox(
+        "Games Window",
+        ["All Games", "Last 4", "Last 8", "Last 12"],
+        index=0,
+    )
+
+    filtered_df = df.copy()
+    if "Result" in filtered_df.columns:
+        filtered_df = (
+            filtered_df[filtered_df["Result"].isin(selected_results)]
+            if selected_results else filtered_df.iloc[0:0]
+        )
+    if "Playbook" in filtered_df.columns and playbook_options:
+        filtered_df = (
+            filtered_df[filtered_df["Playbook"].isin(selected_playbooks)]
+            if selected_playbooks else filtered_df.iloc[0:0]
+        )
+    if games_window != "All Games" and not filtered_df.empty:
+        recent_games = int(games_window.split(" ")[1])
+        filtered_df = filtered_df.tail(recent_games)
+
+    df = filtered_df
+    st.caption(f"Showing {len(df)} of {all_game_count} games")
 
 # --- GLOBAL TEAM SELECTOR ---
 st.sidebar.header("My Team")
@@ -401,20 +483,20 @@ else:
     EFFECTIVE_TRADE_ROSTERS = TRADE_ROSTERS
 
 # --- 2. WIN PROBABILITY PREDICTOR ---
-st.sidebar.header("Coach DNA: Live Predictor")
-st.sidebar.info("Uses Madden 27 Real-Time Coaching AI logic.")
-user_top = st.sidebar.slider(
-    "Current Time of Possession (Mins)", 0, 45, 20
-)
-user_fatigue = st.sidebar.slider(
-    "Team Wear & Tear (%)", 0, 100, 15
-)
+with st.sidebar.expander("🧠 Coach DNA: Live Predictor", expanded=False):
+    st.caption("Uses Madden 27 Real-Time Coaching AI logic.")
+    user_top = st.slider(
+        "Current Time of Possession (Mins)", 0, 45, 20
+    )
+    user_fatigue = st.slider(
+        "Team Wear & Tear (%)", 0, 100, 15
+    )
 
-win_prob = 1 / (1 + np.exp(-(0.1 * user_top - 0.05 * user_fatigue)))
-st.sidebar.metric(
-    "Projected Win Probability", f"{win_prob * 100:.1f}%"
-)
-st.sidebar.progress(float(win_prob))
+    win_prob = 1 / (1 + np.exp(-(0.1 * user_top - 0.05 * user_fatigue)))
+    st.metric(
+        "Projected Win Probability", f"{win_prob * 100:.1f}%"
+    )
+    st.progress(float(win_prob))
 
 # --- EMPTY DATA GUARD ---
 if df.empty or len(df) == 0:
@@ -430,7 +512,7 @@ if df.empty or len(df) == 0:
     """)
 
 # --- 3. DASHBOARD VISUALS ---
-st.markdown("### Franchise Key Performance Indicators (KPIs)")
+st.markdown("#### 📊 Franchise Key Performance Indicators")
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
 avg_pts_for = df["Points_For"].mean() if "Points_For" in df.columns else 0
@@ -442,26 +524,27 @@ win_rate = (
     if "Result" in df.columns
     else 0
 )
+pts_for_delta = avg_pts_for - 24
+pts_against_delta = avg_pts_against - 21
 
 with kpi1:
-    st.metric(
-        "Avg Points Scored",
-        f"{avg_pts_for:.1f}",
-        delta=f"{avg_pts_for - 24:.1f} vs League Avg",
-    )
+    st.markdown(_kpi_card_html(
+        "Avg Points Scored", f"{avg_pts_for:.1f}",
+        f"{abs(pts_for_delta):.1f} vs League Avg", pts_for_delta >= 0,
+    ), unsafe_allow_html=True)
 with kpi2:
-    st.metric(
-        "Avg Points Allowed",
-        f"{avg_pts_against:.1f}",
-        delta=f"{avg_pts_against - 21:.1f} vs League Avg",
-        delta_color="inverse",
-    )
+    # Lower points allowed is better — a negative delta (allowing fewer
+    # than league avg) is the "good" direction here, so it's green.
+    st.markdown(_kpi_card_html(
+        "Avg Points Allowed", f"{avg_pts_against:.1f}",
+        f"{abs(pts_against_delta):.1f} vs League Avg", pts_against_delta <= 0,
+    ), unsafe_allow_html=True)
 with kpi3:
-    st.metric("Win Rate", f"{win_rate:.1f}%")
+    st.markdown(_kpi_card_html("Win Rate", f"{win_rate:.1f}%"), unsafe_allow_html=True)
 with kpi4:
-    st.metric("Games Tracked", len(df))
+    st.markdown(_kpi_card_html("Games Tracked", str(len(df))), unsafe_allow_html=True)
 
-st.divider()
+st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────
 # TABS — Original + New Features
@@ -481,9 +564,11 @@ tabs = st.tabs([
 
 # ── TAB 1: Scheme Performance ──
 with tabs[0]:
+    render_tab_header("📊", "Scheme Performance",
+                      "Time of possession, score differential, and momentum by scheme")
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.subheader("TOP vs Score Differential by Scheme")
+        st.markdown("#### TOP vs Score Differential by Scheme")
         if "TOP_Mins" in df.columns and "Score_Diff" in df.columns:
             scatter_df = df.copy()
             if "Points_For" in scatter_df.columns:
@@ -505,7 +590,7 @@ with tabs[0]:
         else:
             st.warning("Insufficient data for Strategy Map.")
     with col2:
-        st.subheader("Scheme Efficiency")
+        st.markdown("#### Scheme Efficiency")
         if "Playbook" in df.columns and "Points_For" in df.columns:
             scheme_perf = (
                 df.groupby("Playbook")["Points_For"]
@@ -522,7 +607,7 @@ with tabs[0]:
     # ── Scheme Head-to-Head Breakdown ──
     if "Playbook" in df.columns and len(df["Playbook"].dropna().unique()) > 1:
         st.markdown("---")
-        st.subheader("📋 Scheme Head-to-Head Breakdown")
+        st.markdown("#### 📋 Scheme Head-to-Head Breakdown")
 
         schemes = df["Playbook"].dropna().unique().tolist()
         scheme_stats = {}
@@ -624,7 +709,7 @@ with tabs[0]:
     # ── Win Probability / Momentum Curve ──
     if "Result" in df.columns and len(df) > 1:
         st.markdown("---")
-        st.subheader("📈 Season Momentum Tracker")
+        st.markdown("#### 📈 Season Momentum Tracker")
         momentum_df = df.copy()
         momentum_df = momentum_df.reset_index(drop=True)
         momentum_df["Game_Num"] = range(1, len(momentum_df) + 1)
@@ -694,10 +779,8 @@ with tabs[0]:
 
 # ── TAB 2: Wear & Tear Impact ──
 with tabs[1]:
-    st.subheader("The 'Wear & Tear' Cost")
-    st.write(
-        "How turnovers, defensive breakdowns, and fatigue impact your franchise."
-    )
+    render_tab_header("💪", "Wear &amp; Tear",
+                      "How turnovers, defensive breakdowns, and fatigue impact your franchise")
 
     if "Fatigue" in df.columns and "Points_For" in df.columns:
         fig_fatigue = px.bar(
@@ -754,16 +837,8 @@ with tabs[1]:
 
 # ── TAB 3: Trade Machine ──
 with tabs[2]:
-    # Section header with gradient divider
-    st.markdown('<div style="text-align:center;"><h2 style="'
-                'background: linear-gradient(90deg, #6366f1, #10b981);'
-                '-webkit-background-clip: text; -webkit-text-fill-color: transparent;'
-                'font-size: 2rem; margin-bottom: 0;">'
-                '🏈 War Room 2.0</h2>'
-                '<p style="color:#94a3b8; font-size:0.95rem;">'
-                'Find trade partners · Evaluate deals · AI counter-offers</p></div>',
-                unsafe_allow_html=True)
-    st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+    render_tab_header("🏈", "War Room 2.0",
+                      "Find trade partners · Evaluate deals · AI counter-offers")
 
     tmcol1, tmcol2 = st.columns([1, 1], gap="large")
 
@@ -1013,7 +1088,8 @@ with tabs[2]:
 
 # ── TAB 4: Dynasty ──
 with tabs[3]:
-    st.subheader("🏛️ Dynasty — Franchise Legacy")
+    render_tab_header("🏛️", "Dynasty — Franchise Legacy",
+                      "Season archives, era tracking, and career leaderboards")
 
     history = load_history()
 
@@ -1130,7 +1206,8 @@ with tabs[3]:
 
 # ── TAB 5: Roster Explorer ──
 with tabs[4]:
-    st.subheader("📋 Roster Explorer")
+    render_tab_header("📋", "Roster Explorer",
+                      "Position grades, depth chart, cap overview, and cut-or-keep analysis")
 
     rcol1, rcol2 = st.columns([1, 3])
 
@@ -1371,8 +1448,8 @@ with tabs[4]:
 
 # ── TAB 6: Season Awards ──
 with tabs[5]:
-    st.subheader("🏆 Season Awards")
-    st.markdown("Auto-generated awards based on your current roster data.")
+    render_tab_header("🏆", "Season Awards",
+                      "Auto-generated awards based on your current roster data")
 
     roster_full = get_roster(MY_TEAM, "All")
     if not roster_full.empty:
@@ -1449,9 +1526,8 @@ with tabs[5]:
 
 # ── TAB 7: Coach DNA ──
 with tabs[6]:
-    st.subheader("🎯 Head Coach DNA Profile")
-    st.markdown(
-        "Your coaching identity, computed from your franchise game data.")
+    render_tab_header("🎯", "Head Coach DNA Profile",
+                      "Your coaching identity, computed from your franchise game data")
 
     if ("Pass_Yards" in df.columns and "Rush_Yards" in df.columns
             and "Result" in df.columns and len(df) >= 3):
@@ -1547,8 +1623,8 @@ with tabs[6]:
 
 # ── TAB 8: Progression Tracker ──
 with tabs[7]:
-    st.subheader("📈 Player Progression Tracker")
-    st.markdown("Snapshot your roster OVRs over time to track development.")
+    render_tab_header("📈", "Player Progression Tracker",
+                      "Snapshot your roster OVRs over time to track development")
 
     # Snapshot controls
     snap_c1, snap_c2, snap_c3 = st.columns([1, 1, 2])
@@ -1603,21 +1679,14 @@ with tabs[7]:
 
 # ── TAB 9: Raw Data ──
 with tabs[8]:
-    st.subheader("Historical Game Logs")
+    render_tab_header("🗂️", "Raw Data", "Full historical game log table")
     st.dataframe(df)
 
 # ── TAB 10: AI GM Assistant — plug in new players dynamically ──
 with tabs[9]:
-    st.markdown('<div style="text-align:center;"><h2 style="'
-                'background: linear-gradient(90deg, #6366f1, #10b981);'
-                '-webkit-background-clip: text; -webkit-text-fill-color: transparent;'
-                'font-size: 2rem; margin-bottom: 0;">'
-                '🤖 AI GM Assistant</h2>'
-                '<p style="color:#94a3b8; font-size:0.95rem;">'
-                'Scout a draft pick, UDFA, or trade target — plug them into the '
-                f'{MY_TEAM} roster and get an instant AI grade.</p></div>',
-                unsafe_allow_html=True)
-    st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+    render_tab_header("🤖", "AI GM Assistant",
+                      f"Scout a draft pick, UDFA, or trade target — plug them into the "
+                      f"{MY_TEAM} roster and get an instant AI grade")
 
     if ai_client.is_available():
         st.markdown('<span style="background:#00e67620; color:#00e676; '
