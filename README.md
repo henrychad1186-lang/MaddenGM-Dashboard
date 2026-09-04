@@ -107,6 +107,31 @@ either way. The AI GM Assistant tab shows a badge (🟢 Live Claude
 scouting / ⚪ Heuristic scouting) so it's always clear which mode is active,
 and each report card is tagged ✨ Claude or ⚙️ Heuristic accordingly.
 
+## Project Layout
+
+```
+app.py            Entry point — page config, per-rerun state, tab dispatch
+views/            One module per tab; all Streamlit rendering lives here
+  theme.py          Stylesheet + shared HTML builders
+  sidebar.py        Data import, filters, team selector
+  cache.py          Cached front door to the src/ engines
+  context.py        AppContext — the state each tab renders against
+src/              Engines and analysis. No Streamlit, so it's testable
+  roster.py         Roster loading, cap summary, position grades
+  trade_engine.py   Trade values, partner finding, deal evaluation
+  roster_analyzer.py  Cut/keep verdicts
+  analytics.py      Scheme stats, momentum, Coach DNA, season awards
+  ai_gm.py          Player validation, scouting, positional needs
+  ai_client.py      Optional Claude narratives and chat
+tests/            pytest suite over src/ and the pure view helpers
+```
+
+The split matters for two reasons. Streamlit reruns the whole script on
+every interaction and runs every tab body whether or not it's visible, so
+`views/cache.py` keeps repeated engine calls from recomputing identical
+results. And keeping `src/` free of Streamlit imports is what lets the
+analysis be tested without a browser.
+
 ## GitHub Actions
 
 Automated Python linting on every push. Check the [Actions tab](https://github.com/henrychad1186-lang/MaddenGM-Dashboard/actions) for build status.
