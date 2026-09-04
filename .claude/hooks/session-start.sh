@@ -7,6 +7,12 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# Async: the session starts immediately instead of waiting on these pip
+# installs. Trade-off is a brief window where a tool call in the very
+# first turn could run before dependencies finish — acceptable here since
+# this repo's deps are lightweight and usually already cached.
+echo '{"async": true, "asyncTimeout": 300000}'
+
 cd "$CLAUDE_PROJECT_DIR"
 
 # Note: deliberately NOT running `pip install --upgrade pip` here — in
