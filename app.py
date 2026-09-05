@@ -12,6 +12,7 @@ from src.trade_engine import (
     get_trade_value,
     find_trade_partners,
     evaluate_trade,
+    parse_salary,
 )
 from src.dynasty import load_history, archive_season, get_career_leaders
 from src.roster_analyzer import analyze_roster
@@ -1555,11 +1556,13 @@ with tabs[5]:
         # Iron Man: oldest player above 80 OVR
         vet = award_df[(award_df["Age"] >= 29) & (award_df["OVR"] >= 80)]
         iron = vet.loc[vet["Age"].idxmax()] if not vet.empty else None
-        # Best Contract: highest OVR with lowest penalty
-        award_df["_pen"] = award_df.get("Penalty", pd.Series([0]*len(award_df))).apply(
-            lambda x: float(str(x).replace("$", "").replace(
-                "M", "").replace("K", "").strip() or 0)
-        )
+        # Best Contract: highest OVR with lowest penalty.
+        # Parse dead cap with the trade engine's parser rather than a local
+        # lambda — the one that used to live here stripped the "K" suffix
+        # without dividing by 1000, so a $600K hit was scored as $600M and
+        # the cheapest contracts on the roster ranked as the worst.
+        award_df["_pen"] = award_df.get(
+            "Penalty", pd.Series([0] * len(award_df))).apply(parse_salary)
         has_pen = award_df[award_df["_pen"] > 0]
         if not has_pen.empty:
             has_pen = has_pen.copy()
