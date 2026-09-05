@@ -12,7 +12,7 @@ from src.trade_engine import (
     get_trade_value,
     find_trade_partners,
     evaluate_trade,
-    _parse_salary,
+    parse_salary,
 )
 from src.dynasty import load_history, archive_season, get_career_leaders
 from src.roster_analyzer import analyze_roster
@@ -1562,7 +1562,7 @@ with tabs[5]:
         # without dividing by 1000, so a $600K hit was scored as $600M and
         # the cheapest contracts on the roster ranked as the worst.
         award_df["_pen"] = award_df.get(
-            "Penalty", pd.Series([0] * len(award_df))).apply(_parse_salary)
+            "Penalty", pd.Series([0] * len(award_df))).apply(parse_salary)
         has_pen = award_df[award_df["_pen"] > 0]
         if not has_pen.empty:
             has_pen = has_pen.copy()

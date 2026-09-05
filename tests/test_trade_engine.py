@@ -4,7 +4,7 @@ counter-offers, and trade evaluation."""
 import math
 
 from src.trade_engine import (
-    _parse_salary,
+    parse_salary,
     get_trade_value,
     find_trade_partners,
     generate_counter_offer,
@@ -21,19 +21,19 @@ def _player(**overrides) -> dict:
 
 class TestParseSalary:
     def test_millions(self):
-        assert _parse_salary("$3M") == 3.0
-        assert _parse_salary("$1.29M") == 1.29
+        assert parse_salary("$3M") == 3.0
+        assert parse_salary("$1.29M") == 1.29
 
     def test_thousands_converted_to_millions(self):
-        assert _parse_salary("$600K") == 0.6
+        assert parse_salary("$600K") == 0.6
 
     def test_missing_values_are_zero(self):
-        assert _parse_salary(None) == 0.0
-        assert _parse_salary("") == 0.0
-        assert _parse_salary(float("nan")) == 0.0
+        assert parse_salary(None) == 0.0
+        assert parse_salary("") == 0.0
+        assert parse_salary(float("nan")) == 0.0
 
     def test_unparseable_string_is_zero(self):
-        assert _parse_salary("not a number") == 0.0
+        assert parse_salary("not a number") == 0.0
 
 
 class TestTradeValueCore:

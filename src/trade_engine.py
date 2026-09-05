@@ -116,8 +116,12 @@ DRAFT_PICK_VALUES = [
 # CORE FUNCTIONS
 # ──────────────────────────────────────────────
 
-def _parse_salary(val) -> float:
-    """Convert salary strings like '$3M', '$1.29M', '$600K' to float millions."""
+def parse_salary(val) -> float:
+    """Convert salary strings like '$3M', '$1.29M', '$600K' to float millions.
+
+    Public because contract figures are parsed outside this module too —
+    every caller must agree that '$600K' is 0.6, not 600.
+    """
     if pd.isna(val) or val is None or str(val).strip() == "":
         return 0.0
     s = str(val).strip().replace("$", "").replace(",", "")
@@ -194,8 +198,8 @@ def get_trade_value(player: dict) -> float:
     # ── CONTRACT CAP IMPACT ──
     # Cap savings = team-friendly deal → more attractive to trade for
     # Dead-cap penalty = costly to cut/trade → reduces trade appeal
-    savings = _parse_salary(player.get("Savings"))
-    penalty = _parse_salary(player.get("Penalty"))
+    savings = parse_salary(player.get("Savings"))
+    penalty = parse_salary(player.get("Penalty"))
 
     if savings > 0 or penalty > 0:
         # Savings bonus: up to +8% for very cap-friendly deals (>$5M savings)
