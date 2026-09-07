@@ -15,6 +15,7 @@ from src.trade_engine import (
     parse_salary,
 )
 from src.dynasty import load_history, archive_season, get_career_leaders
+from src.theme import RANK_COLORS, VERDICT_COLORS, rank_color
 from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
@@ -50,6 +51,33 @@ st.markdown("""
     --surface-2: rgba(20, 20, 50, 0.75);
     --radius-md: 14px;
     --radius-lg: 20px;
+
+    /* ── Semantic scale — ACTION REQUIRED, one meaning only ──
+       Use for verdicts (KEEP/TRADE/CUT) and positional need levels.
+       Never for ratings: green here means "no action needed", not "good". */
+    --status-good: #10b981;
+    --status-warn: #f59e0b;
+    --status-bad:  #ef4444;
+
+    /* ── Sequential scale — QUALITY, low to high ──
+       Use for OVR, letter grades, tiers and trade value. Deliberately
+       blue-violet rather than red/amber/green so a low rating never reads
+       as "take action" and a high one never reads as "leave it alone". */
+    --rank-1: #94a3b8;   /* lowest  —  6.96:1 */
+    --rank-2: #7dd3fc;   /*          10.71:1 */
+    --rank-3: #a5b4fc;   /*           8.96:1 */
+    --rank-4: #c4b5fd;   /* highest —  9.67:1 */
+
+    /* ── Text ──
+       Measured against #0f172a, the darkest stop of the page gradient:
+         #666    3.11:1  FAIL   -> replaced by --text-muted
+         #64748b 3.75:1  FAIL   -> replaced by --text-muted
+         #888    5.04:1  pass   (kept)
+         #aaa    7.68:1  pass   (kept)
+       WCAG AA requires 4.5:1 for normal-size body text. */
+    --text-bright: #f1f5f9;   /* 16.30:1 */
+    --text-dim:    #cbd5e1;   /* 12.02:1 */
+    --text-muted:  #94a3b8;   /*  6.96:1 — lowest permitted here */
 }
 
 /* ── Trade Tab Background & Global ── */
@@ -63,16 +91,25 @@ st.markdown("""
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     font-size: 2.3rem; font-weight: 900; margin-bottom: 0.3rem; line-height: 1.2;
 }
-.hero-tagline { color: #94a3b8; font-size: 1rem; margin-bottom: 0.5rem; }
-
-/* ── Consistent Tab Header (icon + gradient title, every tab) ── */
-.tab-header { text-align: center; margin-bottom: 0.2rem; }
+/* ── Tab Header — single line, left aligned ──
+   Was a centred block (h2 + subtitle paragraph + divider) costing ~150px
+   at the top of every tab. Title and subtitle now share one baseline. */
+.tab-header {
+    display: flex; align-items: baseline; gap: 0.6rem;
+    flex-wrap: wrap; margin: 0 0 0.6rem 0;
+}
 .tab-header h2 {
     background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    font-size: 1.9rem; font-weight: 800; margin-bottom: 0;
+    font-size: 1.35rem; font-weight: 800; margin: 0; padding: 0;
 }
-.tab-header p { color: #94a3b8; font-size: 0.92rem; margin-top: 0.3rem; }
+.tab-header-sub { color: var(--text-muted); font-size: 0.85rem; }
+
+/* ── Card section label — the small uppercase caption on glass cards ── */
+.card-label {
+    color: var(--text-muted); font-size: 0.8rem;
+    text-transform: uppercase; letter-spacing: 0.05em;
+}
 
 /* ── KPI Cards ── */
 .kpi-card {
@@ -244,15 +281,17 @@ st.markdown("""
 # ── SHARED UI HELPERS — keep every tab's header/cards visually consistent ──
 
 def render_tab_header(icon: str, title: str, subtitle: str = "") -> None:
-    """Gradient icon-title header + divider, used at the top of every tab."""
-    subtitle_html = f"<p>{subtitle}</p>" if subtitle else ""
-    st.markdown(f"""
-    <div class="tab-header">
-        <h2>{icon} {title}</h2>
-        {subtitle_html}
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+    """Single-line tab header: gradient title with the subtitle inline.
+
+    Deliberately compact. The previous version was a centred block — an
+    <h2>, a subtitle paragraph and a divider — costing ~150px at the top
+    of every tab, which pushed real content below the fold on a laptop.
+    """
+    subtitle_html = (
+        f'<span class="tab-header-sub">{subtitle}</span>' if subtitle else "")
+    st.markdown(
+        f'<div class="tab-header"><h2>{icon} {title}</h2>{subtitle_html}</div>',
+        unsafe_allow_html=True)
 
 
 def _kpi_card_html(label: str, value: str, delta: str = "", delta_positive: bool = True) -> str:
@@ -270,12 +309,11 @@ def _kpi_card_html(label: str, value: str, delta: str = "", delta_positive: bool
     """
 
 
+# The tagline that used to sit here described the product to someone
+# already using it, and cost a line of prime vertical space above the
+# tab strip. Removed; the title alone identifies the app.
 st.markdown('<div class="hero-title">🏈 Madden NFL 27: Franchise Strategy Audit</div>',
             unsafe_allow_html=True)
-st.markdown(
-    '<div class="hero-tagline">UI optimized for <b>Madden 27</b> franchise '
-    'workflows — upgraded <b>Coach DNA</b> and <b>Wear &amp; Tear</b> insights.</div>',
-    unsafe_allow_html=True)
 
 # --- 1. DATA ENGINE ---
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -484,21 +522,50 @@ if AI_GM_EXTRA:
 else:
     EFFECTIVE_TRADE_ROSTERS = TRADE_ROSTERS
 
-# --- 2. WIN PROBABILITY PREDICTOR ---
-with st.sidebar.expander("🧠 Coach DNA: Live Predictor", expanded=False):
-    st.caption("Uses Madden 27 Real-Time Coaching AI logic.")
-    user_top = st.slider(
-        "Current Time of Possession (Mins)", 0, 45, 20
-    )
-    user_fatigue = st.slider(
-        "Team Wear & Tear (%)", 0, 100, 15
-    )
+# --- 2. WIN RATE IN COMPARABLE GAMES ---
+# This used to read `1 / (1 + exp(-(0.1*top - 0.05*fatigue)))` — a closed
+# form over two sliders that touched neither the game log nor the roster,
+# captioned "Uses Madden 27 Real-Time Coaching AI logic" and styled like
+# the app's real metrics. It returned the same ~78.6% whether the
+# franchise was 16-12 or 0-28. It now reports the franchise's actual
+# record in games resembling the slider settings, or says it can't.
+_TOP_WINDOW_MINS = 4
+_FATIGUE_WINDOW_PCT = 15
+_MIN_COMPARABLE_GAMES = 3
 
-    win_prob = 1 / (1 + np.exp(-(0.1 * user_top - 0.05 * user_fatigue)))
-    st.metric(
-        "Projected Win Probability", f"{win_prob * 100:.1f}%"
-    )
-    st.progress(float(win_prob))
+with st.sidebar.expander("🧠 Coach DNA: Live Predictor", expanded=False):
+    st.caption("Your actual record in games matching these conditions.")
+    user_top = st.slider("Current Time of Possession (Mins)", 0, 45, 20)
+    user_fatigue = st.slider("Team Wear & Tear (%)", 0, 100, 15)
+
+    if "TOP_Mins" not in df.columns or "Result" not in df.columns:
+        st.info("Needs TOP and Result columns in your game log.")
+    else:
+        _comp = df[
+            df["TOP_Mins"].sub(user_top).abs() <= _TOP_WINDOW_MINS
+        ]
+        _matched_on = f"TOP within ±{_TOP_WINDOW_MINS} min"
+        if "Fatigue" in df.columns:
+            _narrow = _comp[
+                _comp["Fatigue"].sub(user_fatigue).abs() <= _FATIGUE_WINDOW_PCT
+            ]
+            # Only narrow by fatigue if it leaves a usable sample; otherwise
+            # report the wider TOP-only match rather than a 1-game "rate".
+            if len(_narrow) >= _MIN_COMPARABLE_GAMES:
+                _comp = _narrow
+                _matched_on += f", wear within ±{_FATIGUE_WINDOW_PCT}%"
+
+        if len(_comp) < _MIN_COMPARABLE_GAMES:
+            st.metric("Win Rate in Similar Games", "—")
+            st.caption(
+                f"Only {len(_comp)} comparable game(s) on record — too few to "
+                f"quote a rate. Import more of your season to use this.")
+        else:
+            _wins = int((_comp["Result"] == "WIN").sum())
+            _rate = _wins / len(_comp)
+            st.metric("Win Rate in Similar Games", f"{_rate * 100:.0f}%")
+            st.progress(float(_rate))
+            st.caption(f"{_wins} of {len(_comp)} games · matched on {_matched_on}")
 
 # --- EMPTY DATA GUARD ---
 if df.empty or len(df) == 0:
@@ -548,90 +615,113 @@ with kpi4:
 
 st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
 
-# --- FRANCHISE HOME — at-a-glance summary before diving into tabs ---
+# --- FRANCHISE HOME — at-a-glance summary, rendered as the first tab ---
 # Pulls from the same functions every tab already uses (get_cap_summary,
-# ai_gm.positional_needs, analyze_roster) — just surfaced up front so the
-# most actionable info doesn't require a full tour of all 10 tabs.
-st.markdown("#### 🏠 Franchise Home")
+# ai_gm.positional_needs, analyze_roster). This used to render
+# unconditionally above the tab strip; together with the KPI row it pushed
+# the tabs to ~714px, below the fold on a 1366x768 laptop. It's a tab now.
+def render_franchise_home() -> None:
+    """Record, cap exposure, top needs and actionable moves for MY_TEAM."""
+    wins = int((df["Result"] == "WIN").sum()) if "Result" in df.columns else 0
+    losses = int((df["Result"] == "LOSS").sum()) if "Result" in df.columns else 0
+    cap = get_cap_summary(MY_TEAM, AI_GM_EXTRA)
+    needs = [n for n in ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA)
+             if n["level"] != "Set"]
+    needs.sort(key=lambda n: (n["level"] != "Critical", n["avg_ovr"]))
+    verdicts = [v for v in analyze_roster(MY_TEAM, AI_GM_EXTRA)
+                if v["Verdict"] != "KEEP"]
 
-_home_wins = int((df["Result"] == "WIN").sum()) if "Result" in df.columns else 0
-_home_losses = int((df["Result"] == "LOSS").sum()) if "Result" in df.columns else 0
-_home_cap = get_cap_summary(MY_TEAM, AI_GM_EXTRA)
-_home_net_cap = _home_cap["total_savings"] - _home_cap["total_penalty"]
-_home_needs = [n for n in ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA) if n["level"] != "Set"]
-_home_needs.sort(key=lambda n: (n["level"] != "Critical", n["avg_ovr"]))
-_home_verdicts = [v for v in analyze_roster(MY_TEAM, AI_GM_EXTRA) if v["Verdict"] != "KEEP"]
+    col1, col2, col3 = st.columns(3)
 
-home_col1, home_col2, home_col3 = st.columns(3)
-
-with home_col1:
-    net_color = "#10b981" if _home_net_cap >= 0 else "#ef4444"
-    st.markdown(f"""
-    <div class="trade-card">
-        <div style="color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em;">Record &amp; Cap — {MY_TEAM}</div>
-        <div style="font-size:1.8rem; font-weight:800; color:#f1f5f9; margin-top:4px;">{_home_wins}-{_home_losses}</div>
-        <div style="color:#94a3b8; font-size:0.85rem; margin-top:8px;">
-            Net Cap: <span style="color:{net_color}; font-weight:700;">${_home_net_cap:+.1f}M</span>
+    with col1:
+        # These two totals are conditional on releasing every player, so
+        # they are labelled as such. They were previously subtracted into a
+        # single "Net Cap: -$268.0M" shown in red — a number that modelled
+        # cutting the whole roster and read as franchise-ending next to the
+        # real ~$280M league cap.
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Record &amp; Cap — {MY_TEAM}</div>
+            <div style="font-size:1.8rem; font-weight:800; color:#f1f5f9; margin-top:4px;">{wins}-{losses}</div>
+            <div style="color:var(--text-muted); font-size:0.8rem; margin-top:8px;">If every player were released:</div>
+            <div style="color:var(--text-dim); font-size:0.85rem; margin-top:2px;">
+                <span style="color:var(--status-good); font-weight:700;">${cap['total_savings']:.1f}M</span> savings
+                <span style="color:var(--text-muted);">·</span>
+                <span style="color:var(--status-bad); font-weight:700;">${cap['total_penalty']:.1f}M</span> dead cap
+            </div>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-with home_col2:
-    if _home_needs:
-        needs_html = "".join(
-            f'<div style="display:flex; justify-content:space-between; margin-top:6px;">'
-            f'<span style="color:#e2e8f0;">{n["pos"]}</span>'
-            f'<span style="color:{n["color"]}; font-weight:700; font-size:0.85rem;">{n["level"]}</span>'
-            f'</div>'
-            for n in _home_needs[:3]
-        )
-    else:
-        needs_html = '<div style="color:#94a3b8; margin-top:6px;">No pressing needs — roster is set everywhere.</div>'
-    st.markdown(f"""
-    <div class="trade-card">
-        <div style="color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em;">Top Needs</div>
-        {needs_html}
-    </div>
-    """, unsafe_allow_html=True)
+    with col2:
+        if needs:
+            needs_html = "".join(
+                f'<div style="display:flex; justify-content:space-between; margin-top:6px;">'
+                f'<span style="color:var(--text-dim);">{n["pos"]}</span>'
+                f'<span style="color:{n["color"]}; font-weight:700; font-size:0.85rem;">{n["level"]}</span>'
+                f'</div>'
+                for n in needs[:3]
+            )
+        else:
+            needs_html = ('<div style="color:var(--text-muted); margin-top:6px;">'
+                          'No pressing needs — roster is set everywhere.</div>')
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Top Needs</div>
+            {needs_html}
+        </div>
+        """, unsafe_allow_html=True)
 
-with home_col3:
-    _home_verdict_colors = {"CUT": "#ff5252", "TRADE": "#ffc107"}
-    if _home_verdicts:
-        moves_html = "".join(
-            f'<div style="display:flex; justify-content:space-between; margin-top:6px;">'
-            f'<span style="color:#e2e8f0;">{v["Name"]} '
-            f'<span style="color:#64748b; font-size:0.78rem;">({v["Pos"]})</span></span>'
-            f'<span style="color:{_home_verdict_colors.get(v["Verdict"], "#94a3b8")}; '
-            f'font-weight:700; font-size:0.85rem;">{v["Verdict"]}</span>'
-            f'</div>'
-            for v in _home_verdicts[:3]
-        )
-    else:
-        moves_html = '<div style="color:#94a3b8; margin-top:6px;">No cut or trade candidates right now.</div>'
-    st.markdown(f"""
-    <div class="trade-card">
-        <div style="color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em;">Actionable Roster Moves</div>
-        {moves_html}
-    </div>
-    """, unsafe_allow_html=True)
+    with col3:
+        if verdicts:
+            moves_html = "".join(
+                f'<div style="display:flex; justify-content:space-between; margin-top:6px;">'
+                f'<span style="color:var(--text-dim);">{v["Name"]} '
+                f'<span style="color:var(--text-muted); font-size:0.78rem;">({v["Pos"]})</span></span>'
+                f'<span style="color:{VERDICT_COLORS.get(v["Verdict"], "var(--text-muted)")}; '
+                f'font-weight:700; font-size:0.85rem;">{v["Verdict"]}</span>'
+                f'</div>'
+                for v in verdicts[:3]
+            )
+        else:
+            moves_html = ('<div style="color:var(--text-muted); margin-top:6px;">'
+                          'No cut or trade candidates right now.</div>')
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Actionable Roster Moves</div>
+            {moves_html}
+        </div>
+        """, unsafe_allow_html=True)
 
-st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────
-# TABS — Original + New Features
+# TABS — Home + Original + New Features
 # ──────────────────────────────────────────────────────
-tabs = st.tabs([
-    "📊 Scheme Performance",
-    "💪 Wear & Tear",
-    "🏈 Trade Machine",
+# Home is prepended and then sliced off, so the ten original tab bodies
+# below keep their existing tabs[0]..tabs[9] indices unchanged.
+# Labels are short on purpose. The full names ("Scheme Performance",
+# "AI GM Assistant", ...) overflowed the strip into a scroll chevron even
+# at 1366px, hiding the last tabs entirely; adding Home made that worse.
+# Each tab's own header still carries the long name and description.
+_all_tabs = st.tabs([
+    "🏠 Home",
+    "📊 Schemes",
+    "💪 Wear",
+    "🏈 Trades",
     "🏛️ Dynasty",
-    "📋 Roster Explorer",
-    "🏆 Season Awards",
+    "📋 Roster",
+    "🏆 Awards",
     "🎯 Coach DNA",
     "📈 Progression",
     "🗂️ Raw Data",
-    "🤖 AI GM Assistant",
+    "🤖 AI GM",
 ])
+home_tab, tabs = _all_tabs[0], _all_tabs[1:]
+
+# ── TAB 0: Franchise Home ──
+with home_tab:
+    render_tab_header("🏠", "Franchise Home",
+                      f"Record, cap exposure, needs and moves for {MY_TEAM}")
+    render_franchise_home()
 
 # ── TAB 1: Scheme Performance ──
 with tabs[0]:
@@ -956,7 +1046,7 @@ with tabs[2]:
             <div style="position:relative; z-index:1;">
                 <div style="font-size:3rem; font-weight:900; color:{ovr_c};
                             text-shadow: 0 0 20px {ovr_c}40;">{ovr_val}</div>
-                <div style="font-size:0.8rem; color:#64748b; text-transform:uppercase;
+                <div style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;
                             letter-spacing:2px;">OVERALL</div>
                 <div style="font-size:1.6rem; font-weight:700; color:#f1f5f9;
                             margin-top:8px;">{selected_player['Name']}</div>
@@ -977,7 +1067,7 @@ with tabs[2]:
                             background: linear-gradient(90deg, #6366f1, #10b981);
                             -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
                     {player_value:,.0f}
-                    <span style="font-size:0.7rem; -webkit-text-fill-color: #64748b;
+                    <span style="font-size:0.7rem; -webkit-text-fill-color: var(--text-muted);
                                 font-weight:400;"> TRADE VALUE</span>
                 </div>
             </div>
@@ -1011,7 +1101,7 @@ with tabs[2]:
                     bgcolor='rgba(0,0,0,0)',
                     radialaxis=dict(visible=True, range=[40, 100],
                                     gridcolor='rgba(148,163,184,0.15)',
-                                    tickfont=dict(size=9, color='#64748b')),
+                                    tickfont=dict(size=9, color='#94a3b8')),
                     angularaxis=dict(gridcolor='rgba(148,163,184,0.15)',
                                      tickfont=dict(size=11, color='#cbd5e1')),
                 ),
@@ -1047,7 +1137,7 @@ with tabs[2]:
                 </div>
                 <div style="color:#94a3b8; font-size:0.85rem; margin-bottom:4px;">↳ {p['reason']}</div>
                 <div style="color:#cbd5e1; font-size:0.9rem;">Best offer: <strong>{p['best_offer_name']}</strong>
-                    <span style="color:#64748b;">({p['best_offer_pos']}, {p['best_offer_ovr']} OVR)</span></div>
+                    <span style="color:var(--text-muted);">({p['best_offer_pos']}, {p['best_offer_ovr']} OVR)</span></div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -1327,11 +1417,13 @@ with tabs[4]:
                 return f"color: {color}; font-weight: bold"
 
             def style_tier(val):
+                # Sequential scale: tier is a quality rating, not a call to
+                # action, so it must not share hues with the verdicts below.
                 colors = {
-                    "Elite": "#00e676",
-                    "Great": "#2196f3",
-                    "Average": "#ffc107",
-                    "Developing": "#ff5252",
+                    "Developing": RANK_COLORS[0],
+                    "Average": RANK_COLORS[1],
+                    "Great": RANK_COLORS[2],
+                    "Elite": RANK_COLORS[3],
                 }
                 return f"color: {colors.get(val, 'white')}; font-weight: bold"
 
@@ -1381,13 +1473,9 @@ with tabs[4]:
         tv_df.index.name = "Rank"
 
         def style_tv(val):
-            if val >= 700:
-                return "color: #00e676; font-weight: bold"
-            elif val >= 500:
-                return "color: #2196f3; font-weight: bold"
-            elif val >= 350:
-                return "color: #ffc107; font-weight: bold"
-            return "color: #ff5252; font-weight: bold"
+            # Sequential scale — trade value is a rating, not a verdict.
+            return (f"color: {rank_color(val, [350, 500, 700])}; "
+                    f"font-weight: bold")
 
         styled_tv = tv_df.style.map(style_tv, subset=["Trade Value"]).map(
             style_ovr, subset=["OVR"]).format({"Trade Value": "{:.1f}"})
@@ -1462,13 +1550,11 @@ with tabs[4]:
         with ck3:
             st.metric("🔴 Cut Candidates", n_cut)
 
-        verdict_colors = {"KEEP": "#00e676",
-                          "TRADE": "#ffc107", "CUT": "#ff5252"}
         verdict_icons = {"KEEP": "✅", "TRADE": "📦", "CUT": "✂️"}
         ck_cols = st.columns(3)
         for i, v in enumerate(verdicts):
             with ck_cols[i % 3]:
-                vc = verdict_colors[v["Verdict"]]
+                vc = VERDICT_COLORS[v["Verdict"]]
                 vi = verdict_icons[v["Verdict"]]
                 st.markdown(f"""
                 <div style="background: linear-gradient(135deg, rgba(25,25,55,0.9), rgba(45,45,75,0.7));
@@ -1500,9 +1586,16 @@ with tabs[4]:
     dc_positions = _OFF_POSITIONS if dc_side == "Offense" else _DEF_POSITIONS
 
     full_roster = get_roster(selected_team, "All", AI_GM_EXTRA)
-    dc_cols = st.columns(len(dc_positions))
+    # Wrap into rows of at most _DC_PER_ROW instead of one column per
+    # position. Nine columns across ~1000px left ~100px each, which is why
+    # names had to be truncated to surnames to fit; Streamlit columns don't
+    # wrap on their own, so it only got worse as the window narrowed.
+    _DC_PER_ROW = 5
+    dc_cols = []
     for i, pos in enumerate(dc_positions):
-        with dc_cols[i]:
+        if i % _DC_PER_ROW == 0:
+            dc_cols = st.columns(min(_DC_PER_ROW, len(dc_positions) - i))
+        with dc_cols[i % _DC_PER_ROW]:
             pos_players = full_roster[full_roster["Pos"] == pos].sort_values(
                 "OVR", ascending=False)
             st.markdown(f"<div style='text-align:center; font-weight:800; "
@@ -1518,7 +1611,7 @@ with tabs[4]:
                 st.markdown(f"""
                 <div class="dc-card {cls}">
                     <div style="font-weight:700; color:white; font-size:0.85rem;">
-                        {p['Name'].split('.')[-1].strip() if '.' in str(p['Name']) else p['Name']}
+                        {p['Name']}
                     </div>
                     <div style="font-size:1.4rem; font-weight:900; color:{oc};">
                         {ovr} {dev_icon}
@@ -1527,7 +1620,7 @@ with tabs[4]:
                 </div>
                 """, unsafe_allow_html=True)
             if pos_players.empty:
-                st.markdown("<div class='dc-card' style='color:#666;'>Empty</div>",
+                st.markdown("<div class='dc-card' style='color:var(--text-muted);'>Empty</div>",
                             unsafe_allow_html=True)
 
 # ── TAB 6: Season Awards ──
@@ -1595,13 +1688,13 @@ with tabs[5]:
                             {player['Name']}</div>
                         <div style="color: #aaa; font-size: 0.85rem;">
                             {player['Pos']} · {int(player['OVR'])} OVR · Age {int(player['Age'])}</div>
-                        <div style="color: #666; font-size: 0.7rem; margin-top: 0.4rem;">{desc}</div>
+                        <div style="color: var(--text-muted); font-size: 0.7rem; margin-top: 0.4rem;">{desc}</div>
                     </div>
                     """, unsafe_allow_html=True)
                 else:
                     st.markdown(f"""
                     <div style="background: rgba(25,25,55,0.5); border: 1px solid #333;
-                        border-radius: 16px; padding: 1.2rem; text-align: center; color: #666;">
+                        border-radius: 16px; padding: 1.2rem; text-align: center; color: var(--text-muted);">
                         <div style="font-size: 2.5rem;">{title.split(' ')[0]}</div>
                         <div>{title.split(' ', 1)[1]}</div>
                         <div style="font-size: 0.8rem;">No eligible players</div>
@@ -1909,7 +2002,7 @@ with tabs[9]:
                 vc = rep["verdict_color"]
                 source_badge = ('<span style="color:#a78bfa; font-size:0.7rem; font-weight:700;">✨ Claude</span>'
                                 if rep.get("ai_generated") else
-                                '<span style="color:#64748b; font-size:0.7rem;">⚙️ Heuristic</span>')
+                                '<span style="color:var(--text-muted); font-size:0.7rem;">⚙️ Heuristic</span>')
                 st.markdown(f"""
                 <div class="trade-card" style="border-left: 4px solid {vc};">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
