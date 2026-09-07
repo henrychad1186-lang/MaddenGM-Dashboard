@@ -1970,42 +1970,47 @@ with tabs[9]:
 
     if not ai_client.is_available():
         st.info(
-            "💬 Chat requires a live Claude connection — set `ANTHROPIC_API_KEY` "
-            "(env var locally, or Streamlit Cloud Settings → Secrets) to unlock it. "
-            "The scouting reports above still work either way.")
-    else:
-        for msg in st.session_state.ai_gm_chat:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+            "Set `ANTHROPIC_API_KEY` (locally or in Streamlit Secrets) to receive "
+            "live AI answers. You can still use the chatbox below to verify it is ready.")
 
-        if st.session_state.ai_gm_chat:
-            clear_col, regen_col = st.columns(2)
-            with clear_col:
-                if st.button("🗑️ Clear chat", key="ai_gm_chat_clear", use_container_width=True):
-                    st.session_state.ai_gm_chat = []
+    for msg in st.session_state.ai_gm_chat:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    if st.session_state.ai_gm_chat:
+        clear_col, regen_col = st.columns(2)
+        with clear_col:
+            if st.button("🗑️ Clear chat", key="ai_gm_chat_clear", use_container_width=True):
+                st.session_state.ai_gm_chat = []
+                st.rerun()
+        with regen_col:
+            last_msg = st.session_state.ai_gm_chat[-1]
+            if last_msg["role"] == "assistant" and ai_client.is_available():
+                if st.button("🔄 Regenerate last answer", key="ai_gm_chat_regen",
+                            use_container_width=True):
+                    st.session_state.ai_gm_chat.pop()  # drop the stale answer
+                    last_question = st.session_state.ai_gm_chat[-1]["content"]
+                    history = st.session_state.ai_gm_chat[:-1][-12:]
+                    context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
+                    with st.spinner("Asking again..."):
+                        answer = ai_client.answer_gm_question(
+                            last_question, context_summary, history, MY_TEAM)
+                        if answer is None:
+                            answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
+                    st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
                     st.rerun()
-            with regen_col:
-                last_msg = st.session_state.ai_gm_chat[-1]
-                if last_msg["role"] == "assistant":
-                    if st.button("🔄 Regenerate last answer", key="ai_gm_chat_regen",
-                                use_container_width=True):
-                        st.session_state.ai_gm_chat.pop()  # drop the stale answer
-                        last_question = st.session_state.ai_gm_chat[-1]["content"]
-                        history = st.session_state.ai_gm_chat[:-1][-12:]
-                        context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
-                        with st.spinner("Asking again..."):
-                            answer = ai_client.answer_gm_question(
-                                last_question, context_summary, history, MY_TEAM)
-                            if answer is None:
-                                answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
-                        st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
-                        st.rerun()
 
-        if prompt := st.chat_input("e.g. Who should I trade for a pass rusher?"):
-            st.session_state.ai_gm_chat.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            with st.chat_message("assistant"):
+    if prompt := st.chat_input("e.g. Who should I trade for a pass rusher?"):
+        st.session_state.ai_gm_chat.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        with st.chat_message("assistant"):
+            if not ai_client.is_available():
+                answer = (
+                    "Live AI chat is not configured yet. Add `ANTHROPIC_API_KEY` to "
+                    "start receiving franchise-specific answers."
+                )
+            else:
                 with st.spinner("Consulting the AI GM..."):
                     context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
                     # Exclude the prompt just appended — answer_gm_question
@@ -2016,5 +2021,5 @@ with tabs[9]:
                         prompt, context_summary, history, MY_TEAM)
                     if answer is None:
                         answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
-                st.markdown(answer)
-            st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
+            st.markdown(answer)
+        st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
