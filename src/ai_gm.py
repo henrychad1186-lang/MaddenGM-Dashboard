@@ -25,6 +25,7 @@ import pandas as pd
 
 from src import roster as roster_mod
 from src import roster_analyzer as roster_analyzer_mod
+from src import roster_csv
 from src.theme import NEED_COLORS
 from src.trade_engine import get_trade_value
 
@@ -154,6 +155,10 @@ def persist_roster(team: str, extra_players: "list[dict] | None" = None) -> bool
     try:
         df = roster_mod.get_roster(team, "All", extra_players)
         df = df.drop(columns=["Group", "_id"], errors="ignore")
+        # Write the headings the file was read with. Without this, saving
+        # an exported roster would quietly rewrite its columns into the
+        # canonical names — changing the user's file out from under them.
+        df = roster_csv.to_source_schema(df, roster_mod.SOURCE_COLUMNS)
         df.to_csv(roster_mod._ROSTER_CSV, index=False)
         return True
     except OSError:

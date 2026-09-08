@@ -30,6 +30,7 @@ from src.roster import (
     TEAMS,
     POSITION_GROUPS,
     ROSTER_WARNINGS,
+    SOURCE_COLUMN_ISSUES,
 )
 
 # --- CONFIGURATION ---
@@ -1369,6 +1370,12 @@ with tabs[3]:
 with tabs[4]:
     render_tab_header("📋", "Roster Explorer",
                       "Position grades, depth chart, cap overview, and cut-or-keep analysis")
+
+    # A CSV the loader could not read at all is a hard error, not a data
+    # quality nit — it means the app is running on demo data, so it is
+    # shown expanded rather than tucked into a collapsed expander.
+    for issue in SOURCE_COLUMN_ISSUES:
+        st.error(f"⛔ {issue}")
 
     if ROSTER_WARNINGS:
         with st.expander(

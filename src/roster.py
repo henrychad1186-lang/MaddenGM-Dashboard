@@ -6,7 +6,16 @@ Loads real roster data from data/packers_roster.csv when available.
 import os
 import pandas as pd
 
+from src import roster_csv
 from src.theme import RANK_COLORS, rank_color
+
+# Problems found while loading the CSV, surfaced in the Roster Explorer
+# alongside ROSTER_WARNINGS. Populated during _load_rosters().
+SOURCE_COLUMN_ISSUES: "list[str]" = []
+
+# The headings the roster CSV was actually read with, so writes can go
+# back out in the same schema. Populated during _load_rosters().
+SOURCE_COLUMNS: "list[str]" = []
 
 # ──────────────────────────────────────────────
 # POSITION → GROUP MAPPING
@@ -48,25 +57,43 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
 
 
+def _demo_roster() -> pd.DataFrame:
+    """Minimal stand-in used when the CSV is absent or unusable."""
+    return pd.DataFrame([
+        {"Team": "GB", "Name": "Demo Player", "Pos": "QB", "OVR": 75,
+         "Age": 25, "Dev": "Normal", "Group": "Offense"},
+    ])
+
+
 def _load_rosters() -> pd.DataFrame:
-    """Load roster data from CSV if available, otherwise use minimal demo."""
-    if os.path.exists(_ROSTER_CSV):
-        df = pd.read_csv(_ROSTER_CSV)
-        # Ensure required columns
-        if "Team" not in df.columns:
-            df["Team"] = "GB"
-        if "Dev" not in df.columns:
-            df["Dev"] = "Normal"
-        # Normalize positions and assign groups
-        df["Pos"] = df["Pos"].apply(_normalize_pos)
-        df["Group"] = df["Pos"].apply(_assign_group)
-        return df
-    else:
-        # Minimal fallback demo
-        return pd.DataFrame([
-            {"Team": "GB", "Name": "Demo Player", "Pos": "QB", "OVR": 75,
-             "Age": 25, "Dev": "Normal", "Group": "Offense"},
-        ])
+    """Load roster data from CSV if available, otherwise use minimal demo.
+
+    Falls back to the demo rather than raising: this runs at import, so a
+    malformed CSV here takes down the whole app — including the Roster
+    Explorer warning panel that would have explained the problem.
+    """
+    if not os.path.exists(_ROSTER_CSV):
+        return _demo_roster()
+
+    raw = pd.read_csv(_ROSTER_CSV)
+    # Remember the headings the file actually uses so persist_roster can
+    # write them back unchanged instead of silently recasting the file
+    # into the canonical schema.
+    SOURCE_COLUMNS[:] = list(raw.columns)
+    df = roster_csv.normalize_roster_df(raw)
+
+    missing = roster_csv.missing_required_columns(df)
+    if missing:
+        SOURCE_COLUMN_ISSUES.append(
+            f"Roster CSV is missing required column(s): {', '.join(missing)}. "
+            f"Found: {', '.join(map(str, df.columns))}. Using demo data until "
+            f"the file provides them.")
+        return _demo_roster()
+
+    # Normalize positions and assign groups
+    df["Pos"] = df["Pos"].apply(_normalize_pos)
+    df["Group"] = df["Pos"].apply(_assign_group)
+    return df
 
 
 def validate_roster_df(df: pd.DataFrame) -> list[str]:
