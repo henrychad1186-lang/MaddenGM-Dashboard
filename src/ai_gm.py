@@ -25,6 +25,7 @@ import pandas as pd
 
 from src import roster as roster_mod
 from src import roster_analyzer as roster_analyzer_mod
+from src.theme import NEED_COLORS
 from src.trade_engine import get_trade_value
 
 REQUIRED_FIELDS = ["Name", "Pos", "Age", "OVR"]
@@ -172,12 +173,15 @@ def positional_needs(team: str, extra_players: "list[dict] | None" = None) -> li
         count = len(pos_df)
         avg_ovr = round(pos_df["OVR"].mean(), 1) if count else 0.0
 
+        # Semantic scale: a need level is a call to action, so it shares
+        # hues with the KEEP/TRADE/CUT verdicts and nothing else.
         if count == 0 or (count == 1 and avg_ovr < 78):
-            level, color = "Critical", "#ff5252"
+            level = "Critical"
         elif avg_ovr < 78 or count == 2:
-            level, color = "Moderate", "#ffc107"
+            level = "Moderate"
         else:
-            level, color = "Set", "#00e676"
+            level = "Set"
+        color = NEED_COLORS[level]
 
         needs.append({
             "pos": pos, "count": count, "avg_ovr": avg_ovr,

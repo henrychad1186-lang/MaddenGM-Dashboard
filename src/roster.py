@@ -6,6 +6,8 @@ Loads real roster data from data/packers_roster.csv when available.
 import os
 import pandas as pd
 
+from src.theme import RANK_COLORS, rank_color
+
 # ──────────────────────────────────────────────
 # POSITION → GROUP MAPPING
 # ──────────────────────────────────────────────
@@ -181,15 +183,13 @@ def get_team_summary(team: str, extra_players: "list[dict] | None" = None) -> di
 
 
 def ovr_color(ovr: int) -> str:
-    """Return a CSS color string based on OVR rating tier."""
-    if ovr >= 90:
-        return "#00e676"   # Elite — green
-    elif ovr >= 80:
-        return "#2196f3"   # Great — blue
-    elif ovr >= 70:
-        return "#ffc107"   # Average — amber
-    else:
-        return "#ff5252"   # Below average — red
+    """Return a CSS color string based on OVR rating tier.
+
+    Uses the sequential (quality) scale, not the semantic one — an OVR is
+    a rating, and colouring a low one red made it read as "cut this
+    player" alongside the verdict cards that genuinely mean that.
+    """
+    return rank_color(ovr, [70, 80, 90])
 
 
 def ovr_label(ovr: int) -> str:
@@ -221,10 +221,12 @@ def _letter_grade(avg_ovr: float) -> str:
 
 
 def _grade_color(grade: str) -> str:
-    """Return a CSS color for a letter grade."""
+    """Return a CSS color for a letter grade (sequential quality scale)."""
     return {
-        "A+": "#00e676", "A": "#66bb6a", "B+": "#2196f3",
-        "B": "#42a5f5", "C": "#ffc107", "D": "#ff5252",
+        "D": RANK_COLORS[0],
+        "C": RANK_COLORS[1],
+        "B": RANK_COLORS[2], "B+": RANK_COLORS[2],
+        "A": RANK_COLORS[3], "A+": RANK_COLORS[3],
     }.get(grade, "#ffffff")
 
 
