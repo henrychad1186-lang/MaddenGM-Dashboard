@@ -197,7 +197,7 @@ _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
 st.sidebar.header("Data Import")
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def _load_game_log_from_url(url: str) -> pd.DataFrame:
     return pd.read_csv(url)
 
@@ -229,17 +229,25 @@ def _parse_top_value(value):
     return value
 
 
-def _apply_score_columns(df: pd.DataFrame) -> None:
+def _apply_score_columns(df: pd.DataFrame) -> int:
     if "Score_Final" in df.columns:
-        df[["Points_For", "Points_Against"]] = (
-            df["Score_Final"].str.split("-", expand=True).astype(int)
+        scores = df["Score_Final"].astype("string").str.extract(
+            r"^\s*(\d+)\s*-\s*(\d+)\s*$"
         )
+        df["Points_For"] = pd.to_numeric(scores[0], errors="coerce")
+        df["Points_Against"] = pd.to_numeric(scores[1], errors="coerce")
         df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
-        df["Result"] = df["Score_Diff"].apply(_result_from_score_diff)
-        return
+        df["Result"] = df["Score_Diff"].apply(
+            lambda score_diff: (
+                _result_from_score_diff(score_diff)
+                if pd.notna(score_diff)
+                else None
+            )
+        )
+        return int(df["Score_Diff"].isna().sum())
 
     if "Points_For" not in df.columns or "Points_Against" not in df.columns:
-        return
+        return 0
 
     df["Points_For"] = pd.to_numeric(df["Points_For"], errors="coerce")
     df["Points_Against"] = pd.to_numeric(df["Points_Against"], errors="coerce")
@@ -249,18 +257,21 @@ def _apply_score_columns(df: pd.DataFrame) -> None:
         df["Result"] = df["Result"].map(
             {"W": "WIN", "L": "LOSS", "WIN": "WIN", "LOSS": "LOSS"}
         ).fillna("LOSS")
-        return
+        return 0
 
     df["Result"] = df["Score_Diff"].apply(_result_from_score_diff)
+    return 0
 
 
 def _preprocess_game_log(raw_df: pd.DataFrame) -> pd.DataFrame:
     df = raw_df.copy()
 
-    try:
-        _apply_score_columns(df)
-    except Exception:
-        st.warning("Could not parse Score_Final. Ensure format is '35-10'.")
+    invalid_score_count = _apply_score_columns(df)
+    if invalid_score_count:
+        st.warning(
+            f"Could not parse {invalid_score_count} Score_Final value(s). "
+            "Ensure the format is '35-10'."
+        )
 
     if "TOP" in df.columns:
         try:

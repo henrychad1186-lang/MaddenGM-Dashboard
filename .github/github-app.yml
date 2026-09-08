@@ -1,10 +1,11 @@
+instructions: examine the repo for inconsistencies and errors. Then fix them to be ready. Apply and Pull request or merge if ready.
 scripts:
   - name: /MaddenGM-Dashboard
-    command: run dev
+    command: streamlit run app.py
     triggers: 
       - session.create
   - name: Dev space
-    command: npm run dev
+    command: streamlit run app.py
     triggers: 
       - session.create
 automation:

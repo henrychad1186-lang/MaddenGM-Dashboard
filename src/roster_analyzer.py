@@ -35,7 +35,7 @@ def _get_roster_verdict(
         return "KEEP", "Core player — franchise cornerstone"
     if ovr >= 78:
         return "KEEP", "Solid contributor — good value"
-    if age <= 24 and dev_trait in ("superstar", "x-factor", "star"):
+    if age <= 24 and dev_trait in ("superstar", "superstar x", "x-factor", "star"):
         return "KEEP", "Young dev talent — high ceiling"
     return "KEEP", "Roster depth piece"
 
