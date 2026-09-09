@@ -37,7 +37,50 @@ def _normalize_pos(pos: str) -> str:
         return "EDGE"
     if pos_upper in ("LOLB", "ROLB"):
         return "OLB"
+    if pos_upper in ("WILL", "SAM"):
+        return "OLB"
+    if pos_upper in ("MIKE",):
+        return "MLB"
     return pos_upper
+
+
+def _normalize_dev(dev: str) -> str:
+    """Normalize exported dev labels to app-supported values."""
+    raw = str(dev).strip()
+    lowered = raw.lower()
+    if lowered in {"x-factor", "x factor", "xfactor"}:
+        return "Superstar X"
+    if lowered == "superstar x":
+        return "Superstar X"
+    if lowered == "superstar":
+        return "Superstar"
+    if lowered == "star":
+        return "Star"
+    return "Normal" if not raw else raw
+
+
+def _normalize_roster_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Map exported roster headings to the app's canonical schema."""
+    alias_map = {
+        "player name": "Name",
+        "name": "Name",
+        "position": "Pos",
+        "pos": "Pos",
+        "dev trait": "Dev",
+        "dev": "Dev",
+        "cap savings": "Savings",
+        "savings": "Savings",
+        "cap penalty": "Penalty",
+        "penalty": "Penalty",
+    }
+    renames = {}
+    for col in df.columns:
+        key = str(col).strip().lower()
+        if key in alias_map:
+            renames[col] = alias_map[key]
+    if renames:
+        df = df.rename(columns=renames)
+    return df
 
 
 # ──────────────────────────────────────────────
@@ -51,12 +94,22 @@ _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
 def _load_rosters() -> pd.DataFrame:
     """Load roster data from CSV if available, otherwise use minimal demo."""
     if os.path.exists(_ROSTER_CSV):
-        df = pd.read_csv(_ROSTER_CSV)
+        df = _normalize_roster_columns(pd.read_csv(_ROSTER_CSV))
         # Ensure required columns
         if "Team" not in df.columns:
             df["Team"] = "GB"
         if "Dev" not in df.columns:
             df["Dev"] = "Normal"
+        else:
+            df["Dev"] = df["Dev"].apply(_normalize_dev)
+        if "Name" not in df.columns:
+            df["Name"] = "Unknown Player"
+        if "Pos" not in df.columns:
+            df["Pos"] = "QB"
+        if "OVR" not in df.columns:
+            df["OVR"] = 70
+        if "Age" not in df.columns:
+            df["Age"] = 25
         # Normalize positions and assign groups
         df["Pos"] = df["Pos"].apply(_normalize_pos)
         df["Group"] = df["Pos"].apply(_assign_group)

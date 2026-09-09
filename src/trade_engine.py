@@ -64,12 +64,63 @@ _CPU_DEMO = [
 ]
 
 
+def _normalize_pos(pos: str) -> str:
+    """Normalize position aliases from roster exports."""
+    pos_upper = str(pos).upper().strip()
+    if pos_upper in ("REDG", "LEDG"):
+        return "EDGE"
+    if pos_upper in ("LOLB", "ROLB", "WILL", "SAM"):
+        return "OLB"
+    if pos_upper in ("MIKE",):
+        return "MLB"
+    return pos_upper
+
+
+def _normalize_dev(dev: str) -> str:
+    """Normalize exported dev labels to trade-value supported labels."""
+    raw = str(dev).strip()
+    lowered = raw.lower()
+    if lowered in {"x-factor", "x factor", "xfactor"}:
+        return "Superstar X"
+    if lowered == "superstar x":
+        return "Superstar X"
+    if lowered == "superstar":
+        return "Superstar"
+    if lowered == "star":
+        return "Star"
+    return "Normal" if not raw else raw
+
+
+def _normalize_roster_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Map exported roster headings to canonical trade-engine schema."""
+    alias_map = {
+        "player name": "Name",
+        "name": "Name",
+        "position": "Pos",
+        "pos": "Pos",
+        "dev trait": "Dev",
+        "dev": "Dev",
+        "cap savings": "Savings",
+        "savings": "Savings",
+        "cap penalty": "Penalty",
+        "penalty": "Penalty",
+    }
+    renames = {}
+    for col in df.columns:
+        key = str(col).strip().lower()
+        if key in alias_map:
+            renames[col] = alias_map[key]
+    if renames:
+        df = df.rename(columns=renames)
+    return df
+
+
 def _load_trade_rosters() -> pd.DataFrame:
     """Load GB roster from CSV + CPU demo rosters."""
     cpu_df = pd.DataFrame(_CPU_DEMO)
 
     if os.path.exists(_ROSTER_CSV):
-        gb_df = pd.read_csv(_ROSTER_CSV)
+        gb_df = _normalize_roster_columns(pd.read_csv(_ROSTER_CSV))
         # Ensure required columns
         if "Team" not in gb_df.columns:
             gb_df["Team"] = "GB"
@@ -77,8 +128,18 @@ def _load_trade_rosters() -> pd.DataFrame:
             gb_df["Scheme"] = "WestCoast"
         if "Dev" not in gb_df.columns:
             gb_df["Dev"] = "Normal"
+        else:
+            gb_df["Dev"] = gb_df["Dev"].apply(_normalize_dev)
+        if "Name" not in gb_df.columns:
+            gb_df["Name"] = "Unknown Player"
+        if "Pos" not in gb_df.columns:
+            gb_df["Pos"] = "WR"
+        if "OVR" not in gb_df.columns:
+            gb_df["OVR"] = 70
+        if "Age" not in gb_df.columns:
+            gb_df["Age"] = 25
         # Normalize REDG/LEDG → EDGE
-        gb_df["Pos"] = gb_df["Pos"].replace({"REDG": "EDGE", "LEDG": "EDGE"})
+        gb_df["Pos"] = gb_df["Pos"].apply(_normalize_pos)
         return pd.concat([gb_df, cpu_df], ignore_index=True)
     else:
         return cpu_df
