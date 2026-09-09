@@ -137,6 +137,11 @@ def get_career_leaders(history: list[dict]) -> pd.DataFrame:
         if receiver != rusher:
             leaders[receiver]["Seasons"] += 1
 
+    if not leaders:
+        return pd.DataFrame(
+            columns=["Player", "Rush Yds", "Rec Yds", "Seasons", "Total Yds"]
+        )
+
     df = pd.DataFrame(leaders.values())
     df["Total Yds"] = df["Rush Yds"] + df["Rec Yds"]
     df = df.sort_values("Total Yds", ascending=False).reset_index(drop=True)
