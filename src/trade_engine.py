@@ -13,6 +13,13 @@ import math
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
+_COLUMN_ALIASES = {
+    "Player Name": "Name",
+    "Position": "Pos",
+    "Dev Trait": "Dev",
+    "Cap Savings": "Savings",
+    "Cap Penalty": "Penalty",
+}
 
 # CPU team demo rosters (for trade partner scanning)
 _CPU_DEMO = [
@@ -70,6 +77,9 @@ def _load_trade_rosters() -> pd.DataFrame:
 
     if os.path.exists(_ROSTER_CSV):
         gb_df = pd.read_csv(_ROSTER_CSV)
+        gb_df = gb_df.rename(
+            columns={source: target for source, target in _COLUMN_ALIASES.items() if source in gb_df.columns and target not in gb_df.columns}
+        )
         # Ensure required columns
         if "Team" not in gb_df.columns:
             gb_df["Team"] = "GB"
@@ -77,8 +87,18 @@ def _load_trade_rosters() -> pd.DataFrame:
             gb_df["Scheme"] = "WestCoast"
         if "Dev" not in gb_df.columns:
             gb_df["Dev"] = "Normal"
+        else:
+            gb_df["Dev"] = gb_df["Dev"].replace({"X-Factor": "Superstar X"}).fillna("Normal")
         # Normalize REDG/LEDG → EDGE
-        gb_df["Pos"] = gb_df["Pos"].replace({"REDG": "EDGE", "LEDG": "EDGE"})
+        gb_df["Pos"] = gb_df["Pos"].replace({
+            "REDG": "EDGE",
+            "LEDG": "EDGE",
+            "LOLB": "OLB",
+            "ROLB": "OLB",
+            "SAM": "OLB",
+            "WILL": "OLB",
+            "MIKE": "MLB",
+        })
         return pd.concat([gb_df, cpu_df], ignore_index=True)
     else:
         return cpu_df

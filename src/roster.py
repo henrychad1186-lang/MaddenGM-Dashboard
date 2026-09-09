@@ -37,6 +37,10 @@ def _normalize_pos(pos: str) -> str:
         return "EDGE"
     if pos_upper in ("LOLB", "ROLB"):
         return "OLB"
+    if pos_upper in ("SAM", "WILL"):
+        return "OLB"
+    if pos_upper == "MIKE":
+        return "MLB"
     return pos_upper
 
 
@@ -46,21 +50,42 @@ def _normalize_pos(pos: str) -> str:
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
+_COLUMN_ALIASES = {
+    "Player Name": "Name",
+    "Position": "Pos",
+    "Dev Trait": "Dev",
+    "Cap Savings": "Savings",
+    "Cap Penalty": "Penalty",
+}
+
+
+def _normalize_dev(dev: str) -> str:
+    dev_text = str(dev).strip()
+    if dev_text == "X-Factor":
+        return "Superstar X"
+    return dev_text or "Normal"
+
+
+def _normalize_roster_frame(df: pd.DataFrame) -> pd.DataFrame:
+    renamed = df.rename(
+        columns={source: target for source, target in _COLUMN_ALIASES.items() if source in df.columns and target not in df.columns}
+    ).copy()
+    if "Team" not in renamed.columns:
+        renamed["Team"] = "GB"
+    if "Dev" in renamed.columns:
+        renamed["Dev"] = renamed["Dev"].apply(_normalize_dev)
+    else:
+        renamed["Dev"] = "Normal"
+    if "Pos" in renamed.columns:
+        renamed["Pos"] = renamed["Pos"].apply(_normalize_pos)
+        renamed["Group"] = renamed["Pos"].apply(_assign_group)
+    return renamed
 
 
 def _load_rosters() -> pd.DataFrame:
     """Load roster data from CSV if available, otherwise use minimal demo."""
     if os.path.exists(_ROSTER_CSV):
-        df = pd.read_csv(_ROSTER_CSV)
-        # Ensure required columns
-        if "Team" not in df.columns:
-            df["Team"] = "GB"
-        if "Dev" not in df.columns:
-            df["Dev"] = "Normal"
-        # Normalize positions and assign groups
-        df["Pos"] = df["Pos"].apply(_normalize_pos)
-        df["Group"] = df["Pos"].apply(_assign_group)
-        return df
+        return _normalize_roster_frame(pd.read_csv(_ROSTER_CSV))
     else:
         # Minimal fallback demo
         return pd.DataFrame([

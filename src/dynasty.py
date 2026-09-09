@@ -4,6 +4,8 @@ Dynasty Tracker — Season archival, era tracking, and career leaderboards.
 
 import json
 import os
+from typing import Optional
+
 import pandas as pd
 
 # Path for persisted history file (sits next to the app)
@@ -78,7 +80,9 @@ def load_history() -> list[dict]:
     return DEMO_HISTORY.copy()
 
 
-def archive_season(season_data: dict, existing_history: list[dict] | None = None) -> list[dict]:
+def archive_season(
+    season_data: dict, existing_history: Optional[list[dict]] = None
+) -> list[dict]:
     """
     Add a new season to the dynasty history and persist to disk.
     Returns the updated history list.
@@ -132,6 +136,11 @@ def get_career_leaders(history: list[dict]) -> pd.DataFrame:
         leaders[receiver]["Rec Yds"] += rec_yds
         if receiver != rusher:
             leaders[receiver]["Seasons"] += 1
+
+    if not leaders:
+        return pd.DataFrame(
+            columns=["Player", "Rush Yds", "Rec Yds", "Seasons", "Total Yds"]
+        )
 
     df = pd.DataFrame(leaders.values())
     df["Total Yds"] = df["Rush Yds"] + df["Rec Yds"]
