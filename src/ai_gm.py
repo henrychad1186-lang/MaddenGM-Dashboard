@@ -145,23 +145,33 @@ def get_effective_roster(team: str, group: str = "All", extra_players: "list[dic
 
 
 def persist_roster(team: str, extra_players: "list[dict] | None" = None) -> bool:
-    """Best-effort write of the team's full roster (base + session extras)
-    back to data/packers_roster.csv. Returns True on success.
+    """Append session-added players to data/packers_roster.csv.
+
+    Rows already in the file are re-read and written back untouched; only
+    the session's additions are appended, in whatever schema the file
+    already uses. Returns True on success.
 
     Skipped silently on read-only filesystems (e.g. Streamlit Cloud) —
     the additions still live for the rest of this browser session either
     way since they're tracked in st.session_state, not this file.
     """
+    if not extra_players:
+        return True  # nothing session-scoped to append
+
+    # Refuse to write when the loader fell back to demo data. SOURCE_COLUMNS
+    # stays empty in that case. Without this guard, a CSV the loader could
+    # not read (one missing column was enough) got replaced wholesale by the
+    # single "Demo Player" row — 37 real players destroyed by a checkbox.
+    if not roster_mod.SOURCE_COLUMNS:
+        return False
+
     try:
-        df = roster_mod.get_roster(team, "All", extra_players)
-        df = df.drop(columns=["Group", "_id"], errors="ignore")
-        # Write the headings the file was read with. Without this, saving
-        # an exported roster would quietly rewrite its columns into the
-        # canonical names — changing the user's file out from under them.
-        df = roster_csv.to_source_schema(df, roster_mod.SOURCE_COLUMNS)
-        df.to_csv(roster_mod._ROSTER_CSV, index=False)
+        raw = pd.read_csv(roster_mod._ROSTER_CSV)
+        added = roster_csv.rows_to_source_schema(extra_players, raw)
+        combined = pd.concat([raw, added], ignore_index=True)
+        combined.to_csv(roster_mod._ROSTER_CSV, index=False)
         return True
-    except OSError:
+    except (OSError, ValueError):
         return False
 
 

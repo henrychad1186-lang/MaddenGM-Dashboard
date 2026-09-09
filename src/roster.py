@@ -23,29 +23,44 @@ SOURCE_COLUMNS: "list[str]" = []
 
 _OFFENSE_POS = {"QB", "HB", "FB", "WR",
                 "TE", "LT", "LG", "C", "RG", "RT", "OL"}
+# SAM/WILL/MIKE are Madden's linebacker labels (strongside, weakside,
+# middle). They were absent here, so _assign_group fell through to its
+# "Offense" default and filed linebackers with the offensive line.
 _DEFENSE_POS = {"EDGE", "REDG", "LEDG", "DT", "DL", "MLB", "OLB", "LOLB", "ROLB",
-                "CB", "FS", "SS", "S", "LB"}
+                "SAM", "WILL", "MIKE", "CB", "FS", "SS", "S", "LB"}
 _ST_POS = {"K", "P"}
+
+# Unrecognised positions default to Offense, which is silent and wrong for
+# anything defensive. Collected so the Roster Explorer can say so.
+UNKNOWN_POSITIONS: "set[str]" = set()
 
 
 def _assign_group(pos: str) -> str:
-    pos_upper = pos.upper().strip()
+    pos_upper = str(pos).upper().strip()
     if pos_upper in _OFFENSE_POS:
         return "Offense"
     elif pos_upper in _DEFENSE_POS:
         return "Defense"
     elif pos_upper in _ST_POS:
         return "Special Teams"
+    UNKNOWN_POSITIONS.add(pos_upper)
     return "Offense"  # default
 
 
 def _normalize_pos(pos: str) -> str:
-    """Normalize position names (e.g., REDG/LEDG → EDGE, LOLB/ROLB → OLB)."""
-    pos_upper = pos.upper().strip()
+    """Normalize position names (e.g., REDG/LEDG → EDGE, SAM/WILL → OLB).
+
+    Takes str() defensively: a blank cell in the CSV arrives as a float
+    nan, and `nan.upper()` raised AttributeError during module import,
+    which killed the app before any error could be displayed.
+    """
+    pos_upper = str(pos).upper().strip()
     if pos_upper in ("REDG", "LEDG"):
         return "EDGE"
-    if pos_upper in ("LOLB", "ROLB"):
+    if pos_upper in ("LOLB", "ROLB", "SAM", "WILL"):
         return "OLB"
+    if pos_upper == "MIKE":
+        return "MLB"
     return pos_upper
 
 
@@ -68,31 +83,43 @@ def _demo_roster() -> pd.DataFrame:
 def _load_rosters() -> pd.DataFrame:
     """Load roster data from CSV if available, otherwise use minimal demo.
 
-    Falls back to the demo rather than raising: this runs at import, so a
-    malformed CSV here takes down the whole app — including the Roster
-    Explorer warning panel that would have explained the problem.
+    Never raises. This runs at import, so anything thrown here takes down
+    the whole app — including the Roster Explorer panel that would have
+    explained the problem. An earlier version claimed to fall back but
+    left `pd.read_csv` and the position normalisation unguarded: an empty
+    file (EmptyDataError), a ragged row (ParserError) and a blank Position
+    cell (AttributeError on nan) each still killed startup.
     """
     if not os.path.exists(_ROSTER_CSV):
         return _demo_roster()
 
-    raw = pd.read_csv(_ROSTER_CSV)
-    # Remember the headings the file actually uses so persist_roster can
-    # write them back unchanged instead of silently recasting the file
-    # into the canonical schema.
-    SOURCE_COLUMNS[:] = list(raw.columns)
-    df = roster_csv.normalize_roster_df(raw)
+    try:
+        raw = pd.read_csv(_ROSTER_CSV)
+        df = roster_csv.normalize_roster_df(raw)
 
-    missing = roster_csv.missing_required_columns(df)
-    if missing:
+        missing = roster_csv.missing_required_columns(df)
+        if missing:
+            SOURCE_COLUMN_ISSUES.append(
+                f"Roster CSV is missing required column(s): "
+                f"{', '.join(missing)}. The file's columns are: "
+                f"{', '.join(map(str, raw.columns))}. Using demo data until "
+                f"the file provides them.")
+            return _demo_roster()
+
+        # Normalize positions and assign groups
+        df["Pos"] = df["Pos"].apply(_normalize_pos)
+        df["Group"] = df["Pos"].apply(_assign_group)
+    except Exception as exc:                       # noqa: BLE001 — see docstring
         SOURCE_COLUMN_ISSUES.append(
-            f"Roster CSV is missing required column(s): {', '.join(missing)}. "
-            f"Found: {', '.join(map(str, df.columns))}. Using demo data until "
-            f"the file provides them.")
+            f"Roster CSV could not be read ({type(exc).__name__}: {exc}). "
+            f"Using demo data until the file is fixed.")
         return _demo_roster()
 
-    # Normalize positions and assign groups
-    df["Pos"] = df["Pos"].apply(_normalize_pos)
-    df["Group"] = df["Pos"].apply(_assign_group)
+    # Only now, having actually loaded the file, record its headings.
+    # Recording them earlier meant a fallback-to-demo still looked
+    # writable, and "Save to roster CSV" replaced the user's roster with
+    # the single demo row.
+    SOURCE_COLUMNS[:] = list(raw.columns)
     return df
 
 

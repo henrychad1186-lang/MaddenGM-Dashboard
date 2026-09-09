@@ -67,27 +67,36 @@ _CPU_DEMO = [
 
 
 def _load_trade_rosters() -> pd.DataFrame:
-    """Load GB roster from CSV + CPU demo rosters."""
+    """Load GB roster from CSV + CPU demo rosters.
+
+    Never raises — this runs at import, like roster.py's loader, and an
+    unreadable CSV here kills the app just as dead. Guarding only
+    roster.py was not enough: an empty file still raised EmptyDataError
+    from this second reader.
+    """
     cpu_df = pd.DataFrame(_CPU_DEMO)
 
     if not os.path.exists(_ROSTER_CSV):
         return cpu_df
 
-    # Shared reader — this used to be a second pd.read_csv with its own
-    # column handling, and drifted from roster.py's until an exported CSV
-    # made both raise KeyError: 'Pos' at import.
-    gb_df = roster_csv.load_roster_csv(_ROSTER_CSV)
+    try:
+        # Shared reader — this used to be a second pd.read_csv with its own
+        # column handling, and drifted from roster.py's until an exported
+        # CSV made both raise KeyError: 'Pos' at import.
+        gb_df = roster_csv.load_roster_csv(_ROSTER_CSV)
 
-    if roster_csv.missing_required_columns(gb_df):
-        # roster.py reports this to the user; trading against a roster we
-        # can't read is not possible, so fall back to the CPU teams only.
+        if roster_csv.missing_required_columns(gb_df):
+            # roster.py reports this to the user; trading against a roster
+            # we can't read is not possible, so fall back to CPU teams only.
+            return cpu_df
+
+        if "Scheme" not in gb_df.columns:
+            gb_df["Scheme"] = "WestCoast"
+        # Normalize REDG/LEDG → EDGE
+        gb_df["Pos"] = gb_df["Pos"].replace({"REDG": "EDGE", "LEDG": "EDGE"})
+        return pd.concat([gb_df, cpu_df], ignore_index=True)
+    except Exception:                              # noqa: BLE001 — see docstring
         return cpu_df
-
-    if "Scheme" not in gb_df.columns:
-        gb_df["Scheme"] = "WestCoast"
-    # Normalize REDG/LEDG → EDGE
-    gb_df["Pos"] = gb_df["Pos"].replace({"REDG": "EDGE", "LEDG": "EDGE"})
-    return pd.concat([gb_df, cpu_df], ignore_index=True)
 
 
 DEMO_ROSTERS = _load_trade_rosters()

@@ -31,6 +31,7 @@ from src.roster import (
     POSITION_GROUPS,
     ROSTER_WARNINGS,
     SOURCE_COLUMN_ISSUES,
+    UNKNOWN_POSITIONS,
 )
 
 # --- CONFIGURATION ---
@@ -1009,6 +1010,18 @@ with tabs[2]:
         st.markdown("#### 🔍 Player Scout")
         user_roster = EFFECTIVE_TRADE_ROSTERS[EFFECTIVE_TRADE_ROSTERS["Team"] == MY_TEAM].copy()
         player_names = user_roster["Name"].tolist()
+
+        # When the roster CSV can't be read, the trade engine falls back to
+        # the CPU demo teams only — which never include MY_TEAM. Selecting
+        # from an empty list then raised IndexError on the .iloc[0] below
+        # and took the whole tab down.
+        if not player_names:
+            st.info(
+                f"No {MY_TEAM} players available to shop. This usually means "
+                f"the roster CSV could not be read — see the Roster tab for "
+                f"the reason.")
+            st.stop()
+
         selected_player_name = st.selectbox(
             "Select a player to shop:", player_names, key="trade_player_select"
         )
@@ -1376,6 +1389,13 @@ with tabs[4]:
     # shown expanded rather than tucked into a collapsed expander.
     for issue in SOURCE_COLUMN_ISSUES:
         st.error(f"⛔ {issue}")
+
+    if UNKNOWN_POSITIONS:
+        st.warning(
+            f"⚠️ Unrecognised position(s): {', '.join(sorted(UNKNOWN_POSITIONS))}. "
+            f"They default to Offense and carry no position weight in trade "
+            f"value. Add them to `_DEFENSE_POS`/`_normalize_pos` in "
+            f"`src/roster.py` to grade them correctly.")
 
     if ROSTER_WARNINGS:
         with st.expander(

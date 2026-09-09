@@ -79,16 +79,48 @@ def missing_required_columns(df: pd.DataFrame) -> "list[str]":
     return [c for c in REQUIRED_COLUMNS if c not in df.columns]
 
 
-def to_source_schema(df: pd.DataFrame, source_columns: "list[str]") -> pd.DataFrame:
-    """Rename canonical columns back to the headings a file was read with.
+def rows_to_source_schema(players: "list[dict]", raw: pd.DataFrame) -> pd.DataFrame:
+    """Render session-added players as rows matching `raw`'s own schema.
 
-    Writing the roster back out (the AI GM Assistant's "Save to roster
-    CSV") would otherwise silently rewrite an exported file into the
-    canonical schema, quietly changing headings the user did not choose.
+    Used to append to the roster CSV without touching what is already in
+    it. An earlier version rebuilt the whole file from the normalised
+    frame and renamed the columns back, which looked equivalent but was
+    not: normalisation is lossy and one-way. Round-tripping the shipped
+    roster through it rewrote every `REDG` to `EDGE` and every `X-Factor`
+    to `Superstar X`, and added a `Team` column the file never had —
+    silently editing 37 rows the user had not asked to change.
+
+    `REDG` vs `LEDG` cannot be recovered from `EDGE` at all, which is why
+    existing rows are now preserved verbatim rather than regenerated.
     """
-    reverse = {
+    reverse_names = {
         target: source
         for source, target in COLUMN_ALIASES.items()
-        if source in source_columns and target in df.columns
+        if source in raw.columns and target not in raw.columns
     }
-    return df.rename(columns=reverse) if reverse else df
+
+    # Match the vocabulary already in the file: appending "Superstar X" to
+    # a column whose other rows read "X-Factor" would split one dev tier
+    # across two spellings.
+    dev_column = reverse_names.get("Dev", "Dev")
+    reverse_dev = {}
+    if dev_column in raw.columns:
+        existing = set(raw[dev_column].dropna().astype(str))
+        reverse_dev = {
+            canonical: alias
+            for alias, canonical in DEV_ALIASES.items()
+            if alias in existing
+        }
+
+    rows = []
+    for player in players:
+        row = {}
+        for column in raw.columns:
+            canonical = {v: k for k, v in reverse_names.items()}.get(column, column)
+            value = player.get(canonical, player.get(column, ""))
+            if column == dev_column:
+                value = reverse_dev.get(value, value)
+            row[column] = value
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=list(raw.columns))

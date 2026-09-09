@@ -111,33 +111,76 @@ class TestMissingRequiredColumns:
         assert "SPD" not in df.columns
 
 
-class TestToSourceSchema:
+class TestRowsToSourceSchema:
+    """Appending must not disturb what is already in the file.
 
-    def test_renames_back_for_an_exported_file(self):
-        source = list(_exported_row())
-        df = pd.DataFrame([_canonical_row()])
-        out = roster_csv.to_source_schema(df, source)
-        assert "Player Name" in out.columns and "Name" not in out.columns
-        assert "Position" in out.columns and "Pos" not in out.columns
+    Replaces tests for an earlier `to_source_schema`, which rebuilt the
+    whole file from the normalised frame. Those passed only because one
+    of them dropped the synthetic `Team` column by hand — the production
+    caller did not, so the real round trip added a column and rewrote
+    `REDG`->`EDGE` and `X-Factor`->`Superstar X` across every row.
+    """
 
-    def test_canonical_file_is_written_back_unchanged(self):
-        source = list(_canonical_row())
-        df = pd.DataFrame([_canonical_row()])
-        out = roster_csv.to_source_schema(df, source)
-        assert "Name" in out.columns and "Player Name" not in out.columns
+    def _raw(self):
+        return pd.DataFrame([_exported_row()])
 
-    def test_round_trip_preserves_headings(self):
-        raw = pd.DataFrame([_exported_row()])
-        source = list(raw.columns)
-        normalized = roster_csv.normalize_roster_df(raw)
-        # Team is added by the loader, so it is expected on the way out.
-        out = roster_csv.to_source_schema(
-            normalized.drop(columns=["Team"]), source)
-        assert list(out.columns) == source
+    def _new_player(self, **overrides):
+        player = {"Name": "R. Rookie", "Pos": "WR", "Age": 22, "OVR": 74,
+                  "Dev": "Star", "Savings": "$1M", "Penalty": "$0",
+                  "Team": "GB", "_id": "abc123"}
+        player.update(overrides)
+        return player
 
-    def test_empty_source_columns_is_a_no_op(self):
-        df = pd.DataFrame([_canonical_row()])
-        assert list(roster_csv.to_source_schema(df, []).columns) == list(df.columns)
+    def test_output_matches_the_files_columns_exactly(self):
+        raw = self._raw()
+        out = roster_csv.rows_to_source_schema([self._new_player()], raw)
+        assert list(out.columns) == list(raw.columns)
+
+    def test_no_team_column_is_introduced(self):
+        # The loader synthesises Team; the export never had it.
+        raw = self._raw()
+        out = roster_csv.rows_to_source_schema([self._new_player()], raw)
+        assert "Team" not in out.columns
+
+    def test_internal_id_is_not_written_out(self):
+        raw = self._raw()
+        out = roster_csv.rows_to_source_schema([self._new_player()], raw)
+        assert "_id" not in out.columns
+
+    def test_values_land_under_the_exported_headings(self):
+        raw = self._raw()
+        out = roster_csv.rows_to_source_schema([self._new_player()], raw)
+        assert out["Player Name"].iloc[0] == "R. Rookie"
+        assert out["Position"].iloc[0] == "WR"
+        assert out["Cap Savings"].iloc[0] == "$1M"
+
+    def test_dev_matches_the_vocabulary_already_in_the_file(self):
+        # The file spells the top tier "X-Factor"; appending "Superstar X"
+        # would split one tier across two spellings.
+        raw = self._raw()
+        out = roster_csv.rows_to_source_schema(
+            [self._new_player(Dev="Superstar X")], raw)
+        assert out["Dev Trait"].iloc[0] == "X-Factor"
+
+    def test_canonical_file_keeps_canonical_dev_values(self):
+        raw = pd.DataFrame([_canonical_row()])
+        out = roster_csv.rows_to_source_schema(
+            [self._new_player(Dev="Superstar X")], raw)
+        assert out["Dev"].iloc[0] == "Superstar X"
+
+    def test_appending_leaves_existing_rows_byte_identical(self):
+        raw = self._raw()
+        before = raw.to_csv(index=False)
+        added = roster_csv.rows_to_source_schema([self._new_player()], raw)
+        combined = pd.concat([raw, added], ignore_index=True)
+        assert combined.to_csv(index=False).startswith(before.rstrip("\n"))
+        assert len(combined) == len(raw) + 1
+
+    def test_missing_field_becomes_empty_not_an_error(self):
+        raw = self._raw()
+        out = roster_csv.rows_to_source_schema(
+            [{"Name": "R. Rookie", "Pos": "WR"}], raw)
+        assert out["Trade Value Index"].iloc[0] == ""
 
 
 class TestRealRosterFile:
