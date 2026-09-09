@@ -152,6 +152,8 @@ def persist_roster(team: str, extra_players: "list[dict] | None" = None) -> bool
     the additions still live for the rest of this browser session either
     way since they're tracked in st.session_state, not this file.
     """
+    if not roster_mod.can_persist_source_roster():
+        return False
     try:
         df = roster_mod.get_roster(team, "All", extra_players)
         df = df.drop(columns=["Group", "_id"], errors="ignore")

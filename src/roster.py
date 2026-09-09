@@ -103,6 +103,11 @@ def _load_rosters() -> pd.DataFrame:
     return df
 
 
+def can_persist_source_roster() -> bool:
+    """Whether writes back to the source roster CSV are currently safe."""
+    return not (os.path.exists(_ROSTER_CSV) and SOURCE_COLUMN_ISSUES)
+
+
 def validate_roster_df(df: pd.DataFrame) -> list[str]:
     """Scan a loaded roster DataFrame for data-quality issues.
 

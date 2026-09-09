@@ -186,3 +186,24 @@ class TestRealRosterFile:
         assert df.iloc[0]["Name"] == "Demo Player"
         assert roster_mod.SOURCE_COLUMN_ISSUES
         assert "Could not read roster CSV" in roster_mod.SOURCE_COLUMN_ISSUES[0]
+
+    def test_persist_roster_refuses_to_overwrite_unreadable_source_csv(self, tmp_path):
+        from src import ai_gm
+        from src import roster as roster_mod
+
+        bad_csv = tmp_path / "bad_roster.csv"
+        original = 'Name,Pos,Age,OVR\n"unterminated'
+        bad_csv.write_text(original)
+
+        old_path = roster_mod._ROSTER_CSV
+        old_all_rosters = roster_mod.ALL_ROSTERS
+        try:
+            roster_mod._ROSTER_CSV = str(bad_csv)
+            roster_mod.ALL_ROSTERS = roster_mod._load_rosters()
+            ok = ai_gm.persist_roster("GB")
+        finally:
+            roster_mod._ROSTER_CSV = old_path
+            roster_mod.ALL_ROSTERS = old_all_rosters
+
+        assert ok is False
+        assert bad_csv.read_text() == original

@@ -21,6 +21,7 @@ from src import ai_gm
 from src import ai_client
 from src.progression import snapshot_roster, get_progression, get_movers
 from src.roster import (
+    can_persist_source_roster,
     get_roster,
     get_team_summary,
     ovr_color,
@@ -1933,8 +1934,16 @@ with tabs[9]:
             with cc2:
                 f_penalty = st.text_input("Dead Cap Penalty", value="$0")
 
+            persist_disabled = not can_persist_source_roster()
             f_persist = st.checkbox(
-                "💾 Save to roster CSV (persists across restarts)", value=False)
+                "💾 Save to roster CSV (persists across restarts)",
+                value=False,
+                disabled=persist_disabled,
+            )
+            if persist_disabled:
+                st.caption(
+                    "Saving is disabled while `data/packers_roster.csv` has "
+                    "load errors, so the demo fallback cannot overwrite it.")
 
             submitted = st.form_submit_button(
                 "🔮 Scout & Add to Roster", use_container_width=True)
