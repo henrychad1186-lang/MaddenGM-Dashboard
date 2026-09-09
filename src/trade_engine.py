@@ -13,6 +13,13 @@ import math
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
+_COLUMN_ALIASES = {
+    "Player Name": "Name",
+    "Position": "Pos",
+    "Dev Trait": "Dev",
+    "Cap Savings": "Savings",
+    "Cap Penalty": "Penalty",
+}
 
 # CPU team demo rosters (for trade partner scanning)
 _CPU_DEMO = [
@@ -70,6 +77,9 @@ def _load_trade_rosters() -> pd.DataFrame:
 
     if os.path.exists(_ROSTER_CSV):
         gb_df = pd.read_csv(_ROSTER_CSV)
+        gb_df = gb_df.rename(
+            columns={source: target for source, target in _COLUMN_ALIASES.items() if source in gb_df.columns and target not in gb_df.columns}
+        )
         # Ensure required columns
         if "Team" not in gb_df.columns:
             gb_df["Team"] = "GB"
@@ -77,8 +87,18 @@ def _load_trade_rosters() -> pd.DataFrame:
             gb_df["Scheme"] = "WestCoast"
         if "Dev" not in gb_df.columns:
             gb_df["Dev"] = "Normal"
+        else:
+            gb_df["Dev"] = gb_df["Dev"].replace({"X-Factor": "Superstar X"}).fillna("Normal")
         # Normalize REDG/LEDG → EDGE
-        gb_df["Pos"] = gb_df["Pos"].replace({"REDG": "EDGE", "LEDG": "EDGE"})
+        gb_df["Pos"] = gb_df["Pos"].replace({
+            "REDG": "EDGE",
+            "LEDG": "EDGE",
+            "LOLB": "OLB",
+            "ROLB": "OLB",
+            "SAM": "OLB",
+            "WILL": "OLB",
+            "MIKE": "MLB",
+        })
         return pd.concat([gb_df, cpu_df], ignore_index=True)
     else:
         return cpu_df
@@ -116,8 +136,12 @@ DRAFT_PICK_VALUES = [
 # CORE FUNCTIONS
 # ──────────────────────────────────────────────
 
-def _parse_salary(val) -> float:
-    """Convert salary strings like '$3M', '$1.29M', '$600K' to float millions."""
+def parse_salary(val) -> float:
+    """Convert salary strings like '$3M', '$1.29M', '$600K' to float millions.
+
+    Public because contract figures are parsed outside this module too —
+    every caller must agree that '$600K' is 0.6, not 600.
+    """
     if pd.isna(val) or val is None or str(val).strip() == "":
         return 0.0
     s = str(val).strip().replace("$", "").replace(",", "")
@@ -194,8 +218,8 @@ def get_trade_value(player: dict) -> float:
     # ── CONTRACT CAP IMPACT ──
     # Cap savings = team-friendly deal → more attractive to trade for
     # Dead-cap penalty = costly to cut/trade → reduces trade appeal
-    savings = _parse_salary(player.get("Savings"))
-    penalty = _parse_salary(player.get("Penalty"))
+    savings = parse_salary(player.get("Savings"))
+    penalty = parse_salary(player.get("Penalty"))
 
     if savings > 0 or penalty > 0:
         # Savings bonus: up to +8% for very cap-friendly deals (>$5M savings)
@@ -210,9 +234,17 @@ def get_trade_value(player: dict) -> float:
 
     # ── PHYSICAL ATTRIBUTES BONUS ──
     # SPD, ACC, AGI complement OVR — elite athletes are worth more
-    spd = player.get("SPD") or player.get("Speed")
-    acc = player.get("ACC") or player.get("Acceleration")
-    agi = player.get("AGI") or player.get("Agility")
+    # (explicit None checks — a real rating of 0 must still count, not
+    # get treated as "missing" and silently excluded)
+    spd = player.get("SPD")
+    if spd is None:
+        spd = player.get("Speed")
+    acc = player.get("ACC")
+    if acc is None:
+        acc = player.get("Acceleration")
+    agi = player.get("AGI")
+    if agi is None:
+        agi = player.get("Agility")
 
     phys_ratings = [r for r in [spd, acc, agi]
                     if r is not None and not (isinstance(r, float) and math.isnan(r))]
@@ -228,6 +260,25 @@ def get_trade_value(player: dict) -> float:
     return round(base, 1)
 
 
+_TRADE_VALUES_READY = False
+
+
+def _ensure_trade_values() -> None:
+    """Compute TradeVal once for loaded rosters to avoid repeated apply() work."""
+    global DEMO_ROSTERS, _TRADE_VALUES_READY
+    if _TRADE_VALUES_READY or DEMO_ROSTERS.empty:
+        _TRADE_VALUES_READY = True
+        return
+    if "TradeVal" in DEMO_ROSTERS.columns:
+        _TRADE_VALUES_READY = True
+        return
+    rosters = DEMO_ROSTERS.copy()
+    rosters["TradeVal"] = rosters.apply(
+        lambda row: get_trade_value(row.to_dict()), axis=1)
+    DEMO_ROSTERS = rosters
+    _TRADE_VALUES_READY = True
+
+
 def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
     """
     Scan CPU teams for potential trade partners interested in the offered player.
@@ -236,6 +287,7 @@ def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
     offered_pos = player.get("Pos", "WR")
     offered_ovr = player.get("OVR", 70)
     offered_scheme = player.get("Scheme", "")
+    _ensure_trade_values()
 
     partners = []
     for team in DEMO_ROSTERS["Team"].unique():
@@ -283,11 +335,7 @@ def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
         non_qb = team_roster[team_roster["Pos"] != "QB"].copy()
         if non_qb.empty:
             non_qb = team_roster.copy()
-        non_qb = non_qb.copy()
-        non_qb["TradeVal"] = non_qb.apply(
-            lambda r: get_trade_value(r.to_dict()), axis=1)
-        best_offer_row = non_qb.sort_values(
-            "TradeVal", ascending=False).iloc[0]
+        best_offer_row = non_qb.loc[non_qb["TradeVal"].idxmax()]
 
         partners.append({
             "team": team,

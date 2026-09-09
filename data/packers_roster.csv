@@ -1,47 +1,38 @@
-Name,Pos,Age,OVR,SPD,ACC,AGI,COD,STR,AWR,Team,Dev,Savings,Penalty
-B. Ditmer,QB,22,82,80,91,87,88,71,74,GB,Superstar,$3M,$17M
-M. Razee,QB,24,77,75,82,84,67,49,75,GB,Star,$1.29M,$600K
-M. Mariota,QB,34,59,82,77,78,75,60,68,GB,Normal,$2.93M,$2.8M
-M. Rachels,HB,22,81,91,91,85,86,82,78,GB,Star,$1.53M,$3.87M
-M. Lloyd,HB,27,78,90,92,88,88,73,78,GB,Normal,$1.59M,$4.2M
-M. Golden,WR,25,88,95,97,92,91,61,85,GB,Superstar,$2.62M,$1.75M
-R. Bateman,WR,27,85,92,92,88,86,60,86,GB,Star,$6.01M,$32M
-J. Reed,WR,28,84,94,94,89,91,58,83,GB,Star,$1.17M,$22.7M
-R. Doubs,WR,28,82,92,94,89,92,60,83,GB,Star,$5.57M,$11.2M
-C. Robert-Henry,WR,22,82,90,93,93,90,71,81,GB,Star,$2.12M,$16M
-B. Henry,WR,24,78,91,93,89,92,56,68,GB,Normal,$3.39M,$4.4M
-M. Barkley,WR,24,77,89,94,88,94,60,69,GB,Normal,$3.8M,$2.9M
-C. Ringer,TE,25,85,85,87,81,77,77,77,GB,Star,$1.29M,$600K
-J. Sanders,TE,25,75,83,90,79,75,67,76,GB,Normal,$2.85M,$14.1M
-?. Davis,LT,23,82,72,77,66,53,82,83,GB,Star,$2.08M,$4.42M
-M. Peart,LT,31,67,69,73,54,49,86,75,GB,Normal,$2.84M,$4.8M
-A. Belton,LG,27,78,64,68,59,55,86,77,GB,Normal,$1.8M,$500K
-A. Banks,LG,30,76,60,58,60,50,87,84,GB,Normal,$14M,$6.75M
-T. Biadasz,C,30,81,75,86,64,56,85,87,GB,Star,$4.18M,$10.68M
-S. Knapp,C,21,73,71,83,74,58,58,75,GB,Normal,$1.4M,$5.2M
-D. Phillips,C,23,65,65,80,74,49,86,69,GB,Normal,$970K,$400K
-?. ???an,RG,27,81,71,81,62,56,87,81,GB,Star,$10.5M,$10.5M
-?. Tom,RT,29,80,74,84,74,60,81,82,GB,Star,$19M,$19.3M
-J. Bynes,RT,24,77,70,77,71,58,78,85,GB,Normal,$1.29M,$580K
-R. Gary,EDGE,30,85,85,88,78,71,83,92,GB,Star,$8.1M,$8.9M
-E. Atkinson,EDGE,23,82,76,84,75,61,92,79,GB,Star,$1.38M,$1.02M
-?. ???ams,EDGE,24,90,81,89,82,72,72,89,GB,Superstar,$4.24M,$16.9M
-B. Sorrell,EDGE,25,74,83,85,80,80,73,82,GB,Normal,$1.14M,$180K
-S. Fairley,EDGE,22,73,69,84,68,80,85,68,GB,Normal,$1.23M,$930K
-M. Graham,EDGE,21,69,84,81,70,65,86,68,GB,Normal,$970K,$920K
-B. Colon,DT,22,82,85,97,82,75,68,81,GB,Star,$3.28M,$32.1M
-B. Henry,DT,22,79,78,80,66,67,68,78,GB,Normal,$1.26M,$1.17M
-M. Smith,DT,27,77,74,77,76,69,76,68,GB,Normal,$4.47M,$10.6M
-S. Daniels,DT,21,74,77,81,68,63,90,73,GB,Normal,$1.19M,$1.56M
-T. Andersen,MLB,29,72,91,93,87,84,68,77,GB,Normal,$2.6M,$1.5M
-D. Winters,OLB,27,82,89,93,81,71,66,77,GB,Star,$2.96M,$12.6M
-F. Mauigoa,OLB,25,72,84,90,76,71,73,77,GB,Normal,$1.25M,$0
-E. Thomas,OLB,24,71,85,88,75,67,71,69,GB,Normal,$1.2M,$0
-T. Still,CB,26,86,89,93,86,88,56,84,GB,Star,$8.53M,$47.6M
-B. Morrison,CB,24,84,93,94,91,89,57,73,GB,Star,$1.6M,$0
-R. Green,CB,27,83,90,92,88,85,59,80,GB,Normal,$6.14M,$30M
-N. Hobbs,CB,29,82,91,92,88,86,65,84,GB,Star,$10.7M,$8.41M
-T. Whitley,CB,22,81,88,90,93,93,66,71,GB,Normal,$1.45M,$3.09M
-J. Bullard,SS,25,87,88,92,89,70,79,78,GB,Star,$1.17M,$34.4M
-M. Mustapha,FS,26,82,90,91,84,82,66,75,GB,Star,$2.77M,$16.8M
-E. Williams,FS,27,80,86,90,82,85,62,77,GB,Normal,$2.36M,$9.3M
+Player Name,Position,Age,OVR,Dev Trait,Cap Savings,Cap Penalty,Trade Value Index,Trade Block Status,Draft Round,Pick Value (Pts),Asset Tier Equivalent
+M. Parsons,REDG,27,98,X-Factor,$750K,$105M,81.4,High Value / Starter Asset,Round 1,"1,000 pts",Elite Franchise Starter
+X. McKinney,SS,27,92,X-Factor,$1.21M,$21.1M,68.6,High Value / Starter Asset,Round 2,420 pts,Quality Day-1 Starter
+J. Jacobs,HB,28,91,Superstar,$10.2M,$23.2M,72.0,High Value / Starter Asset,Round 3,210 pts,Immediate Contributor / High Upside
+Z. Tom,RT,27,87,Star,$1.85M,$40.8M,66.5,High Value / Starter Asset,Round 4,95 pts,Rotational Depth / Core Special Teams
+J. Love,QB,27,86,Superstar,$0,$109M,72.4,High Value / Starter Asset,Round 5,45 pts,Developmental Prospect
+T. Kraft,TE,25,85,Star,$3.62M,$19.9M,82.1,High Value / Starter Asset,Round 6,25 pts,Roster Bubble / Depth Asset
+E. Cooper,WILL,24,80,Star,$0,$3.09M,73.9,High Value / Starter Asset,Round 7,12 pts,Late Flier / Camp Body
+J. Reed,WR,26,80,Star,$0,$32.1M,57.5,Active Rotation / Hold,,,
+J. Hargrave,DT,33,80,Normal,$1.6M,$15.3M,20.0,Trade Block / Sell High,,,
+D. Wyatt,DT,28,79,Star,$12.9M,$0,39.0,Active Rotation / Hold,,,
+M. Golden,WR,23,78,Star,$0,$14.4M,73.9,High Value / Starter Asset,,,
+C. Watson,WR,27,78,Star,$1.42M,$48M,44.4,Active Rotation / Hold,,,
+I. McDuffie,SAM,27,78,Normal,$2.4M,$2.57M,38.6,Active Rotation / Hold,,,
+K. Nixon,CB,29,78,Normal,$4.3M,$12.1M,25.7,Trade Surplus / Depth Piece,,,
+G. Glasgow,C,34,77,Normal,$5.22M,$4.61M,17.0,Trade Block / Sell High,,,
+D. Dennis-Sutton,LEDG,22,77,Normal,$880K,$1.12M,66.8,High Value / Starter Asset,,,
+A. Belton,RG,25,77,Normal,$1.2M,$1.83M,48.6,Active Rotation / Hold,,,
+A. Robinson,DT,31,77,Normal,$5.05M,$0,17.0,Trade Block / Sell High,,,
+C. Valentine,CB,24,77,Normal,$2.1M,$2.2M,54.6,Active Rotation / Hold,,,
+B. St-Juste,CB,28,77,Star,$1.3M,$5.67M,34.9,Trade Surplus / Depth Piece,,,
+J. Daniels,RG,28,76,Normal,$4.97M,$0,28.6,Trade Surplus / Depth Piece,,,
+B. Christensen,LT,29,76,Normal,$4.8M,$0,22.9,Trade Surplus / Depth Piece,,,
+T. Smack,K,23,76,Normal,$880K,$200K,57.1,Active Rotation / Hold,,,
+J. Bullard,SS,23,76,Normal,$0,$2.24M,57.1,Active Rotation / Hold,,,
+L. Van Ness,LEDG,25,76,Normal,$0,$5.52M,45.7,Active Rotation / Hold,,,
+E. Williams,FS,25,76,Normal,$1.07M,$400K,45.7,Active Rotation / Hold,,,
+J. Morgan,LT,25,75,Normal,$1.47M,$4.17M,42.9,Active Rotation / Hold,,,
+S. Moore,WR,25,74,Normal,$1.21M,$1.28M,40.0,Active Rotation / Hold,,,
+D. Whelan,P,27,74,Normal,$1.45M,$1.8M,30.0,Trade Surplus / Depth Piece,,,
+D. Kinnard,RT,26,73,Normal,$1.31M,$1.44M,32.5,Trade Surplus / Depth Piece,,,
+J. Burton,RG,24,73,Normal,$880K,$480K,41.8,Active Rotation / Hold,,,
+M. Hardman,WR,28,73,Normal,$2.5M,$20K,23.2,Trade Surplus / Depth Piece,,,
+S. Williams,WR,24,72,Normal,$1.07M,$1.05M,38.6,Active Rotation / Hold,,,
+C. Oliver,REDG,23,72,Normal,$880K,$300K,42.9,Active Rotation / Hold,,,
+L. Musgrave,TE,25,72,Normal,$1.9M,$790K,34.3,Trade Surplus / Depth Piece,,,
+B. Sorrell,REDG,23,71,Normal,$1M,$690K,39.3,Active Rotation / Hold,,,
+D. Martinez,HB,22,71,Normal,$880K,$0,43.2,Active Rotation / Hold,,,

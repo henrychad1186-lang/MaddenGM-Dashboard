@@ -12,9 +12,13 @@ from src.trade_engine import (
     get_trade_value,
     find_trade_partners,
     evaluate_trade,
+    parse_salary,
 )
 from src.dynasty import load_history, archive_season, get_career_leaders
+from src.theme import RANK_COLORS, VERDICT_COLORS, rank_color
 from src.roster_analyzer import analyze_roster
+from src import ai_gm
+from src import ai_client
 from src.progression import snapshot_roster, get_progression, get_movers
 from src.roster import (
     get_roster,
@@ -23,9 +27,9 @@ from src.roster import (
     ovr_label,
     get_position_grades,
     get_cap_summary,
-    _parse_sal,
     TEAMS,
     POSITION_GROUPS,
+    ROSTER_WARNINGS,
 )
 
 # --- CONFIGURATION ---
@@ -38,9 +42,97 @@ st.set_page_config(
 # ── CUSTOM CSS — Premium Dark Theme ──
 st.markdown("""
 <style>
+:root {
+    --accent-1: #6366f1;
+    --accent-2: #10b981;
+    --accent-1-soft: rgba(99, 102, 241, 0.25);
+    --accent-2-soft: rgba(16, 185, 129, 0.20);
+    --surface-1: rgba(30, 41, 59, 0.65);
+    --surface-2: rgba(20, 20, 50, 0.75);
+    --radius-md: 14px;
+    --radius-lg: 20px;
+
+    /* ── Semantic scale — ACTION REQUIRED, one meaning only ──
+       Use for verdicts (KEEP/TRADE/CUT) and positional need levels.
+       Never for ratings: green here means "no action needed", not "good". */
+    --status-good: #10b981;
+    --status-warn: #f59e0b;
+    --status-bad:  #ef4444;
+
+    /* ── Sequential scale — QUALITY, low to high ──
+       Use for OVR, letter grades, tiers and trade value. Deliberately
+       blue-violet rather than red/amber/green so a low rating never reads
+       as "take action" and a high one never reads as "leave it alone". */
+    --rank-1: #94a3b8;   /* lowest  —  6.96:1 */
+    --rank-2: #7dd3fc;   /*          10.71:1 */
+    --rank-3: #a5b4fc;   /*           8.96:1 */
+    --rank-4: #c4b5fd;   /* highest —  9.67:1 */
+
+    /* ── Text ──
+       Measured against #0f172a, the darkest stop of the page gradient:
+         #666    3.11:1  FAIL   -> replaced by --text-muted
+         #64748b 3.75:1  FAIL   -> replaced by --text-muted
+         #888    5.04:1  pass   (kept)
+         #aaa    7.68:1  pass   (kept)
+       WCAG AA requires 4.5:1 for normal-size body text. */
+    --text-bright: #f1f5f9;   /* 16.30:1 */
+    --text-dim:    #cbd5e1;   /* 12.02:1 */
+    --text-muted:  #94a3b8;   /*  6.96:1 — lowest permitted here */
+}
+
 /* ── Trade Tab Background & Global ── */
 [data-testid="stAppViewContainer"] {
     background: linear-gradient(160deg, #0a0e17 0%, #111827 50%, #0f172a 100%);
+}
+
+/* ── Hero Header ── */
+.hero-title {
+    background: linear-gradient(90deg, #f1f5f9 15%, var(--accent-1) 65%, var(--accent-2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    font-size: 2.3rem; font-weight: 900; margin-bottom: 0.3rem; line-height: 1.2;
+}
+/* ── Tab Header — single line, left aligned ──
+   Was a centred block (h2 + subtitle paragraph + divider) costing ~150px
+   at the top of every tab. Title and subtitle now share one baseline. */
+.tab-header {
+    display: flex; align-items: baseline; gap: 0.6rem;
+    flex-wrap: wrap; margin: 0 0 0.6rem 0;
+}
+.tab-header h2 {
+    background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    font-size: 1.35rem; font-weight: 800; margin: 0; padding: 0;
+}
+.tab-header-sub { color: var(--text-muted); font-size: 0.85rem; }
+
+/* ── Card section label — the small uppercase caption on glass cards ── */
+.card-label {
+    color: var(--text-muted); font-size: 0.8rem;
+    text-transform: uppercase; letter-spacing: 0.05em;
+}
+
+/* ── KPI Cards ── */
+.kpi-card {
+    background: linear-gradient(135deg, var(--surface-2), rgba(40,40,70,0.55));
+    border: 1px solid var(--accent-1-soft);
+    border-radius: var(--radius-md);
+    padding: 1.1rem 1.2rem;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+}
+.kpi-label {
+    color: #94a3b8; font-size: 0.78rem; text-transform: uppercase;
+    letter-spacing: 0.06em; font-weight: 600;
+}
+.kpi-value { font-size: 1.9rem; font-weight: 800; color: #f1f5f9; margin: 0.2rem 0; }
+.kpi-delta-up { color: var(--accent-2); font-size: 0.82rem; font-weight: 700; }
+.kpi-delta-down { color: #ef4444; font-size: 0.82rem; font-weight: 700; }
+
+/* ── Sidebar Expander Grouping ── */
+[data-testid="stSidebar"] [data-testid="stExpander"] {
+    border: 1px solid rgba(99,102,241,0.18);
+    border-radius: var(--radius-md);
+    margin-bottom: 0.7rem;
+    background: rgba(20,20,45,0.35);
 }
 
 /* ── Glassmorphism Cards ── */
@@ -185,200 +277,224 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Madden NFL 27: Franchise Strategy Audit")
-st.markdown(
-    "UI optimized for **Madden 27** franchise workflows. "
-    "Featuring upgraded **Coach DNA** and **Wear & Tear** insights."
-)
+
+# ── SHARED UI HELPERS — keep every tab's header/cards visually consistent ──
+
+def render_tab_header(icon: str, title: str, subtitle: str = "") -> None:
+    """Single-line tab header: gradient title with the subtitle inline.
+
+    Deliberately compact. The previous version was a centred block — an
+    <h2>, a subtitle paragraph and a divider — costing ~150px at the top
+    of every tab, which pushed real content below the fold on a laptop.
+    """
+    subtitle_html = (
+        f'<span class="tab-header-sub">{subtitle}</span>' if subtitle else "")
+    st.markdown(
+        f'<div class="tab-header"><h2>{icon} {title}</h2>{subtitle_html}</div>',
+        unsafe_allow_html=True)
+
+
+def _kpi_card_html(label: str, value: str, delta: str = "", delta_positive: bool = True) -> str:
+    delta_html = ""
+    if delta:
+        cls = "kpi-delta-up" if delta_positive else "kpi-delta-down"
+        arrow = "▲" if delta_positive else "▼"
+        delta_html = f'<div class="{cls}">{arrow} {delta}</div>'
+    return f"""
+    <div class="kpi-card">
+        <div class="kpi-label">{label}</div>
+        <div class="kpi-value">{value}</div>
+        {delta_html}
+    </div>
+    """
+
+
+# The tagline that used to sit here described the product to someone
+# already using it, and cost a line of prime vertical space above the
+# tab strip. Removed; the title alone identifies the app.
+st.markdown('<div class="hero-title">🏈 Madden NFL 27: Franchise Strategy Audit</div>',
+            unsafe_allow_html=True)
 
 # --- 1. DATA ENGINE ---
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
 
-st.sidebar.header("Data Import")
 
-
-@st.cache_data(show_spinner=False, ttl=300)
-def _load_game_log_from_url(url: str) -> pd.DataFrame:
-    return pd.read_csv(url)
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_game_log_from_url(url: str) -> "tuple[pd.DataFrame, list[str]]":
+    return _prepare_game_log(pd.read_csv(url))
 
 
 @st.cache_data(show_spinner=False)
-def _load_game_log_from_upload(file_bytes: bytes, filename: str) -> pd.DataFrame:
+def _load_game_log_from_upload(file_bytes: bytes, filename: str) -> "tuple[pd.DataFrame, list[str]]":
     buffer = io.BytesIO(file_bytes)
     if filename.lower().endswith(".csv"):
-        return pd.read_csv(buffer)
-    return pd.read_excel(buffer)
+        raw_df = pd.read_csv(buffer)
+    else:
+        raw_df = pd.read_excel(buffer)
+    return _prepare_game_log(raw_df)
 
 
 @st.cache_data(show_spinner=False)
-def _load_game_log_from_disk(path: str, modified_at: float) -> pd.DataFrame:
-    return pd.read_csv(path)
+def _load_game_log_from_disk(path: str, modified_at: float) -> "tuple[pd.DataFrame, list[str]]":
+    return _prepare_game_log(pd.read_csv(path))
 
 
-def _result_from_score_diff(score_diff: float) -> str:
-    return "WIN" if score_diff > 0 else "LOSS"
+def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
+    """Derive Points_For/Points_Against/Score_Diff/Result/TOP_Mins.
 
-
-def _parse_top_value(value):
-    if isinstance(value, str) and ":" in value:
-        parts = value.split(":")
-        try:
-            return int(parts[0]) + int(parts[1]) / 60
-        except ValueError:
-            return None
-    return value
-
-
-def _apply_score_columns(df: pd.DataFrame) -> int:
-    if "Score_Final" in df.columns:
-        scores = df["Score_Final"].astype("string").str.extract(
-            r"^\s*(\d+)\s*-\s*(\d+)\s*$"
-        )
-        df["Points_For"] = pd.to_numeric(scores[0], errors="coerce")
-        df["Points_Against"] = pd.to_numeric(scores[1], errors="coerce")
-        df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
-        df["Result"] = df["Score_Diff"].apply(
-            lambda score_diff: (
-                _result_from_score_diff(score_diff)
-                if pd.notna(score_diff)
-                else None
-            )
-        )
-        return int(df["Score_Diff"].isna().sum())
-
-    if "Points_For" not in df.columns or "Points_Against" not in df.columns:
-        return 0
-
-    df["Points_For"] = pd.to_numeric(df["Points_For"], errors="coerce")
-    df["Points_Against"] = pd.to_numeric(df["Points_Against"], errors="coerce")
-    df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
-
-    if "Result" in df.columns:
-        df["Result"] = df["Result"].map(
-            {"W": "WIN", "L": "LOSS", "WIN": "WIN", "LOSS": "LOSS"}
-        ).fillna("LOSS")
-        return 0
-
-    df["Result"] = df["Score_Diff"].apply(_result_from_score_diff)
-    return 0
-
-
-def _preprocess_game_log(raw_df: pd.DataFrame) -> pd.DataFrame:
+    Returns (df, warnings) instead of calling st.warning() directly —
+    this runs inside @st.cache_data functions, and a live UI call there
+    only fires on a cache miss, so a persistent warning would silently
+    stop reappearing on cache hits. Returning it as data lets the
+    (uncached) caller display it on every rerun regardless of cache state.
+    """
     df = raw_df.copy()
+    warnings: list[str] = []
 
-    invalid_score_count = _apply_score_columns(df)
-    if invalid_score_count:
-        st.warning(
-            f"Could not parse {invalid_score_count} Score_Final value(s). "
-            "Ensure the format is '35-10'."
-        )
+    # Handle Score_Final format (old) or direct Points_For/Points_Against (new)
+    if "Score_Final" in df.columns:
+        try:
+            df[["Points_For", "Points_Against"]] = (
+                df["Score_Final"].str.split("-", expand=True).astype(int)
+            )
+            df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
+            df["Result"] = df["Score_Diff"].apply(
+                lambda x: "WIN" if x > 0 else "LOSS"
+            )
+        except Exception:
+            warnings.append("Could not parse Score_Final. Ensure format is '35-10'.")
+    elif "Points_For" in df.columns and "Points_Against" in df.columns:
+        df["Points_For"] = pd.to_numeric(df["Points_For"], errors="coerce")
+        df["Points_Against"] = pd.to_numeric(df["Points_Against"], errors="coerce")
+        df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
+        # Normalize Result: W → WIN, L → LOSS
+        if "Result" in df.columns:
+            df["Result"] = df["Result"].map(
+                {"W": "WIN", "L": "LOSS", "WIN": "WIN", "LOSS": "LOSS"}
+            ).fillna("LOSS")
+        else:
+            df["Result"] = df["Score_Diff"].apply(
+                lambda x: "WIN" if x > 0 else "LOSS"
+            )
 
     if "TOP" in df.columns:
+        def parse_top(x):
+            if isinstance(x, str) and ":" in x:
+                parts = x.split(":")
+                try:
+                    return int(parts[0]) + int(parts[1]) / 60
+                except ValueError:
+                    return None
+            return x
         try:
-            df["TOP_Mins"] = df["TOP"].apply(_parse_top_value)
+            df["TOP_Mins"] = df["TOP"].apply(parse_top)
         except Exception:
             pass
 
-    return df
+    return df, warnings
 
 
-# ── Live Google Sheet Sync ──
-sheet_url = st.sidebar.text_input(
-    "📡 Google Sheet CSV URL",
-    value="",
-    placeholder="Paste your published CSV link",
-    help="Publish your Google Sheet (File → Share → Publish to web → CSV) and paste the URL here.",
-)
+with st.sidebar.expander("📡 Data Import", expanded=True):
+    # ── Live Google Sheet Sync ──
+    sheet_url = st.text_input(
+        "Google Sheet CSV URL",
+        value="",
+        placeholder="Paste your published CSV link",
+        help="Publish your Google Sheet (File → Share → Publish to web → CSV) and paste the URL here.",
+    )
 
-uploaded_file = st.sidebar.file_uploader(
-    "Or upload CSV/Excel", type=["csv", "xlsx"]
-)
+    uploaded_file = st.file_uploader(
+        "Or upload CSV/Excel", type=["csv", "xlsx"]
+    )
 
-df = None  # will be set by one of the branches
+    df = None  # will be set by one of the branches
 
-if sheet_url and sheet_url.strip():
-    try:
-        df = _load_game_log_from_url(sheet_url.strip())
-        # Cache locally so it works offline next time
+    prep_warnings: list[str] = []
+
+    if sheet_url and sheet_url.strip():
         try:
-            df.to_csv(_GAME_LOGS_CSV, index=False)
-        except OSError:
-            pass  # read-only filesystem (e.g. Streamlit Cloud)
-        st.sidebar.success(f"📡 Live Sheet Synced — {len(df)} games!")
-    except Exception as e:
-        st.sidebar.warning(f"Sheet sync failed: {e}")
-        st.sidebar.info("Falling back to local data.")
+            df, prep_warnings = _load_game_log_from_url(sheet_url.strip())
+            # Cache locally so it works offline next time
+            try:
+                df.to_csv(_GAME_LOGS_CSV, index=False)
+            except OSError:
+                pass  # read-only filesystem (e.g. Streamlit Cloud)
+            st.success(f"📡 Live Sheet Synced — {len(df)} games!")
+        except Exception as e:
+            st.warning(f"Sheet sync failed: {e}")
+            st.info("Falling back to local data.")
 
-if df is None and uploaded_file:
-    try:
-        df = _load_game_log_from_upload(uploaded_file.getvalue(), uploaded_file.name)
-        st.sidebar.success("Custom Data Loaded!")
-    except Exception as e:
-        st.error(f"Error loading file: {e}")
-        st.stop()
+    if df is None and uploaded_file:
+        try:
+            df, prep_warnings = _load_game_log_from_upload(uploaded_file.getvalue(), uploaded_file.name)
+            st.success("Custom Data Loaded!")
+        except Exception as e:
+            st.error(f"Error loading file: {e}")
+            st.stop()
 
-if df is None and os.path.exists(_GAME_LOGS_CSV):
-    df = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
-    st.sidebar.success("📊 Local Franchise Data Loaded!")
+    if df is None and os.path.exists(_GAME_LOGS_CSV):
+        df, prep_warnings = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
+        st.success("📊 Local Franchise Data Loaded!")
 
-if df is None:
-    # Fallback demo data
-    data = [
-        {"Game_ID": "G1", "Team": "DEMO", "Opponent": "JAX",
-         "Score_Final": "34-10", "TOP": "27:45", "Playbook": "WestCoast", "Fatigue": 12},
-    ]
-    df = pd.DataFrame(data)
-    st.sidebar.info("Using Demo Data")
+    if df is None:
+        # Fallback demo data
+        data = [
+            {"Game_ID": "G1", "Team": "DEMO", "Opponent": "JAX",
+             "Score_Final": "34-10", "TOP": "27:45", "Playbook": "WestCoast", "Fatigue": 12},
+        ]
+        df, prep_warnings = _prepare_game_log(pd.DataFrame(data))
+        st.info("Using Demo Data")
 
-df = _preprocess_game_log(df)
+for _w in prep_warnings:
+    st.warning(_w)
 
 # --- DASHBOARD QUICK FILTERS ---
-st.sidebar.header("Dashboard View")
 all_game_count = len(df)
 
-result_options = ["WIN", "LOSS"] if "Result" in df.columns else []
-selected_results = (
-    st.sidebar.multiselect("Results", result_options, default=result_options)
-    if result_options else []
-)
-
-playbook_options = (
-    sorted(df["Playbook"].dropna().unique().tolist())
-    if "Playbook" in df.columns else []
-)
-selected_playbooks = (
-    st.sidebar.multiselect(
-        "Playbooks",
-        playbook_options,
-        default=playbook_options,
+with st.sidebar.expander("🎚️ Dashboard Filters", expanded=False):
+    result_options = ["WIN", "LOSS"] if "Result" in df.columns else []
+    selected_results = (
+        st.multiselect("Results", result_options, default=result_options)
+        if result_options else []
     )
-    if playbook_options else []
-)
 
-games_window = st.sidebar.selectbox(
-    "Games Window",
-    ["All Games", "Last 4", "Last 8", "Last 12"],
-    index=0,
-)
-
-filtered_df = df.copy()
-if "Result" in filtered_df.columns:
-    filtered_df = (
-        filtered_df[filtered_df["Result"].isin(selected_results)]
-        if selected_results else filtered_df.iloc[0:0]
+    playbook_options = (
+        sorted(df["Playbook"].dropna().unique().tolist())
+        if "Playbook" in df.columns else []
     )
-if "Playbook" in filtered_df.columns and playbook_options:
-    filtered_df = (
-        filtered_df[filtered_df["Playbook"].isin(selected_playbooks)]
-        if selected_playbooks else filtered_df.iloc[0:0]
+    selected_playbooks = (
+        st.multiselect(
+            "Playbooks",
+            playbook_options,
+            default=playbook_options,
+        )
+        if playbook_options else []
     )
-if games_window != "All Games" and not filtered_df.empty:
-    recent_games = int(games_window.split(" ")[1])
-    filtered_df = filtered_df.tail(recent_games)
 
-df = filtered_df
-st.sidebar.caption(f"Showing {len(df)} of {all_game_count} games")
+    games_window = st.selectbox(
+        "Games Window",
+        ["All Games", "Last 4", "Last 8", "Last 12"],
+        index=0,
+    )
+
+    filtered_df = df.copy()
+    if "Result" in filtered_df.columns:
+        filtered_df = (
+            filtered_df[filtered_df["Result"].isin(selected_results)]
+            if selected_results else filtered_df.iloc[0:0]
+        )
+    if "Playbook" in filtered_df.columns and playbook_options:
+        filtered_df = (
+            filtered_df[filtered_df["Playbook"].isin(selected_playbooks)]
+            if selected_playbooks else filtered_df.iloc[0:0]
+        )
+    if games_window != "All Games" and not filtered_df.empty:
+        recent_games = int(games_window.split(" ")[1])
+        filtered_df = filtered_df.tail(recent_games)
+
+    df = filtered_df
+    st.caption(f"Showing {len(df)} of {all_game_count} games")
 
 # --- GLOBAL TEAM SELECTOR ---
 st.sidebar.header("My Team")
@@ -387,21 +503,69 @@ MY_TEAM = st.sidebar.selectbox(
     key="global_team_select",
 )
 
-# --- 2. WIN PROBABILITY PREDICTOR ---
-st.sidebar.header("Coach DNA: Live Predictor")
-st.sidebar.info("Uses Madden 27 Real-Time Coaching AI logic.")
-user_top = st.sidebar.slider(
-    "Current Time of Possession (Mins)", 0, 45, 20
-)
-user_fatigue = st.sidebar.slider(
-    "Team Wear & Tear (%)", 0, 100, 15
-)
+# --- AI GM ASSISTANT — SESSION-SCOPED ROSTER ADDITIONS ---
+# Players added via the AI GM Assistant tab live only in this browser
+# session's state, never in the shared roster/trade_engine module globals,
+# so one visitor's additions never leak into another visitor's view.
+if "ai_gm_players" not in st.session_state:
+    st.session_state.ai_gm_players = []
+AI_GM_EXTRA = st.session_state.ai_gm_players
 
-win_prob = 1 / (1 + np.exp(-(0.1 * user_top - 0.05 * user_fatigue)))
-st.sidebar.metric(
-    "Projected Win Probability", f"{win_prob * 100:.1f}%"
-)
-st.sidebar.progress(float(win_prob))
+if AI_GM_EXTRA:
+    # Keep _id (unlike the roster/cap paths, which never expose it to the
+    # UI) — the Trade Machine selects players by Name, and _id is the only
+    # thing that could disambiguate same-named players there later. It's
+    # an inert extra column for get_trade_value() and the CPU-side rows.
+    _ai_gm_trade_df = pd.DataFrame(AI_GM_EXTRA)
+    EFFECTIVE_TRADE_ROSTERS = pd.concat(
+        [TRADE_ROSTERS, _ai_gm_trade_df], ignore_index=True)
+else:
+    EFFECTIVE_TRADE_ROSTERS = TRADE_ROSTERS
+
+# --- 2. WIN RATE IN COMPARABLE GAMES ---
+# This used to read `1 / (1 + exp(-(0.1*top - 0.05*fatigue)))` — a closed
+# form over two sliders that touched neither the game log nor the roster,
+# captioned "Uses Madden 27 Real-Time Coaching AI logic" and styled like
+# the app's real metrics. It returned the same ~78.6% whether the
+# franchise was 16-12 or 0-28. It now reports the franchise's actual
+# record in games resembling the slider settings, or says it can't.
+_TOP_WINDOW_MINS = 4
+_FATIGUE_WINDOW_PCT = 15
+_MIN_COMPARABLE_GAMES = 3
+
+with st.sidebar.expander("🧠 Coach DNA: Live Predictor", expanded=False):
+    st.caption("Your actual record in games matching these conditions.")
+    user_top = st.slider("Current Time of Possession (Mins)", 0, 45, 20)
+    user_fatigue = st.slider("Team Wear & Tear (%)", 0, 100, 15)
+
+    if "TOP_Mins" not in df.columns or "Result" not in df.columns:
+        st.info("Needs TOP and Result columns in your game log.")
+    else:
+        _comp = df[
+            df["TOP_Mins"].sub(user_top).abs() <= _TOP_WINDOW_MINS
+        ]
+        _matched_on = f"TOP within ±{_TOP_WINDOW_MINS} min"
+        if "Fatigue" in df.columns:
+            _narrow = _comp[
+                _comp["Fatigue"].sub(user_fatigue).abs() <= _FATIGUE_WINDOW_PCT
+            ]
+            # Only narrow by fatigue if it leaves a usable sample; otherwise
+            # report the wider TOP-only match rather than a 1-game "rate".
+            if len(_narrow) >= _MIN_COMPARABLE_GAMES:
+                _comp = _narrow
+                _matched_on += f", wear within ±{_FATIGUE_WINDOW_PCT}%"
+
+        if len(_comp) < _MIN_COMPARABLE_GAMES:
+            st.metric("Win Rate in Similar Games", "—")
+            st.caption(
+                f"Only {len(_comp)} comparable game(s) on record — too few to "
+                f"quote a rate. Import more of your season to use this.")
+        else:
+            _wins = int((_comp["Result"] == "WIN").sum())
+            _rate = _wins / len(_comp)
+            st.metric("Win Rate in Similar Games", f"{_rate * 100:.0f}%")
+            st.progress(float(_rate))
+            st.caption(f"{_wins} of {len(_comp)} games · matched on {_matched_on}")
 
 # --- EMPTY DATA GUARD ---
 if df.empty or len(df) == 0:
@@ -417,7 +581,7 @@ if df.empty or len(df) == 0:
     """)
 
 # --- 3. DASHBOARD VISUALS ---
-st.markdown("### Franchise Key Performance Indicators (KPIs)")
+st.markdown("#### 📊 Franchise Key Performance Indicators")
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
 avg_pts_for = df["Points_For"].mean() if "Points_For" in df.columns else 0
@@ -429,47 +593,143 @@ win_rate = (
     if "Result" in df.columns
     else 0
 )
+pts_for_delta = avg_pts_for - 24
+pts_against_delta = avg_pts_against - 21
 
 with kpi1:
-    st.metric(
-        "Avg Points Scored",
-        f"{avg_pts_for:.1f}",
-        delta=f"{avg_pts_for - 24:.1f} vs League Avg",
-    )
+    st.markdown(_kpi_card_html(
+        "Avg Points Scored", f"{avg_pts_for:.1f}",
+        f"{abs(pts_for_delta):.1f} vs League Avg", pts_for_delta >= 0,
+    ), unsafe_allow_html=True)
 with kpi2:
-    st.metric(
-        "Avg Points Allowed",
-        f"{avg_pts_against:.1f}",
-        delta=f"{avg_pts_against - 21:.1f} vs League Avg",
-        delta_color="inverse",
-    )
+    # Lower points allowed is better — a negative delta (allowing fewer
+    # than league avg) is the "good" direction here, so it's green.
+    st.markdown(_kpi_card_html(
+        "Avg Points Allowed", f"{avg_pts_against:.1f}",
+        f"{abs(pts_against_delta):.1f} vs League Avg", pts_against_delta <= 0,
+    ), unsafe_allow_html=True)
 with kpi3:
-    st.metric("Win Rate", f"{win_rate:.1f}%")
+    st.markdown(_kpi_card_html("Win Rate", f"{win_rate:.1f}%"), unsafe_allow_html=True)
 with kpi4:
-    st.metric("Games Tracked", len(df))
+    st.markdown(_kpi_card_html("Games Tracked", str(len(df))), unsafe_allow_html=True)
 
-st.divider()
+st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+
+# --- FRANCHISE HOME — at-a-glance summary, rendered as the first tab ---
+# Pulls from the same functions every tab already uses (get_cap_summary,
+# ai_gm.positional_needs, analyze_roster). This used to render
+# unconditionally above the tab strip; together with the KPI row it pushed
+# the tabs to ~714px, below the fold on a 1366x768 laptop. It's a tab now.
+def render_franchise_home() -> None:
+    """Record, cap exposure, top needs and actionable moves for MY_TEAM."""
+    wins = int((df["Result"] == "WIN").sum()) if "Result" in df.columns else 0
+    losses = int((df["Result"] == "LOSS").sum()) if "Result" in df.columns else 0
+    cap = get_cap_summary(MY_TEAM, AI_GM_EXTRA)
+    needs = [n for n in ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA)
+             if n["level"] != "Set"]
+    needs.sort(key=lambda n: (n["level"] != "Critical", n["avg_ovr"]))
+    verdicts = [v for v in analyze_roster(MY_TEAM, AI_GM_EXTRA)
+                if v["Verdict"] != "KEEP"]
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        # These two totals are conditional on releasing every player, so
+        # they are labelled as such. They were previously subtracted into a
+        # single "Net Cap: -$268.0M" shown in red — a number that modelled
+        # cutting the whole roster and read as franchise-ending next to the
+        # real ~$280M league cap.
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Record &amp; Cap — {MY_TEAM}</div>
+            <div style="font-size:1.8rem; font-weight:800; color:#f1f5f9; margin-top:4px;">{wins}-{losses}</div>
+            <div style="color:var(--text-muted); font-size:0.8rem; margin-top:8px;">If every player were released:</div>
+            <div style="color:var(--text-dim); font-size:0.85rem; margin-top:2px;">
+                <span style="color:var(--status-good); font-weight:700;">${cap['total_savings']:.1f}M</span> savings
+                <span style="color:var(--text-muted);">·</span>
+                <span style="color:var(--status-bad); font-weight:700;">${cap['total_penalty']:.1f}M</span> dead cap
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        if needs:
+            needs_html = "".join(
+                f'<div style="display:flex; justify-content:space-between; margin-top:6px;">'
+                f'<span style="color:var(--text-dim);">{n["pos"]}</span>'
+                f'<span style="color:{n["color"]}; font-weight:700; font-size:0.85rem;">{n["level"]}</span>'
+                f'</div>'
+                for n in needs[:3]
+            )
+        else:
+            needs_html = ('<div style="color:var(--text-muted); margin-top:6px;">'
+                          'No pressing needs — roster is set everywhere.</div>')
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Top Needs</div>
+            {needs_html}
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        if verdicts:
+            moves_html = "".join(
+                f'<div style="display:flex; justify-content:space-between; margin-top:6px;">'
+                f'<span style="color:var(--text-dim);">{v["Name"]} '
+                f'<span style="color:var(--text-muted); font-size:0.78rem;">({v["Pos"]})</span></span>'
+                f'<span style="color:{VERDICT_COLORS.get(v["Verdict"], "var(--text-muted)")}; '
+                f'font-weight:700; font-size:0.85rem;">{v["Verdict"]}</span>'
+                f'</div>'
+                for v in verdicts[:3]
+            )
+        else:
+            moves_html = ('<div style="color:var(--text-muted); margin-top:6px;">'
+                          'No cut or trade candidates right now.</div>')
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Actionable Roster Moves</div>
+            {moves_html}
+        </div>
+        """, unsafe_allow_html=True)
+
 
 # ──────────────────────────────────────────────────────
-# TABS — Original + New Features
+# TABS — Home + Original + New Features
 # ──────────────────────────────────────────────────────
-tabs = st.tabs([
-    "📊 Scheme Performance",
-    "💪 Wear & Tear",
-    "🏈 Trade Machine",
+# Home is prepended and then sliced off, so the ten original tab bodies
+# below keep their existing tabs[0]..tabs[9] indices unchanged.
+# Labels are short on purpose. The full names ("Scheme Performance",
+# "AI GM Assistant", ...) overflowed the strip into a scroll chevron even
+# at 1366px, hiding the last tabs entirely; adding Home made that worse.
+# Each tab's own header still carries the long name and description.
+_all_tabs = st.tabs([
+    "🏠 Home",
+    "📊 Schemes",
+    "💪 Wear",
+    "🏈 Trades",
     "🏛️ Dynasty",
-    "📋 Roster Explorer",
-    "🏆 Season Awards",
+    "📋 Roster",
+    "🏆 Awards",
     "🎯 Coach DNA",
     "📈 Progression",
     "🗂️ Raw Data",
+    "🤖 AI GM",
 ])
+home_tab, tabs = _all_tabs[0], _all_tabs[1:]
+
+# ── TAB 0: Franchise Home ──
+with home_tab:
+    render_tab_header("🏠", "Franchise Home",
+                      f"Record, cap exposure, needs and moves for {MY_TEAM}")
+    render_franchise_home()
 
 # ── TAB 1: Scheme Performance ──
 with tabs[0]:
+    render_tab_header("📊", "Scheme Performance",
+                      "Time of possession, score differential, and momentum by scheme")
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.subheader("TOP vs Score Differential by Scheme")
+        st.markdown("#### TOP vs Score Differential by Scheme")
         if "TOP_Mins" in df.columns and "Score_Diff" in df.columns:
             scatter_df = df.copy()
             if "Points_For" in scatter_df.columns:
@@ -487,11 +747,11 @@ with tabs[0]:
                 template="plotly_dark",
                 title="Madden 27 Strategy Map",
             )
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("Insufficient data for Strategy Map.")
     with col2:
-        st.subheader("Scheme Efficiency")
+        st.markdown("#### Scheme Efficiency")
         if "Playbook" in df.columns and "Points_For" in df.columns:
             scheme_perf = (
                 df.groupby("Playbook")["Points_For"]
@@ -508,7 +768,7 @@ with tabs[0]:
     # ── Scheme Head-to-Head Breakdown ──
     if "Playbook" in df.columns and len(df["Playbook"].dropna().unique()) > 1:
         st.markdown("---")
-        st.subheader("📋 Scheme Head-to-Head Breakdown")
+        st.markdown("#### 📋 Scheme Head-to-Head Breakdown")
 
         schemes = df["Playbook"].dropna().unique().tolist()
         scheme_stats = {}
@@ -588,7 +848,7 @@ with tabs[0]:
         )
         fig_compare.update_layout(yaxis_title="Per Game Average",
                                   xaxis_title="")
-        st.plotly_chart(fig_compare, width="stretch")
+        st.plotly_chart(fig_compare, use_container_width=True)
 
         # GM Text Analysis
         st.markdown("#### 🧠 GM Analysis")
@@ -610,7 +870,7 @@ with tabs[0]:
     # ── Win Probability / Momentum Curve ──
     if "Result" in df.columns and len(df) > 1:
         st.markdown("---")
-        st.subheader("📈 Season Momentum Tracker")
+        st.markdown("#### 📈 Season Momentum Tracker")
         momentum_df = df.copy()
         momentum_df = momentum_df.reset_index(drop=True)
         momentum_df["Game_Num"] = range(1, len(momentum_df) + 1)
@@ -660,7 +920,7 @@ with tabs[0]:
             legend=dict(x=0.01, y=0.99),
             hovermode="x unified",
         )
-        st.plotly_chart(fig_momentum, width="stretch")
+        st.plotly_chart(fig_momentum, use_container_width=True)
 
         # Quick insights
         best_streak = 0
@@ -680,10 +940,8 @@ with tabs[0]:
 
 # ── TAB 2: Wear & Tear Impact ──
 with tabs[1]:
-    st.subheader("The 'Wear & Tear' Cost")
-    st.write(
-        "How turnovers, defensive breakdowns, and fatigue impact your franchise."
-    )
+    render_tab_header("💪", "Wear &amp; Tear",
+                      "How turnovers, defensive breakdowns, and fatigue impact your franchise")
 
     if "Fatigue" in df.columns and "Points_For" in df.columns:
         fig_fatigue = px.bar(
@@ -694,7 +952,7 @@ with tabs[1]:
             title="Fatigue Level vs Offensive Production",
             template="plotly_dark",
         )
-        st.plotly_chart(fig_fatigue, width="stretch")
+        st.plotly_chart(fig_fatigue, use_container_width=True)
 
     # Turnovers impact
     if "Turnovers" in df.columns and "Points_For" in df.columns:
@@ -709,7 +967,7 @@ with tabs[1]:
                 title="Turnovers vs Points Scored",
                 template="plotly_dark",
             )
-            st.plotly_chart(fig_to, width="stretch")
+            st.plotly_chart(fig_to, use_container_width=True)
         with wt2:
             if "Total_Yards_Allowed" in df.columns and "Takeaways" in df.columns:
                 fig_def = px.scatter(
@@ -720,7 +978,7 @@ with tabs[1]:
                     title="Yards Allowed vs Takeaways",
                     template="plotly_dark",
                 )
-                st.plotly_chart(fig_def, width="stretch")
+                st.plotly_chart(fig_def, use_container_width=True)
 
     # Rush vs Pass balance
     if "Pass_Yards" in df.columns and "Rush_Yards" in df.columns:
@@ -736,27 +994,19 @@ with tabs[1]:
         fig_bal.update_layout(legend_title="Yard Type",
                               yaxis_title="Yards",
                               xaxis_title="Opponent")
-        st.plotly_chart(fig_bal, width="stretch")
+        st.plotly_chart(fig_bal, use_container_width=True)
 
 # ── TAB 3: Trade Machine ──
 with tabs[2]:
-    # Section header with gradient divider
-    st.markdown('<div style="text-align:center;"><h2 style="'
-                'background: linear-gradient(90deg, #6366f1, #10b981);'
-                '-webkit-background-clip: text; -webkit-text-fill-color: transparent;'
-                'font-size: 2rem; margin-bottom: 0;">'
-                '🏈 War Room 2.0</h2>'
-                '<p style="color:#94a3b8; font-size:0.95rem;">'
-                'Find trade partners · Evaluate deals · AI counter-offers</p></div>',
-                unsafe_allow_html=True)
-    st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
+    render_tab_header("🏈", "War Room 2.0",
+                      "Find trade partners · Evaluate deals · AI counter-offers")
 
     tmcol1, tmcol2 = st.columns([1, 1], gap="large")
 
     # ── LEFT COLUMN — Player Scout & Partner Finder ──
     with tmcol1:
         st.markdown("#### 🔍 Player Scout")
-        user_roster = TRADE_ROSTERS[TRADE_ROSTERS["Team"] == MY_TEAM].copy()
+        user_roster = EFFECTIVE_TRADE_ROSTERS[EFFECTIVE_TRADE_ROSTERS["Team"] == MY_TEAM].copy()
         player_names = user_roster["Name"].tolist()
         selected_player_name = st.selectbox(
             "Select a player to shop:", player_names, key="trade_player_select"
@@ -796,7 +1046,7 @@ with tabs[2]:
             <div style="position:relative; z-index:1;">
                 <div style="font-size:3rem; font-weight:900; color:{ovr_c};
                             text-shadow: 0 0 20px {ovr_c}40;">{ovr_val}</div>
-                <div style="font-size:0.8rem; color:#64748b; text-transform:uppercase;
+                <div style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;
                             letter-spacing:2px;">OVERALL</div>
                 <div style="font-size:1.6rem; font-weight:700; color:#f1f5f9;
                             margin-top:8px;">{selected_player['Name']}</div>
@@ -817,7 +1067,7 @@ with tabs[2]:
                             background: linear-gradient(90deg, #6366f1, #10b981);
                             -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
                     {player_value:,.0f}
-                    <span style="font-size:0.7rem; -webkit-text-fill-color: #64748b;
+                    <span style="font-size:0.7rem; -webkit-text-fill-color: var(--text-muted);
                                 font-weight:400;"> TRADE VALUE</span>
                 </div>
             </div>
@@ -851,7 +1101,7 @@ with tabs[2]:
                     bgcolor='rgba(0,0,0,0)',
                     radialaxis=dict(visible=True, range=[40, 100],
                                     gridcolor='rgba(148,163,184,0.15)',
-                                    tickfont=dict(size=9, color='#64748b')),
+                                    tickfont=dict(size=9, color='#94a3b8')),
                     angularaxis=dict(gridcolor='rgba(148,163,184,0.15)',
                                      tickfont=dict(size=11, color='#cbd5e1')),
                 ),
@@ -861,7 +1111,7 @@ with tabs[2]:
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
             )
-            st.plotly_chart(fig_radar, width="stretch")
+            st.plotly_chart(fig_radar, use_container_width=True)
         else:
             st.caption(
                 "📊 _Radar chart available when SPD/ACC/AGI data is filled in._")
@@ -883,14 +1133,11 @@ with tabs[2]:
                     <span style="color:{bar_color}; font-weight:700;">{interest}%{fit_badge}</span>
                 </div>
                 <div class="interest-bar">
-                    <div
-                        class="interest-fill"
-                        style="width:{interest}%; background: linear-gradient(90deg, {bar_color}, {bar_color}aa);"
-                    ></div>
+                    <div class="interest-fill" style="width:{interest}%; background: linear-gradient(90deg, {bar_color}, {bar_color}aa);"></div>
                 </div>
                 <div style="color:#94a3b8; font-size:0.85rem; margin-bottom:4px;">↳ {p['reason']}</div>
                 <div style="color:#cbd5e1; font-size:0.9rem;">Best offer: <strong>{p['best_offer_name']}</strong>
-                    <span style="color:#64748b;">({p['best_offer_pos']}, {p['best_offer_ovr']} OVR)</span></div>
+                    <span style="color:var(--text-muted);">({p['best_offer_pos']}, {p['best_offer_ovr']} OVR)</span></div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -937,7 +1184,7 @@ with tabs[2]:
         ]
         st.markdown('</div>', unsafe_allow_html=True)
 
-        if st.button("📋 Evaluate Trade", key="eval_trade_btn", width="stretch"):
+        if st.button("📋 Evaluate Trade", key="eval_trade_btn", use_container_width=True):
             if not offered or not requested:
                 st.warning("Select at least one player on each side.")
             else:
@@ -981,7 +1228,7 @@ with tabs[2]:
                                gridcolor='rgba(0,0,0,0)'),
                     bargap=0.35,
                 )
-                st.plotly_chart(fig_compare, width="stretch")
+                st.plotly_chart(fig_compare, use_container_width=True)
 
                 # Diff metric
                 diff = result['diff']
@@ -1002,7 +1249,8 @@ with tabs[2]:
 
 # ── TAB 4: Dynasty ──
 with tabs[3]:
-    st.subheader("🏛️ Dynasty — Franchise Legacy")
+    render_tab_header("🏛️", "Dynasty — Franchise Legacy",
+                      "Season archives, era tracking, and career leaderboards")
 
     history = load_history()
 
@@ -1024,7 +1272,7 @@ with tabs[3]:
         fig_timeline.update_traces(marker=dict(
             line=dict(width=2, color="white")))
         fig_timeline.update_layout(xaxis=dict(dtick=1))
-        st.plotly_chart(fig_timeline, width="stretch")
+        st.plotly_chart(fig_timeline, use_container_width=True)
 
         # Season detail cards
         st.markdown("#### 📜 The Chronicles")
@@ -1064,7 +1312,7 @@ with tabs[3]:
                 "Total Yds": "{:,.0f}",
             }),
             hide_index=True,
-            width="stretch",
+            use_container_width=True,
         )
     else:
         st.info("No career leaders data available yet.")
@@ -1119,7 +1367,21 @@ with tabs[3]:
 
 # ── TAB 5: Roster Explorer ──
 with tabs[4]:
-    st.subheader("📋 Roster Explorer")
+    render_tab_header("📋", "Roster Explorer",
+                      "Position grades, depth chart, cap overview, and cut-or-keep analysis")
+
+    if ROSTER_WARNINGS:
+        with st.expander(
+            f"⚠️ {len(ROSTER_WARNINGS)} data quality issue(s) found in the roster CSV",
+            expanded=False,
+        ):
+            st.caption(
+                "Found automatically when the roster loaded — fix these directly "
+                "in `data/packers_roster.csv`. They don't block the app, but "
+                "anything flagged here (a garbled name, an out-of-range stat) "
+                "will show up as-is everywhere, including AI GM answers.")
+            for w in ROSTER_WARNINGS:
+                st.markdown(f"- {w}")
 
     rcol1, rcol2 = st.columns([1, 3])
 
@@ -1129,7 +1391,7 @@ with tabs[4]:
         selected_group = st.selectbox(
             "Position Group:", POSITION_GROUPS, key="roster_group_select")
 
-        summary = get_team_summary(selected_team)
+        summary = get_team_summary(selected_team, AI_GM_EXTRA)
         st.markdown("---")
         st.metric("Players", summary["count"])
         st.metric("Avg OVR", summary["avg_ovr"])
@@ -1138,7 +1400,7 @@ with tabs[4]:
             f"⭐ **Best Player:** {summary.get('best_player', 'N/A')} ({summary.get('best_ovr', 'N/A')} OVR)")
 
     with rcol2:
-        roster_df = get_roster(selected_team, selected_group)
+        roster_df = get_roster(selected_team, selected_group, AI_GM_EXTRA)
         if roster_df.empty:
             st.info(f"No players found for {selected_team} — {selected_group}")
         else:
@@ -1155,11 +1417,13 @@ with tabs[4]:
                 return f"color: {color}; font-weight: bold"
 
             def style_tier(val):
+                # Sequential scale: tier is a quality rating, not a call to
+                # action, so it must not share hues with the verdicts below.
                 colors = {
-                    "Elite": "#00e676",
-                    "Great": "#2196f3",
-                    "Average": "#ffc107",
-                    "Developing": "#ff5252",
+                    "Developing": RANK_COLORS[0],
+                    "Average": RANK_COLORS[1],
+                    "Great": RANK_COLORS[2],
+                    "Elite": RANK_COLORS[3],
                 }
                 return f"color: {colors.get(val, 'white')}; font-weight: bold"
 
@@ -1170,7 +1434,7 @@ with tabs[4]:
             )
 
             st.dataframe(styled, hide_index=True,
-                         width="stretch", height=500)
+                         use_container_width=True, height=500)
 
             # Position breakdown chart
             st.markdown("#### Position Breakdown")
@@ -1185,7 +1449,7 @@ with tabs[4]:
                 color_continuous_scale="Viridis",
             )
             fig_pos.update_layout(showlegend=False)
-            st.plotly_chart(fig_pos, width="stretch")
+            st.plotly_chart(fig_pos, use_container_width=True)
 
     # ── Trade Value Leaderboard ──
     st.markdown("---")
@@ -1193,7 +1457,7 @@ with tabs[4]:
     st.caption(
         "Players ranked by trade value — factors in OVR, age, position, dev trait, contract, and athleticism.")
 
-    all_gb = get_roster(selected_team, "All")
+    all_gb = get_roster(selected_team, "All", AI_GM_EXTRA)
     if not all_gb.empty:
         tv_rows = []
         for _, p in all_gb.iterrows():
@@ -1209,23 +1473,19 @@ with tabs[4]:
         tv_df.index.name = "Rank"
 
         def style_tv(val):
-            if val >= 700:
-                return "color: #00e676; font-weight: bold"
-            elif val >= 500:
-                return "color: #2196f3; font-weight: bold"
-            elif val >= 350:
-                return "color: #ffc107; font-weight: bold"
-            return "color: #ff5252; font-weight: bold"
+            # Sequential scale — trade value is a rating, not a verdict.
+            return (f"color: {rank_color(val, [350, 500, 700])}; "
+                    f"font-weight: bold")
 
         styled_tv = tv_df.style.map(style_tv, subset=["Trade Value"]).map(
             style_ovr, subset=["OVR"]).format({"Trade Value": "{:.1f}"})
 
-        st.dataframe(styled_tv, width="stretch", height=450)
+        st.dataframe(styled_tv, use_container_width=True, height=450)
 
     # ── Position Group Grades ──
     st.markdown("---")
     st.markdown("#### 📊 Position Group Grades")
-    grades = get_position_grades(selected_team)
+    grades = get_position_grades(selected_team, AI_GM_EXTRA)
     if grades:
         grade_cols = st.columns(4)
         for i, g in enumerate(grades):
@@ -1245,7 +1505,7 @@ with tabs[4]:
     # ── Cap Overview Widget ──
     st.markdown("---")
     st.markdown("#### 💰 Cap Overview")
-    cap = get_cap_summary(selected_team)
+    cap = get_cap_summary(selected_team, AI_GM_EXTRA)
     if cap["players"]:
         cap_c1, cap_c2, cap_c3 = st.columns(3)
         with cap_c1:
@@ -1267,7 +1527,7 @@ with tabs[4]:
                 lambda x: f"${x:.2f}M")
             dead_df["Savings"] = dead_df["Savings"].apply(
                 lambda x: f"${x:.2f}M")
-            st.dataframe(dead_df, hide_index=True, width="stretch")
+            st.dataframe(dead_df, hide_index=True, use_container_width=True)
         else:
             st.info("No dead cap obligations found.")
     else:
@@ -1276,7 +1536,7 @@ with tabs[4]:
     # ── Cut or Keep Analyzer ──
     st.markdown("---")
     st.markdown("#### ✂️ Cut or Keep Analyzer")
-    verdicts = analyze_roster(selected_team)
+    verdicts = analyze_roster(selected_team, AI_GM_EXTRA)
     if verdicts:
         # Summary counts
         n_keep = sum(1 for v in verdicts if v["Verdict"] == "KEEP")
@@ -1290,13 +1550,11 @@ with tabs[4]:
         with ck3:
             st.metric("🔴 Cut Candidates", n_cut)
 
-        verdict_colors = {"KEEP": "#00e676",
-                          "TRADE": "#ffc107", "CUT": "#ff5252"}
         verdict_icons = {"KEEP": "✅", "TRADE": "📦", "CUT": "✂️"}
         ck_cols = st.columns(3)
         for i, v in enumerate(verdicts):
             with ck_cols[i % 3]:
-                vc = verdict_colors[v["Verdict"]]
+                vc = VERDICT_COLORS[v["Verdict"]]
                 vi = verdict_icons[v["Verdict"]]
                 st.markdown(f"""
                 <div style="background: linear-gradient(135deg, rgba(25,25,55,0.9), rgba(45,45,75,0.7));
@@ -1311,10 +1569,7 @@ with tabs[4]:
                             border-radius:8px; font-size:0.8rem;">{vi} {v['Verdict']}</div>
                     </div>
                     <div style="color:#bbb; font-size:0.78rem; margin-top:4px;">{v['Reason']}</div>
-                    <div style="color:#888; font-size:0.72rem; margin-top:2px;">
-                        TV: {v['Trade_Value']:.0f} · Sav: ${v['Savings']:.1f}M ·
-                        Dead: ${v['Penalty']:.1f}M · Depth: {v['Depth']}
-                    </div>
+                    <div style="color:#888; font-size:0.72rem; margin-top:2px;">TV: {v['Trade_Value']:.0f} · Sav: ${v['Savings']:.1f}M · Dead: ${v['Penalty']:.1f}M · Depth: {v['Depth']}</div>
                 </div>
                 """, unsafe_allow_html=True)
     else:
@@ -1330,10 +1585,17 @@ with tabs[4]:
     _DEF_POSITIONS = ["EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
     dc_positions = _OFF_POSITIONS if dc_side == "Offense" else _DEF_POSITIONS
 
-    full_roster = get_roster(selected_team, "All")
-    dc_cols = st.columns(len(dc_positions))
+    full_roster = get_roster(selected_team, "All", AI_GM_EXTRA)
+    # Wrap into rows of at most _DC_PER_ROW instead of one column per
+    # position. Nine columns across ~1000px left ~100px each, which is why
+    # names had to be truncated to surnames to fit; Streamlit columns don't
+    # wrap on their own, so it only got worse as the window narrowed.
+    _DC_PER_ROW = 5
+    dc_cols = []
     for i, pos in enumerate(dc_positions):
-        with dc_cols[i]:
+        if i % _DC_PER_ROW == 0:
+            dc_cols = st.columns(min(_DC_PER_ROW, len(dc_positions) - i))
+        with dc_cols[i % _DC_PER_ROW]:
             pos_players = full_roster[full_roster["Pos"] == pos].sort_values(
                 "OVR", ascending=False)
             st.markdown(f"<div style='text-align:center; font-weight:800; "
@@ -1343,13 +1605,13 @@ with tabs[4]:
                 ovr = int(p['OVR'])
                 oc = ovr_color(ovr)
                 cls = 'dc-starter' if j == 0 else 'dc-backup'
-                dev_icon = {'X-Factor': '⭐', 'Superstar': '🌟',
+                dev_icon = {'Superstar X': '⭐', 'Superstar': '🌟',
                             'Star': '✨', 'Normal': ''}.get(
                     str(p.get('Dev', 'Normal')), '')
                 st.markdown(f"""
                 <div class="dc-card {cls}">
                     <div style="font-weight:700; color:white; font-size:0.85rem;">
-                        {p['Name'].split('.')[-1].strip() if '.' in str(p['Name']) else p['Name']}
+                        {p['Name']}
                     </div>
                     <div style="font-size:1.4rem; font-weight:900; color:{oc};">
                         {ovr} {dev_icon}
@@ -1358,13 +1620,13 @@ with tabs[4]:
                 </div>
                 """, unsafe_allow_html=True)
             if pos_players.empty:
-                st.markdown("<div class='dc-card' style='color:#666;'>Empty</div>",
+                st.markdown("<div class='dc-card' style='color:var(--text-muted);'>Empty</div>",
                             unsafe_allow_html=True)
 
 # ── TAB 6: Season Awards ──
 with tabs[5]:
-    st.subheader("🏆 Season Awards")
-    st.markdown("Auto-generated awards based on your current roster data.")
+    render_tab_header("🏆", "Season Awards",
+                      "Auto-generated awards based on your current roster data")
 
     roster_full = get_roster(MY_TEAM, "All")
     if not roster_full.empty:
@@ -1387,10 +1649,13 @@ with tabs[5]:
         # Iron Man: oldest player above 80 OVR
         vet = award_df[(award_df["Age"] >= 29) & (award_df["OVR"] >= 80)]
         iron = vet.loc[vet["Age"].idxmax()] if not vet.empty else None
-        # Best Contract: highest OVR with lowest penalty
+        # Best Contract: highest OVR with lowest penalty.
+        # Parse dead cap with the trade engine's parser rather than a local
+        # lambda — the one that used to live here stripped the "K" suffix
+        # without dividing by 1000, so a $600K hit was scored as $600M and
+        # the cheapest contracts on the roster ranked as the worst.
         award_df["_pen"] = award_df.get(
-            "Penalty", pd.Series([0] * len(award_df))
-        ).apply(_parse_sal)
+            "Penalty", pd.Series([0] * len(award_df))).apply(parse_salary)
         has_pen = award_df[award_df["_pen"] > 0]
         if not has_pen.empty:
             has_pen = has_pen.copy()
@@ -1423,13 +1688,13 @@ with tabs[5]:
                             {player['Name']}</div>
                         <div style="color: #aaa; font-size: 0.85rem;">
                             {player['Pos']} · {int(player['OVR'])} OVR · Age {int(player['Age'])}</div>
-                        <div style="color: #666; font-size: 0.7rem; margin-top: 0.4rem;">{desc}</div>
+                        <div style="color: var(--text-muted); font-size: 0.7rem; margin-top: 0.4rem;">{desc}</div>
                     </div>
                     """, unsafe_allow_html=True)
                 else:
                     st.markdown(f"""
                     <div style="background: rgba(25,25,55,0.5); border: 1px solid #333;
-                        border-radius: 16px; padding: 1.2rem; text-align: center; color: #666;">
+                        border-radius: 16px; padding: 1.2rem; text-align: center; color: var(--text-muted);">
                         <div style="font-size: 2.5rem;">{title.split(' ')[0]}</div>
                         <div>{title.split(' ', 1)[1]}</div>
                         <div style="font-size: 0.8rem;">No eligible players</div>
@@ -1440,9 +1705,8 @@ with tabs[5]:
 
 # ── TAB 7: Coach DNA ──
 with tabs[6]:
-    st.subheader("🎯 Head Coach DNA Profile")
-    st.markdown(
-        "Your coaching identity, computed from your franchise game data.")
+    render_tab_header("🎯", "Head Coach DNA Profile",
+                      "Your coaching identity, computed from your franchise game data")
 
     if ("Pass_Yards" in df.columns and "Rush_Yards" in df.columns
             and "Result" in df.columns and len(df) >= 3):
@@ -1518,7 +1782,7 @@ with tabs[6]:
             title="Coaching DNA Radar",
             margin=dict(t=60, b=30),
         )
-        st.plotly_chart(fig_dna, width="stretch")
+        st.plotly_chart(fig_dna, use_container_width=True)
 
         # Stat breakdown
         dna1, dna2, dna3, dna4, dna5 = st.columns(5)
@@ -1538,8 +1802,8 @@ with tabs[6]:
 
 # ── TAB 8: Progression Tracker ──
 with tabs[7]:
-    st.subheader("📈 Player Progression Tracker")
-    st.markdown("Snapshot your roster OVRs over time to track development.")
+    render_tab_header("📈", "Player Progression Tracker",
+                      "Snapshot your roster OVRs over time to track development")
 
     # Snapshot controls
     snap_c1, snap_c2, snap_c3 = st.columns([1, 1, 2])
@@ -1567,9 +1831,7 @@ with tabs[7]:
                     border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.4rem;">
                     <span style="font-weight:700; color:white;">{g['Name']}</span>
                     <span style="color:#aaa;"> {g['Pos']}</span>
-                    <span style="float:right; color:#00e676; font-weight:800;">
-                        +{g['Delta']} ({g['Start_OVR']}→{g['Current_OVR']})
-                    </span>
+                    <span style="float:right; color:#00e676; font-weight:800;">+{g['Delta']} ({g['Start_OVR']}→{g['Current_OVR']})</span>
                 </div>
                 """, unsafe_allow_html=True)
         with mov2:
@@ -1580,9 +1842,7 @@ with tabs[7]:
                     border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.4rem;">
                     <span style="font-weight:700; color:white;">{loser['Name']}</span>
                     <span style="color:#aaa;"> {loser['Pos']}</span>
-                    <span style="float:right; color:#ff5252; font-weight:800;">
-                        {loser['Delta']} ({loser['Start_OVR']}→{loser['Current_OVR']})
-                    </span>
+                    <span style="float:right; color:#ff5252; font-weight:800;">{loser['Delta']} ({loser['Start_OVR']}→{loser['Current_OVR']})</span>
                 </div>
                 """, unsafe_allow_html=True)
     else:
@@ -1594,9 +1854,263 @@ with tabs[7]:
     if not prog_log.empty:
         st.markdown("##### 📚 Full Progression Log")
         st.dataframe(prog_log, hide_index=True,
-                     width="stretch", height=300)
+                     use_container_width=True, height=300)
 
 # ── TAB 9: Raw Data ──
 with tabs[8]:
-    st.subheader("Historical Game Logs")
+    render_tab_header("🗂️", "Raw Data", "Full historical game log table")
     st.dataframe(df)
+
+# ── TAB 10: AI GM Assistant — plug in new players dynamically ──
+with tabs[9]:
+    render_tab_header("🤖", "AI GM Assistant",
+                      f"Scout a draft pick, UDFA, or trade target — plug them into the "
+                      f"{MY_TEAM} roster and get an instant AI grade")
+
+    if ai_client.is_available():
+        st.markdown('<span style="background:#00e67620; color:#00e676; '
+                    'padding:3px 10px; border-radius:20px; font-size:0.78rem; '
+                    'font-weight:700; border:1px solid #00e67650;">'
+                    '🟢 Live Claude scouting narratives</span>',
+                    unsafe_allow_html=True)
+    else:
+        st.markdown('<span style="background:#ffffff10; color:#94a3b8; '
+                    'padding:3px 10px; border-radius:20px; font-size:0.78rem; '
+                    'font-weight:600; border:1px solid #ffffff20;">'
+                    '⚪ Heuristic scouting (set ANTHROPIC_API_KEY for live Claude writeups)</span>',
+                    unsafe_allow_html=True)
+
+    if "ai_gm_log" not in st.session_state:
+        st.session_state.ai_gm_log = []
+    if "ai_gm_form_version" not in st.session_state:
+        st.session_state.ai_gm_form_version = 0
+
+    gm_col1, gm_col2 = st.columns([1, 1], gap="large")
+
+    # ── LEFT — Add Player Form ──
+    with gm_col1:
+        st.markdown("#### ➕ Scout & Add a Player")
+        # Keying the form on a version counter (bumped only after a
+        # successful add) resets the fields for the next entry without
+        # wiping them out from under a failed validation.
+        form_key = f"ai_gm_add_player_form_{st.session_state.ai_gm_form_version}"
+        with st.form(form_key, clear_on_submit=False):
+            f_name = st.text_input("Name", placeholder="e.g. J. Smith")
+            fc1, fc2, fc3 = st.columns(3)
+            with fc1:
+                f_pos = st.selectbox("Position", ai_gm.SCOUTABLE_POSITIONS)
+            with fc2:
+                f_age = st.number_input(
+                    "Age", min_value=18, max_value=45, value=22)
+            with fc3:
+                f_ovr = st.number_input(
+                    "OVR", min_value=1, max_value=99, value=70)
+
+            f_dev = st.selectbox("Dev Trait", ai_gm.DEV_TRAITS)
+
+            st.caption("Physical attributes (optional — powers the AI scouting read)")
+            ac1, ac2, ac3 = st.columns(3)
+            with ac1:
+                f_spd = st.slider("SPD", 0, 99, 80)
+                f_cod = st.slider("COD", 0, 99, 80)
+            with ac2:
+                f_acc = st.slider("ACC", 0, 99, 80)
+                f_str = st.slider("STR", 0, 99, 70)
+            with ac3:
+                f_agi = st.slider("AGI", 0, 99, 80)
+                f_awr = st.slider("AWR", 0, 99, 70)
+
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                f_savings = st.text_input("Cap Savings", value="$0")
+            with cc2:
+                f_penalty = st.text_input("Dead Cap Penalty", value="$0")
+
+            f_persist = st.checkbox(
+                "💾 Save to roster CSV (persists across restarts)", value=False)
+
+            submitted = st.form_submit_button(
+                "🔮 Scout & Add to Roster", use_container_width=True)
+
+        if submitted:
+            new_player = {
+                "Name": f_name, "Pos": f_pos, "Age": f_age, "OVR": f_ovr,
+                "Dev": f_dev, "SPD": f_spd, "ACC": f_acc, "AGI": f_agi,
+                "COD": f_cod, "STR": f_str, "AWR": f_awr,
+                "Savings": f_savings, "Penalty": f_penalty,
+            }
+            result = ai_gm.add_player(new_player, MY_TEAM)
+            if not result["ok"]:
+                for err in result["errors"]:
+                    st.error(err)
+            else:
+                report = ai_gm.scout_player(
+                    result["player"], MY_TEAM, AI_GM_EXTRA)
+
+                # The verdict/grade/trade-value above are always the
+                # deterministic heuristic output. If a Claude API key is
+                # configured, ask it to rewrite just the narrative blurb
+                # grounded in those already-computed facts; otherwise the
+                # templated heuristic blurb stands as-is.
+                if ai_client.is_available():
+                    with st.spinner("Consulting AI GM..."):
+                        ai_blurb = ai_client.generate_scouting_narrative(
+                            result["player"], report, MY_TEAM)
+                    if ai_blurb:
+                        report["blurb"] = ai_blurb
+                        report["ai_generated"] = True
+                    else:
+                        report["ai_generated"] = False
+                        st.warning(
+                            "Claude request failed — showing heuristic scouting report instead.")
+                else:
+                    report["ai_generated"] = False
+
+                st.session_state.ai_gm_players.append(result["player"])
+                st.session_state.ai_gm_log.insert(0, report)
+                if f_persist:
+                    ai_gm.persist_roster(MY_TEAM, st.session_state.ai_gm_players)
+                st.session_state.ai_gm_form_version += 1
+                st.success(
+                    f"✅ **{result['player']['Name']}** added to the {MY_TEAM} roster.")
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("#### 🧭 Positional Needs Board")
+        st.caption("AI-computed depth + quality grade per position — use this to decide who to scout next.")
+        needs = ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA)
+        need_cols = st.columns(4)
+        for i, n in enumerate(needs):
+            with need_cols[i % 4]:
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(30,30,60,0.9), rgba(50,50,80,0.7));
+                    border: 1px solid {n['color']}40; border-left: 4px solid {n['color']};
+                    border-radius: 12px; padding: 0.7rem; margin-bottom: 0.6rem; text-align:center;">
+                    <div style="font-weight:800; color:white;">{n['pos']}</div>
+                    <div style="color:{n['color']}; font-weight:700; font-size:0.85rem;">{n['level']}</div>
+                    <div style="color:#888; font-size:0.72rem;">{n['count']} plyr · {n['avg_ovr']:.0f} avg</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ── RIGHT — Scouting Report Feed ──
+    with gm_col2:
+        st.markdown("#### 📋 AI Scouting Reports")
+        if not st.session_state.ai_gm_log:
+            st.info("Add a player on the left to generate an AI scouting report.")
+        else:
+            for idx, rep in enumerate(st.session_state.ai_gm_log):
+                vc = rep["verdict_color"]
+                source_badge = ('<span style="color:#a78bfa; font-size:0.7rem; font-weight:700;">✨ Claude</span>'
+                                if rep.get("ai_generated") else
+                                '<span style="color:var(--text-muted); font-size:0.7rem;">⚙️ Heuristic</span>')
+                st.markdown(f"""
+                <div class="trade-card" style="border-left: 4px solid {vc};">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:1.15rem; font-weight:800; color:#f1f5f9;">
+                            {rep['Name']} <span style="color:#94a3b8; font-weight:500; font-size:0.85rem;">
+                            {rep['Pos']} · {rep['Age']}yo · {rep['OVR']} OVR</span>
+                        </span>
+                        <span style="background:{vc}; color:#000; font-weight:800; padding:2px 10px;
+                            border-radius:8px; font-size:0.75rem; white-space:nowrap;">{rep['verdict']}</span>
+                    </div>
+                    <div style="color:#cbd5e1; font-size:0.85rem; margin-top:8px; line-height:1.5;">{rep['blurb']}</div>
+                    <div style="margin-top:6px;">{source_badge}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                rm_col, regen_col = st.columns(2)
+                with rm_col:
+                    if st.button("🗑️ Remove", key=f"ai_gm_remove_{rep['_id']}",
+                                use_container_width=True):
+                        st.session_state.ai_gm_players = ai_gm.remove_from_list(
+                            st.session_state.ai_gm_players, rep["_id"])
+                        st.session_state.ai_gm_log = [
+                            r for r in st.session_state.ai_gm_log if r["_id"] != rep["_id"]]
+                        st.rerun()
+                with regen_col:
+                    # Regenerating a heuristic blurb would just reproduce the
+                    # same deterministic text — only worth offering when
+                    # Claude is actually writing the narrative.
+                    if ai_client.is_available():
+                        if st.button("🔄 Regenerate", key=f"ai_gm_regen_{rep['_id']}",
+                                    use_container_width=True):
+                            source_player = next(
+                                (p for p in st.session_state.ai_gm_players
+                                 if p["_id"] == rep["_id"]), None)
+                            if source_player is not None:
+                                with st.spinner("Asking Claude for a fresh take..."):
+                                    new_blurb = ai_client.generate_scouting_narrative(
+                                        source_player, rep, MY_TEAM)
+                                if new_blurb:
+                                    rep["blurb"] = new_blurb
+                                    rep["ai_generated"] = True
+                                else:
+                                    st.warning(
+                                        "Regeneration failed — keeping the previous version.")
+                            st.rerun()
+
+    # ── Ask the AI GM — free-form chat grounded in real roster data ──
+    st.markdown("---")
+    st.markdown("#### 💬 Ask the AI GM")
+    st.caption(
+        "Ask anything about your roster, cap situation, trade targets, or "
+        "needs — every answer is grounded in your actual data below, not "
+        "a generic guess.")
+
+    if "ai_gm_chat" not in st.session_state:
+        st.session_state.ai_gm_chat = []
+    # Stale chat referencing a different team's data would be misleading —
+    # reset on team switch rather than let old answers linger.
+    if st.session_state.get("ai_gm_chat_team") != MY_TEAM:
+        st.session_state.ai_gm_chat = []
+        st.session_state.ai_gm_chat_team = MY_TEAM
+
+    if not ai_client.is_available():
+        st.info(
+            "💬 Chat requires a live Claude connection — set `ANTHROPIC_API_KEY` "
+            "(env var locally, or Streamlit Cloud Settings → Secrets) to unlock it. "
+            "The scouting reports above still work either way.")
+    else:
+        for msg in st.session_state.ai_gm_chat:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        if st.session_state.ai_gm_chat:
+            clear_col, regen_col = st.columns(2)
+            with clear_col:
+                if st.button("🗑️ Clear chat", key="ai_gm_chat_clear", use_container_width=True):
+                    st.session_state.ai_gm_chat = []
+                    st.rerun()
+            with regen_col:
+                last_msg = st.session_state.ai_gm_chat[-1]
+                if last_msg["role"] == "assistant":
+                    if st.button("🔄 Regenerate last answer", key="ai_gm_chat_regen",
+                                use_container_width=True):
+                        st.session_state.ai_gm_chat.pop()  # drop the stale answer
+                        last_question = st.session_state.ai_gm_chat[-1]["content"]
+                        history = st.session_state.ai_gm_chat[:-1][-12:]
+                        context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
+                        with st.spinner("Asking again..."):
+                            answer = ai_client.answer_gm_question(
+                                last_question, context_summary, history, MY_TEAM)
+                            if answer is None:
+                                answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
+                        st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
+                        st.rerun()
+
+        if prompt := st.chat_input("e.g. Who should I trade for a pass rusher?"):
+            st.session_state.ai_gm_chat.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                with st.spinner("Consulting the AI GM..."):
+                    context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
+                    # Exclude the prompt just appended — answer_gm_question
+                    # takes it separately — and cap history length so the
+                    # prompt doesn't grow unbounded over a long session.
+                    history = st.session_state.ai_gm_chat[:-1][-12:]
+                    answer = ai_client.answer_gm_question(
+                        prompt, context_summary, history, MY_TEAM)
+                    if answer is None:
+                        answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
+                st.markdown(answer)
+            st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
