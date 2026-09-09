@@ -20,6 +20,7 @@ from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
 from src.progression import snapshot_roster, get_progression, get_movers
+from src import game_log
 from src.roster import (
     get_roster,
     get_team_summary,
@@ -372,8 +373,13 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
         df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
         # Normalize Result: W → WIN, L → LOSS
         if "Result" in df.columns:
+            # "T" is carried through rather than folded into LOSS: a
+            # 20-20 game is a real outcome, and the entry form can now
+            # produce one. Every consumer tests for "WIN"/"LOSS"
+            # explicitly, so a tie counts as neither.
             df["Result"] = df["Result"].map(
-                {"W": "WIN", "L": "LOSS", "WIN": "WIN", "LOSS": "LOSS"}
+                {"W": "WIN", "L": "LOSS", "T": "TIE",
+                 "WIN": "WIN", "LOSS": "LOSS", "TIE": "TIE"}
             ).fillna("LOSS")
         else:
             df["Result"] = df["Score_Diff"].apply(
@@ -393,6 +399,15 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
             df["TOP_Mins"] = df["TOP"].apply(parse_top)
         except Exception:
             pass
+
+    # Season/Week are optional: the 28 games already on file predate the
+    # columns and there is no real season boundary to infer (19 distinct
+    # opponents, first repeat at game 13), so they stay blank rather than
+    # being backfilled with a guess. Nullable Int64 keeps blank as <NA>
+    # instead of coercing it to a fictitious week 0.
+    for _col in ("Season", "Week"):
+        if _col in df.columns:
+            df[_col] = pd.to_numeric(df[_col], errors="coerce").astype("Int64")
 
     return df, warnings
 
@@ -455,7 +470,11 @@ for _w in prep_warnings:
 all_game_count = len(df)
 
 with st.sidebar.expander("🎚️ Dashboard Filters", expanded=False):
-    result_options = ["WIN", "LOSS"] if "Result" in df.columns else []
+    # Derived from the data, not hardcoded: a logged tie would otherwise
+    # be unfilterable and vanish from the "Showing N of M" count.
+    result_options = (
+        [r for r in ("WIN", "LOSS", "TIE") if r in set(df["Result"].dropna())]
+        if "Result" in df.columns else [])
     selected_results = (
         st.multiselect("Results", result_options, default=result_options)
         if result_options else []
@@ -695,6 +714,156 @@ def render_franchise_home() -> None:
         """, unsafe_allow_html=True)
 
 
+def render_game_log_form() -> None:
+    """One-week game entry, appended to the game log CSV.
+
+    Before this, adding a week meant hand-typing 20 cells into the CSV —
+    roughly 560 for a season. Four of those columns are arithmetic on the
+    others, so the form derives them rather than inviting a row that
+    contradicts itself.
+
+    Collapsed by default: the tab strip only just cleared the fold, and
+    an always-open form would put it back underneath.
+    """
+    # Carried across the rerun below: st.success() renders and is then
+    # immediately discarded when the script restarts, so confirming the
+    # write inline showed the user nothing at all.
+    _note = st.session_state.pop("game_log_note", None)
+    if _note:
+        st.success(_note)
+
+    existing = game_log.read_log(_GAME_LOGS_CSV)
+    default_season, default_week = game_log.next_season_week(
+        existing, MY_TEAM)
+    known_playbooks = (
+        sorted(existing["Playbook"].dropna().astype(str).unique().tolist())
+        if "Playbook" in existing.columns else [])
+
+    with st.expander("➕ Log this week's game", expanded=False):
+        with st.form("log_game_form"):
+            when1, when2, when3 = st.columns(3)
+            with when1:
+                season = st.number_input("Season", min_value=1, max_value=30,
+                                         value=default_season, step=1)
+            with when2:
+                week = st.number_input("Week", min_value=1, max_value=22,
+                                       value=min(default_week, 22), step=1)
+            with when3:
+                opponents = [t for t in game_log.NFL_TEAMS if t != MY_TEAM]
+                opponent = st.selectbox("Opponent", opponents)
+
+            st.markdown("**Your offense**")
+            off1, off2, off3, off4 = st.columns(4)
+            with off1:
+                points_for = st.number_input("Points scored", min_value=0,
+                                             max_value=99, value=0, step=1)
+            with off2:
+                pass_yards = st.number_input("Pass yards", min_value=0,
+                                             max_value=999, value=0, step=1)
+            with off3:
+                rush_yards = st.number_input("Rush yards", min_value=0,
+                                             max_value=999, value=0, step=1)
+            with off4:
+                first_downs = st.number_input("First downs", min_value=0,
+                                              max_value=60, value=0, step=1)
+
+            off5, off6, off7, _off8 = st.columns(4)
+            with off5:
+                turnovers = st.number_input("Turnovers lost", min_value=0,
+                                            max_value=15, value=0, step=1)
+            with off6:
+                rz_td = st.number_input("Red zone TDs", min_value=0,
+                                        max_value=15, value=0, step=1)
+            with off7:
+                top = st.text_input("Time of possession", value="30:00",
+                                    help="MM:SS, e.g. 31:12")
+
+            st.markdown("**Your defense**")
+            def1, def2, def3, def4 = st.columns(4)
+            with def1:
+                points_against = st.number_input(
+                    "Points allowed", min_value=0, max_value=99, value=0,
+                    step=1)
+            with def2:
+                pass_allowed = st.number_input(
+                    "Pass yards allowed", min_value=0, max_value=999,
+                    value=0, step=1)
+            with def3:
+                rush_allowed = st.number_input(
+                    "Rush yards allowed", min_value=0, max_value=999,
+                    value=0, step=1)
+            with def4:
+                sacks = st.number_input("Sacks", min_value=0, max_value=25,
+                                        value=0, step=1)
+
+            play1, play2 = st.columns(2)
+            with play1:
+                takeaways = st.number_input("Takeaways", min_value=0,
+                                            max_value=15, value=0, step=1)
+            with play2:
+                playbook = st.text_input(
+                    "Playbook",
+                    value=known_playbooks[-1] if known_playbooks else "",
+                    help="Free text — used to group games in Scheme "
+                         "Performance, so keep the spelling consistent.")
+
+            also_snapshot = st.checkbox(
+                "Also save a roster OVR snapshot for this week", value=True,
+                help="Fills the Progression Tracker automatically. Update "
+                     "your roster CSV first if ratings changed.")
+
+            submitted = st.form_submit_button("Log game", type="primary")
+
+        if not submitted:
+            return
+
+        # Totals, differential and W/L are derived, so the only things
+        # worth rejecting are a time that no chart could read and a week
+        # that would silently double-count.
+        if game_log.parse_top(top) is None:
+            st.error(f"Time of possession '{top}' isn't MM:SS — "
+                     "e.g. 31:12. Nothing was logged.")
+            return
+        if game_log.duplicate_week(existing, season, week, MY_TEAM):
+            st.error(f"Season {season}, Week {week} is already logged for "
+                     f"{MY_TEAM}. Nothing was logged.")
+            return
+
+        ok, message = game_log.append_game(_GAME_LOGS_CSV, {
+            "Season": int(season), "Week": int(week), "Opponent": opponent,
+            "Points_For": int(points_for),
+            "Points_Against": int(points_against),
+            "Pass_Yards": int(pass_yards), "Rush_Yards": int(rush_yards),
+            "First_Downs": int(first_downs), "Turnovers": int(turnovers),
+            "TOP": top, "RZ_TD_Made": int(rz_td),
+            "Pass_Yards_Allowed": int(pass_allowed),
+            "Rush_Yards_Allowed": int(rush_allowed),
+            "Sacks_For": int(sacks), "Takeaways": int(takeaways),
+            "Playbook": playbook,
+        }, MY_TEAM)
+
+        if not ok:
+            st.error(message)
+            return
+
+        outcome = ("W" if points_for > points_against
+                   else ("L" if points_for < points_against else "T"))
+        note = (f"{message} {outcome} {points_for}-{points_against} "
+                f"vs {opponent}.")
+
+        if also_snapshot:
+            saved = snapshot_roster(MY_TEAM, int(season), int(week))
+            note += (f" Snapshotted {saved} player OVRs." if saved
+                     else " Roster snapshot could not be saved.")
+
+        # The disk loader is cached on (path, mtime), so the append alone
+        # invalidates it; the rerun is what makes the new game show up in
+        # this interaction rather than the next one. The note is stashed
+        # because the rerun would discard a banner rendered here.
+        st.session_state["game_log_note"] = note
+        st.rerun()
+
+
 # ──────────────────────────────────────────────────────
 # TABS — Home + Original + New Features
 # ──────────────────────────────────────────────────────
@@ -723,6 +892,7 @@ home_tab, tabs = _all_tabs[0], _all_tabs[1:]
 with home_tab:
     render_tab_header("🏠", "Franchise Home",
                       f"Record, cap exposure, needs and moves for {MY_TEAM}")
+    render_game_log_form()
     render_franchise_home()
 
 # ── TAB 1: Scheme Performance ──
