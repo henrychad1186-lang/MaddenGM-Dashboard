@@ -111,6 +111,20 @@ class TestMissingRequiredColumns:
         assert "SPD" not in df.columns
 
 
+class TestTryLoadRosterCsv:
+
+    def test_returns_error_for_malformed_csv_instead_of_raising(self, tmp_path):
+        bad_csv = tmp_path / "bad_roster.csv"
+        bad_csv.write_text('Name,Pos,Age,OVR\n"unterminated')
+
+        df, source_columns, error = roster_csv.try_load_roster_csv(str(bad_csv))
+
+        assert df is None
+        assert source_columns == []
+        assert error is not None
+        assert "Could not read roster CSV" in error
+
+
 class TestToSourceSchema:
 
     def test_renames_back_for_an_exported_file(self):
@@ -154,3 +168,21 @@ class TestRealRosterFile:
         df = roster_csv.load_roster_csv(_ROSTER_CSV)
         unknown = set(df["Dev"].dropna().unique()) - set(DEV_MULTIPLIERS)
         assert not unknown, f"unmapped dev traits fall back to 1.00: {unknown}"
+
+    def test_roster_module_falls_back_to_demo_on_read_error(self, tmp_path):
+        from src import roster as roster_mod
+
+        bad_csv = tmp_path / "bad_roster.csv"
+        bad_csv.write_text('Name,Pos,Age,OVR\n"unterminated')
+
+        old_path = roster_mod._ROSTER_CSV
+        try:
+            roster_mod._ROSTER_CSV = str(bad_csv)
+            df = roster_mod._load_rosters()
+        finally:
+            roster_mod._ROSTER_CSV = old_path
+
+        assert len(df) == 1
+        assert df.iloc[0]["Name"] == "Demo Player"
+        assert roster_mod.SOURCE_COLUMN_ISSUES
+        assert "Could not read roster CSV" in roster_mod.SOURCE_COLUMN_ISSUES[0]

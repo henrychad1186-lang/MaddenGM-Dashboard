@@ -76,7 +76,9 @@ def _load_trade_rosters() -> pd.DataFrame:
     # Shared reader — this used to be a second pd.read_csv with its own
     # column handling, and drifted from roster.py's until an exported CSV
     # made both raise KeyError: 'Pos' at import.
-    gb_df = roster_csv.load_roster_csv(_ROSTER_CSV)
+    gb_df, _, read_error = roster_csv.try_load_roster_csv(_ROSTER_CSV)
+    if read_error:
+        return cpu_df
 
     if roster_csv.missing_required_columns(gb_df):
         # roster.py reports this to the user; trading against a roster we

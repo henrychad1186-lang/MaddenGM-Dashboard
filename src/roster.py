@@ -72,15 +72,22 @@ def _load_rosters() -> pd.DataFrame:
     malformed CSV here takes down the whole app — including the Roster
     Explorer warning panel that would have explained the problem.
     """
+    SOURCE_COLUMN_ISSUES.clear()
+    SOURCE_COLUMNS.clear()
+
     if not os.path.exists(_ROSTER_CSV):
         return _demo_roster()
 
-    raw = pd.read_csv(_ROSTER_CSV)
+    df, source_columns, read_error = roster_csv.try_load_roster_csv(_ROSTER_CSV)
+    if read_error:
+        SOURCE_COLUMN_ISSUES.append(
+            f"{read_error}. Using demo data until the file is fixed.")
+        return _demo_roster()
+
     # Remember the headings the file actually uses so persist_roster can
     # write them back unchanged instead of silently recasting the file
     # into the canonical schema.
-    SOURCE_COLUMNS[:] = list(raw.columns)
-    df = roster_csv.normalize_roster_df(raw)
+    SOURCE_COLUMNS[:] = source_columns
 
     missing = roster_csv.missing_required_columns(df)
     if missing:

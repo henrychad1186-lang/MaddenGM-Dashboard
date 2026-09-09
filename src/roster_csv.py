@@ -74,6 +74,21 @@ def load_roster_csv(path: str) -> pd.DataFrame:
     return normalize_roster_df(pd.read_csv(path))
 
 
+def try_load_roster_csv(path: str):
+    """Best-effort read of a roster CSV.
+
+    Returns (df, source_columns, error_message), where df is None on read
+    failure and error_message is None on success.
+    """
+    try:
+        raw = pd.read_csv(path)
+    except (OSError, UnicodeDecodeError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+        return None, [], (
+            f"Could not read roster CSV ({type(exc).__name__}): {exc}"
+        )
+    return normalize_roster_df(raw), list(raw.columns), None
+
+
 def missing_required_columns(df: pd.DataFrame) -> "list[str]":
     """Required columns absent after normalisation (empty when loadable)."""
     return [c for c in REQUIRED_COLUMNS if c not in df.columns]
