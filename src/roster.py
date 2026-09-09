@@ -46,18 +46,39 @@ def _normalize_pos(pos: str) -> str:
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
+_ROSTER_COLUMN_ALIASES = {
+    "Player Name": "Name",
+    "Position": "Pos",
+    "Dev Trait": "Dev",
+    "Cap Savings": "Savings",
+    "Cap Penalty": "Penalty",
+}
+
+
+def normalize_roster_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename exported roster columns to the app's canonical schema."""
+    rename_map = {
+        source: target
+        for source, target in _ROSTER_COLUMN_ALIASES.items()
+        if source in df.columns and target not in df.columns
+    }
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    return df
 
 
 def _load_rosters() -> pd.DataFrame:
     """Load roster data from CSV if available, otherwise use minimal demo."""
     if os.path.exists(_ROSTER_CSV):
-        df = pd.read_csv(_ROSTER_CSV)
+        df = normalize_roster_df(pd.read_csv(_ROSTER_CSV))
         # Ensure required columns
         if "Team" not in df.columns:
             df["Team"] = "GB"
         if "Dev" not in df.columns:
             df["Dev"] = "Normal"
         # Normalize positions and assign groups
+        if "Pos" not in df.columns:
+            df["Pos"] = ""
         df["Pos"] = df["Pos"].apply(_normalize_pos)
         df["Group"] = df["Pos"].apply(_assign_group)
         return df
@@ -79,6 +100,7 @@ def validate_roster_df(df: pd.DataFrame) -> list[str]:
     up in a screenshot. Catching the same class of issue automatically
     means it doesn't take luck next time.
     """
+    df = normalize_roster_df(df.copy())
     warnings: list[str] = []
 
     required_cols = {"Name", "Pos", "OVR", "Age"}

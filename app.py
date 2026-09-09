@@ -344,7 +344,6 @@ def _result_from_score_diff(score_diff: float) -> str:
     return "WIN" if score_diff > 0 else "LOSS"
 
 
-
 def _parse_top_value(value):
     if isinstance(value, str) and ":" in value:
         parts = value.split(":")
@@ -353,7 +352,6 @@ def _parse_top_value(value):
         except ValueError:
             return None
     return value
-
 
 
 def _apply_score_columns(df: pd.DataFrame) -> int:
@@ -388,7 +386,6 @@ def _apply_score_columns(df: pd.DataFrame) -> int:
 
     df["Result"] = df["Score_Diff"].apply(_result_from_score_diff)
     return 0
-
 
 
 def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":

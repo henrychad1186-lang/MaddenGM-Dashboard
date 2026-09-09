@@ -7,6 +7,8 @@ import os
 import pandas as pd
 import math
 
+from src.roster import normalize_roster_df
+
 # ──────────────────────────────────────────────
 # LOAD ROSTER DATA — Real CSV for GB + Demo for CPU teams
 # ──────────────────────────────────────────────
@@ -69,7 +71,7 @@ def _load_trade_rosters() -> pd.DataFrame:
     cpu_df = pd.DataFrame(_CPU_DEMO)
 
     if os.path.exists(_ROSTER_CSV):
-        gb_df = pd.read_csv(_ROSTER_CSV)
+        gb_df = normalize_roster_df(pd.read_csv(_ROSTER_CSV))
         # Ensure required columns
         if "Team" not in gb_df.columns:
             gb_df["Team"] = "GB"
@@ -78,6 +80,8 @@ def _load_trade_rosters() -> pd.DataFrame:
         if "Dev" not in gb_df.columns:
             gb_df["Dev"] = "Normal"
         # Normalize REDG/LEDG → EDGE
+        if "Pos" not in gb_df.columns:
+            gb_df["Pos"] = ""
         gb_df["Pos"] = gb_df["Pos"].replace({"REDG": "EDGE", "LEDG": "EDGE"})
         return pd.concat([gb_df, cpu_df], ignore_index=True)
     else:

@@ -11,7 +11,6 @@ from src.roster import get_roster, get_cap_summary
 from src.trade_engine import get_trade_value
 
 
-
 def _get_roster_verdict(
     *,
     age: int,
@@ -41,7 +40,6 @@ def _get_roster_verdict(
     if age <= 24 and dev_trait in ("superstar", "superstar x", "x-factor", "star"):
         return "KEEP", "Young dev talent — high ceiling"
     return "KEEP", "Roster depth piece"
-
 
 
 def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
