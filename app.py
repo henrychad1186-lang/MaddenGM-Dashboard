@@ -1481,7 +1481,15 @@ with tabs[3]:
                 if season.get("notes"):
                     st.caption(f"📝 {season['notes']}")
     else:
-        st.info("No dynasty history yet. Archive your first season below!")
+        # Reachable as of the load_history fix: this tab used to open on
+        # three sample seasons ("The Jordan Love Era", a 2025 Super Bowl)
+        # styled exactly like real ones, so a new franchise could not tell
+        # its own record from the placeholder.
+        st.info(
+            "**No seasons archived yet.** Finish a season, then record it "
+            "with the form below — it builds your timeline, your era "
+            "history and the career leaderboard. Week-to-week results go "
+            "in the game log on the Home tab instead.")
 
     st.markdown("---")
 
