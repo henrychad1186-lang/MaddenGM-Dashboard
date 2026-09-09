@@ -395,6 +395,35 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
     return df, warnings
 
 
+@st.cache_data(show_spinner=False)
+def _get_team_roster_all(team: str, extra_players: "list[dict] | None") -> pd.DataFrame:
+    """Cached full-team roster view used across multiple tabs/widgets."""
+    return get_roster(team, "All", extra_players)
+
+
+@st.cache_data(show_spinner=False)
+def _get_team_insights(team: str, extra_players: "list[dict] | None") -> dict:
+    """Cached team summary + derived roster analytics bundle."""
+    return {
+        "summary": get_team_summary(team, extra_players),
+        "cap": get_cap_summary(team, extra_players),
+        "grades": get_position_grades(team, extra_players),
+        "verdicts": analyze_roster(team, extra_players),
+        "needs": ai_gm.positional_needs(team, extra_players),
+    }
+
+
+@st.cache_data(show_spinner=False)
+def _get_roster_with_trade_values(team: str, extra_players: "list[dict] | None") -> pd.DataFrame:
+    """Cached per-player trade values for leaderboard + awards."""
+    roster = get_roster(team, "All", extra_players)
+    if roster.empty:
+        return roster
+    roster = roster.copy()
+    roster["TV"] = roster.apply(lambda row: get_trade_value(row.to_dict()), axis=1)
+    return roster
+
+
 with st.sidebar.expander("📡 Data Import", expanded=True):
     # ── Live Google Sheet Sync ──
     sheet_url = st.text_input(
@@ -624,11 +653,12 @@ def render_franchise_home() -> None:
     """Record, cap exposure, top needs and actionable moves for MY_TEAM."""
     wins = int((df["Result"] == "WIN").sum()) if "Result" in df.columns else 0
     losses = int((df["Result"] == "LOSS").sum()) if "Result" in df.columns else 0
-    cap = get_cap_summary(MY_TEAM, AI_GM_EXTRA)
-    needs = [n for n in ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA)
+    insights = _get_team_insights(MY_TEAM, AI_GM_EXTRA)
+    cap = insights["cap"]
+    needs = [n for n in insights["needs"]
              if n["level"] != "Set"]
     needs.sort(key=lambda n: (n["level"] != "Critical", n["avg_ovr"]))
-    verdicts = [v for v in analyze_roster(MY_TEAM, AI_GM_EXTRA)
+    verdicts = [v for v in insights["verdicts"]
                 if v["Verdict"] != "KEEP"]
 
     col1, col2, col3 = st.columns(3)
@@ -1385,13 +1415,19 @@ with tabs[4]:
 
     rcol1, rcol2 = st.columns([1, 3])
 
+    def style_ovr(val):
+        color = ovr_color(val)
+        return f"color: {color}; font-weight: bold"
+
     with rcol1:
         selected_team = MY_TEAM
         st.info(f"Showing: **{selected_team}**")
         selected_group = st.selectbox(
             "Position Group:", POSITION_GROUPS, key="roster_group_select")
 
-        summary = get_team_summary(selected_team, AI_GM_EXTRA)
+        team_insights = _get_team_insights(selected_team, AI_GM_EXTRA)
+        all_gb = _get_team_roster_all(selected_team, AI_GM_EXTRA)
+        summary = team_insights["summary"]
         st.markdown("---")
         st.metric("Players", summary["count"])
         st.metric("Avg OVR", summary["avg_ovr"])
@@ -1400,7 +1436,11 @@ with tabs[4]:
             f"⭐ **Best Player:** {summary.get('best_player', 'N/A')} ({summary.get('best_ovr', 'N/A')} OVR)")
 
     with rcol2:
-        roster_df = get_roster(selected_team, selected_group, AI_GM_EXTRA)
+        if selected_group == "All":
+            roster_df = all_gb.copy()
+        else:
+            roster_df = all_gb[all_gb["Group"] == selected_group].copy()
+            roster_df = roster_df.reset_index(drop=True)
         if roster_df.empty:
             st.info(f"No players found for {selected_team} — {selected_group}")
         else:
@@ -1412,10 +1452,6 @@ with tabs[4]:
                 "OVR", ascending=False).reset_index(drop=True)
 
             # Style the dataframe with OVR color coding
-            def style_ovr(val):
-                color = ovr_color(val)
-                return f"color: {color}; font-weight: bold"
-
             def style_tier(val):
                 # Sequential scale: tier is a quality rating, not a call to
                 # action, so it must not share hues with the verdicts below.
@@ -1457,18 +1493,11 @@ with tabs[4]:
     st.caption(
         "Players ranked by trade value — factors in OVR, age, position, dev trait, contract, and athleticism.")
 
-    all_gb = get_roster(selected_team, "All", AI_GM_EXTRA)
-    if not all_gb.empty:
-        tv_rows = []
-        for _, p in all_gb.iterrows():
-            tv = get_trade_value(p.to_dict())
-            tv_rows.append({
-                "Name": p["Name"], "Pos": p["Pos"], "OVR": int(p["OVR"]),
-                "Age": int(p["Age"]), "Dev": p.get("Dev", "Normal"),
-                "Trade Value": tv,
-            })
-        tv_df = pd.DataFrame(tv_rows).sort_values(
-            "Trade Value", ascending=False).reset_index(drop=True)
+    tv_source = _get_roster_with_trade_values(selected_team, AI_GM_EXTRA)
+    if not tv_source.empty:
+        tv_df = tv_source[["Name", "Pos", "OVR", "Age", "Dev", "TV"]].copy()
+        tv_df = tv_df.rename(columns={"TV": "Trade Value"})
+        tv_df = tv_df.sort_values("Trade Value", ascending=False).reset_index(drop=True)
         tv_df.index += 1
         tv_df.index.name = "Rank"
 
@@ -1485,7 +1514,7 @@ with tabs[4]:
     # ── Position Group Grades ──
     st.markdown("---")
     st.markdown("#### 📊 Position Group Grades")
-    grades = get_position_grades(selected_team, AI_GM_EXTRA)
+    grades = team_insights["grades"]
     if grades:
         grade_cols = st.columns(4)
         for i, g in enumerate(grades):
@@ -1505,7 +1534,7 @@ with tabs[4]:
     # ── Cap Overview Widget ──
     st.markdown("---")
     st.markdown("#### 💰 Cap Overview")
-    cap = get_cap_summary(selected_team, AI_GM_EXTRA)
+    cap = team_insights["cap"]
     if cap["players"]:
         cap_c1, cap_c2, cap_c3 = st.columns(3)
         with cap_c1:
@@ -1536,7 +1565,7 @@ with tabs[4]:
     # ── Cut or Keep Analyzer ──
     st.markdown("---")
     st.markdown("#### ✂️ Cut or Keep Analyzer")
-    verdicts = analyze_roster(selected_team, AI_GM_EXTRA)
+    verdicts = team_insights["verdicts"]
     if verdicts:
         # Summary counts
         n_keep = sum(1 for v in verdicts if v["Verdict"] == "KEEP")
@@ -1585,7 +1614,7 @@ with tabs[4]:
     _DEF_POSITIONS = ["EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
     dc_positions = _OFF_POSITIONS if dc_side == "Offense" else _DEF_POSITIONS
 
-    full_roster = get_roster(selected_team, "All", AI_GM_EXTRA)
+    full_roster = all_gb
     # Wrap into rows of at most _DC_PER_ROW instead of one column per
     # position. Nine columns across ~1000px left ~100px each, which is why
     # names had to be truncated to surnames to fit; Streamlit columns don't
@@ -1628,14 +1657,8 @@ with tabs[5]:
     render_tab_header("🏆", "Season Awards",
                       "Auto-generated awards based on your current roster data")
 
-    roster_full = get_roster(MY_TEAM, "All")
-    if not roster_full.empty:
-        # Compute trade values for all players
-        award_data = []
-        for _, row in roster_full.iterrows():
-            tv = get_trade_value(row.to_dict())
-            award_data.append({**row.to_dict(), "TV": tv})
-        award_df = pd.DataFrame(award_data)
+    award_df = _get_roster_with_trade_values(MY_TEAM, AI_GM_EXTRA)
+    if not award_df.empty:
 
         # MVP: highest trade value
         mvp = award_df.loc[award_df["TV"].idxmax()]
@@ -1978,7 +2001,7 @@ with tabs[9]:
         st.markdown("---")
         st.markdown("#### 🧭 Positional Needs Board")
         st.caption("AI-computed depth + quality grade per position — use this to decide who to scout next.")
-        needs = ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA)
+        needs = _get_team_insights(MY_TEAM, AI_GM_EXTRA)["needs"]
         need_cols = st.columns(4)
         for i, n in enumerate(needs):
             with need_cols[i % 4]:
