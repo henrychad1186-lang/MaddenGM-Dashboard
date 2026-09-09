@@ -5,8 +5,11 @@ Combines trade value, cap savings/penalties, positional depth, age,
 and OVR to recommend: KEEP / TRADE / CUT for every player.
 """
 
+from collections import defaultdict
+
 from src.roster import get_roster, get_cap_summary
 from src.trade_engine import get_trade_value
+
 
 
 def _get_roster_verdict(
@@ -40,31 +43,46 @@ def _get_roster_verdict(
     return "KEEP", "Roster depth piece"
 
 
-def analyze_roster(team: str) -> list[dict]:
+
+def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Return a list of player analysis dicts with verdicts.
 
     Each dict contains:
         Name, Pos, OVR, Age, Dev, Trade_Value, Savings, Penalty,
         Depth, Verdict, Verdict_Reason
     """
-    roster = get_roster(team, "All")
+    roster = get_roster(team, "All", extra_players)
     if roster.empty:
         return []
-    cap = get_cap_summary(team)
-    # Build cap lookup
-    cap_lookup = {p["Name"]: p for p in cap["players"]}
-    # Precompute positional depth counts once instead of filtering per player.
+
+    cap = get_cap_summary(team, extra_players)
+    cap_by_name = defaultdict(list)
+    for player in cap["players"]:
+        cap_by_name[player["Name"]].append(player)
+
     pos_counts = roster["Pos"].value_counts().to_dict()
     players = roster.to_dict("records")
     trade_values = [get_trade_value(player) for player in players]
 
     results = []
     for player, tv in zip(players, trade_values):
-        cap_info = cap_lookup.get(player["Name"], {"Savings": 0, "Penalty": 0})
+        candidates = cap_by_name.get(player["Name"], [])
+        if candidates:
+            match_idx = next(
+                (
+                    i
+                    for i, candidate in enumerate(candidates)
+                    if candidate["Pos"] == player["Pos"]
+                    and candidate["OVR"] == int(player["OVR"])
+                ),
+                0,
+            )
+            cap_info = candidates.pop(match_idx)
+        else:
+            cap_info = {"Savings": 0, "Penalty": 0}
+
         savings = cap_info["Savings"]
         penalty = cap_info["Penalty"]
-
-        # Count positional depth (how many players at this position)
         pos = player["Pos"]
         pos_count = int(pos_counts.get(pos, 0))
         ovr = int(player["OVR"])
@@ -95,7 +113,6 @@ def analyze_roster(team: str) -> list[dict]:
             "Reason": reason,
         })
 
-    # Sort: CUT first, then TRADE, then KEEP
     order = {"CUT": 0, "TRADE": 1, "KEEP": 2}
-    results.sort(key=lambda x: (order.get(x["Verdict"], 3), -x["Trade_Value"]))
+    results.sort(key=lambda item: (order.get(item["Verdict"], 3), -item["Trade_Value"]))
     return results

@@ -6,6 +6,8 @@ Loads real roster data from data/packers_roster.csv when available.
 import os
 import pandas as pd
 
+from src.theme import RANK_COLORS, rank_color
+
 # ──────────────────────────────────────────────
 # POSITION → GROUP MAPPING
 # ──────────────────────────────────────────────
@@ -29,10 +31,12 @@ def _assign_group(pos: str) -> str:
 
 
 def _normalize_pos(pos: str) -> str:
-    """Normalize position names (e.g., REDG/LEDG → EDGE)."""
+    """Normalize position names (e.g., REDG/LEDG → EDGE, LOLB/ROLB → OLB)."""
     pos_upper = pos.upper().strip()
     if pos_upper in ("REDG", "LEDG"):
         return "EDGE"
+    if pos_upper in ("LOLB", "ROLB"):
+        return "OLB"
     return pos_upper
 
 
@@ -65,27 +69,108 @@ def _load_rosters() -> pd.DataFrame:
         ])
 
 
+def validate_roster_df(df: pd.DataFrame) -> list[str]:
+    """Scan a loaded roster DataFrame for data-quality issues.
+
+    Returns human-readable warning strings — never raises, and the data
+    is still used as-is either way. This exists because a corrupted name
+    ("?. ???ams") sat in data/packers_roster.csv since the repo's first
+    commit and was only ever caught by chance, when it happened to show
+    up in a screenshot. Catching the same class of issue automatically
+    means it doesn't take luck next time.
+    """
+    warnings: list[str] = []
+
+    required_cols = {"Name", "Pos", "OVR", "Age"}
+    missing_cols = required_cols - set(df.columns)
+    if missing_cols:
+        warnings.append(f"Missing expected column(s): {', '.join(sorted(missing_cols))}.")
+        return warnings  # can't safely check individual rows without these
+
+    for _, row in df.iterrows():
+        name = str(row.get("Name", "")).strip()
+        label = name if name and name.lower() not in ("nan", "none") else "Unnamed player"
+
+        if not name or name.lower() in ("nan", "none"):
+            warnings.append(f"Row with no Name (Pos={row.get('Pos', '?')}, OVR={row.get('OVR', '?')}).")
+        elif "?" in name:
+            warnings.append(f"Possibly corrupted name: '{name}' — contains '?' characters.")
+
+        try:
+            ovr = int(row.get("OVR"))
+            if not (1 <= ovr <= 99):
+                warnings.append(f"{label}: OVR {ovr} is outside the normal 1-99 range.")
+        except (TypeError, ValueError):
+            warnings.append(f"{label}: OVR value '{row.get('OVR')}' is not a number.")
+
+        try:
+            age = int(row.get("Age"))
+            if not (18 <= age <= 50):
+                warnings.append(f"{label}: Age {age} looks unrealistic.")
+        except (TypeError, ValueError):
+            warnings.append(f"{label}: Age value '{row.get('Age')}' is not a number.")
+
+    dup_cols = [c for c in ["Name", "Pos", "OVR", "Age"] if c in df.columns]
+    dup_mask = df.duplicated(subset=dup_cols, keep=False)
+    if dup_mask.any():
+        dup_names = sorted(set(df.loc[dup_mask, "Name"].astype(str).tolist()))
+        shown = ", ".join(dup_names[:5]) + ("…" if len(dup_names) > 5 else "")
+        warnings.append(f"Possible duplicate entries (identical Name/Pos/OVR/Age): {shown}.")
+
+    return warnings
+
+
 ALL_ROSTERS = _load_rosters()
+ROSTER_WARNINGS = validate_roster_df(ALL_ROSTERS)
 
 TEAMS = sorted(ALL_ROSTERS["Team"].unique().tolist())
 POSITION_GROUPS = ["All", "Offense", "Defense", "Special Teams"]
+VALID_POSITIONS = sorted(_OFFENSE_POS | _DEFENSE_POS | _ST_POS)
+
+
+def normalize_position(pos: str) -> str:
+    """Public wrapper around position normalization (e.g. REDG → EDGE)."""
+    return _normalize_pos(pos)
+
+
+def assign_group(pos: str) -> str:
+    """Public wrapper to classify a position into Offense/Defense/Special Teams."""
+    return _assign_group(pos)
+
+
+def _effective_all(extra_players: "list[dict] | None" = None) -> pd.DataFrame:
+    """ALL_ROSTERS plus optional session-scoped extra players.
+
+    `extra_players` is never merged into the module-level ALL_ROSTERS
+    global — callers (e.g. the AI GM Assistant) pass their own
+    per-session list so additions stay isolated per browser session
+    instead of leaking across every visitor sharing this process.
+    """
+    if not extra_players:
+        return ALL_ROSTERS
+    extra_df = pd.DataFrame(extra_players)
+    if "Group" not in extra_df.columns:
+        extra_df["Group"] = extra_df["Pos"].apply(_assign_group)
+    return pd.concat([ALL_ROSTERS, extra_df], ignore_index=True)
 
 
 # ──────────────────────────────────────────────
 # CORE FUNCTIONS
 # ──────────────────────────────────────────────
 
-def get_roster(team: str, group: str = "All") -> pd.DataFrame:
+def get_roster(team: str, group: str = "All", extra_players: "list[dict] | None" = None) -> pd.DataFrame:
     """Return the roster DataFrame for a team, optionally filtered by group."""
-    df = ALL_ROSTERS[ALL_ROSTERS["Team"] == team].copy()
+    df = _effective_all(extra_players)
+    df = df[df["Team"] == team].copy()
     if group and group != "All":
         df = df[df["Group"] == group]
     return df.reset_index(drop=True)
 
 
-def get_team_summary(team: str) -> dict:
+def get_team_summary(team: str, extra_players: "list[dict] | None" = None) -> dict:
     """Return summary stats for a team's roster."""
-    df = ALL_ROSTERS[ALL_ROSTERS["Team"] == team]
+    df = _effective_all(extra_players)
+    df = df[df["Team"] == team]
     if df.empty:
         return {"count": 0, "avg_ovr": 0, "avg_age": 0, "best_player": "N/A"}
     return {
@@ -98,15 +183,13 @@ def get_team_summary(team: str) -> dict:
 
 
 def ovr_color(ovr: int) -> str:
-    """Return a CSS color string based on OVR rating tier."""
-    if ovr >= 90:
-        return "#00e676"   # Elite — green
-    elif ovr >= 80:
-        return "#2196f3"   # Great — blue
-    elif ovr >= 70:
-        return "#ffc107"   # Average — amber
-    else:
-        return "#ff5252"   # Below average — red
+    """Return a CSS color string based on OVR rating tier.
+
+    Uses the sequential (quality) scale, not the semantic one — an OVR is
+    a rating, and colouring a low one red made it read as "cut this
+    player" alongside the verdict cards that genuinely mean that.
+    """
+    return rank_color(ovr, [70, 80, 90])
 
 
 def ovr_label(ovr: int) -> str:
@@ -138,24 +221,28 @@ def _letter_grade(avg_ovr: float) -> str:
 
 
 def _grade_color(grade: str) -> str:
-    """Return a CSS color for a letter grade."""
+    """Return a CSS color for a letter grade (sequential quality scale)."""
     return {
-        "A+": "#00e676", "A": "#66bb6a", "B+": "#2196f3",
-        "B": "#42a5f5", "C": "#ffc107", "D": "#ff5252",
+        "D": RANK_COLORS[0],
+        "C": RANK_COLORS[1],
+        "B": RANK_COLORS[2], "B+": RANK_COLORS[2],
+        "A": RANK_COLORS[3], "A+": RANK_COLORS[3],
     }.get(grade, "#ffffff")
 
 
 # Position display order for depth chart / grading
-_POS_ORDER = ["QB", "HB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
+_POS_ORDER = ["QB", "HB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
               "EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
+POSITION_ORDER = _POS_ORDER
 
 
-def get_position_grades(team: str) -> list[dict]:
+def get_position_grades(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Return letter grades per position group for a team.
 
     Returns list of dicts: {pos, count, avg_ovr, grade, color}.
     """
-    df = ALL_ROSTERS[ALL_ROSTERS["Team"] == team]
+    df = _effective_all(extra_players)
+    df = df[df["Team"] == team]
     if df.empty:
         return []
     grades = []
@@ -192,13 +279,14 @@ def _parse_sal(val) -> float:
         return 0.0
 
 
-def get_cap_summary(team: str) -> dict:
+def get_cap_summary(team: str, extra_players: "list[dict] | None" = None) -> dict:
     """Return cap summary for a team.
 
     Returns dict with total_savings, total_penalty, and a list of
     per-player dicts sorted by penalty descending.
     """
-    df = ALL_ROSTERS[ALL_ROSTERS["Team"] == team].copy()
+    df = _effective_all(extra_players)
+    df = df[df["Team"] == team].copy()
     if df.empty or "Savings" not in df.columns:
         return {"total_savings": 0, "total_penalty": 0, "players": []}
 
