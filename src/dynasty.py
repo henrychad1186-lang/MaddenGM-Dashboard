@@ -95,7 +95,8 @@ def load_history() -> list[dict]:
     return loaded if isinstance(loaded, list) else []
 
 
-def archive_season(season_data: dict, existing_history: list[dict] | None = None) -> list[dict]:
+def archive_season(season_data: dict,
+                   existing_history: "list[dict] | None" = None) -> list[dict]:
     """
     Add a new season to the dynasty history and persist to disk.
     Returns the updated history list.

@@ -7,11 +7,53 @@ to three seasons it never played — a 2025 Super Bowl win among them —
 rendered in the same styling as real archived seasons.
 """
 
+import ast
 import json
+import pathlib
 
 import pytest
 
 from src import dynasty
+
+
+def test_no_module_uses_pep604_outside_a_string():
+    """`X | Y` in a live annotation is a TypeError on Python 3.9.
+
+    CI builds on 3.9, 3.10 and 3.11. `src/dynasty.py` carried
+    `list[dict] | None` unevaluated for as long as no test imported the
+    module — the moment this file did, the 3.9 job would have failed at
+    collection. Quoting the annotation defers it; this keeps the next one
+    from slipping in the same way.
+    """
+    offenders = []
+    roots = [pathlib.Path("src"), pathlib.Path("tests"), pathlib.Path(".")]
+    seen = set()
+    for root in roots:
+        paths = (root.rglob("*.py") if root.name != "."
+                 else [pathlib.Path("app.py")])
+        for path in paths:
+            if path in seen:
+                continue
+            seen.add(path)
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                annotations = []
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    annotations = [
+                        a.annotation for a in
+                        node.args.args + node.args.kwonlyargs if a.annotation]
+                    if node.returns:
+                        annotations.append(node.returns)
+                elif isinstance(node, ast.AnnAssign) and node.annotation:
+                    annotations = [node.annotation]
+                for annotation in annotations:
+                    if any(isinstance(s, ast.BinOp)
+                           and isinstance(s.op, ast.BitOr)
+                           for s in ast.walk(annotation)):
+                        offenders.append(f"{path}:{node.lineno}")
+    assert not offenders, (
+        "PEP 604 annotations must be quoted for the Python 3.9 CI job: "
+        f"{offenders}")
 
 
 @pytest.fixture
