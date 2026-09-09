@@ -182,6 +182,48 @@ class TestAppendGame:
         monkeypatch.undo()
         assert open(log_file, "rb").read() == before
 
+    def test_a_truncated_log_gets_a_header_not_a_bare_row(self, tmp_path):
+        # An existing but empty file used to take a headerless append:
+        # pandas then read the game itself as the header row and the file
+        # came back with zero rows, while the form reported success.
+        path = str(tmp_path / "empty.csv")
+        open(path, "w").close()
+        ok, _ = game_log.append_game(path, _entry(), "GB")
+        assert ok
+        out = pd.read_csv(path)
+        assert len(out) == 1
+        assert "GAME_ID" in out.columns
+        assert out.iloc[0]["Opponent"] == "CHI"
+
+    def test_a_whitespace_only_log_is_treated_as_empty(self, tmp_path):
+        path = str(tmp_path / "blank.csv")
+        open(path, "w").write("\n\n  \n")
+        ok, _ = game_log.append_game(path, _entry(), "GB")
+        assert ok
+        assert len(pd.read_csv(path)) == 1
+
+    def test_an_unreadable_log_with_content_is_not_overwritten(self, tmp_path):
+        # Starting fresh here would destroy whatever the user has.
+        path = tmp_path / "garbage.csv"
+        path.write_bytes(b"\x00\x01 not a csv at all\n\x02")
+        before = path.read_bytes()
+        ok, message = game_log.append_game(str(path), _entry(), "GB")
+        assert ok is False
+        assert "could not be read" in message
+        assert path.read_bytes() == before
+
+    def test_a_log_without_a_game_id_column_still_works(self, tmp_path):
+        # The success message used to read the id back out of the new
+        # row, which a user-made log need not have a column for.
+        path = tmp_path / "own.csv"
+        path.write_text("Team,Opponent,Points_For,Points_Against\n"
+                        "GB,IND,35,10\n")
+        ok, message = game_log.append_game(str(path), _entry(), "GB")
+        assert ok, message
+        out = pd.read_csv(path)
+        assert len(out) == 2
+        assert out.iloc[-1]["Opponent"] == "CHI"
+
     def test_a_field_the_file_does_not_have_is_dropped(self, log_file):
         game_log.append_game(log_file, _entry(Nonsense="x"), "GB")
         assert "Nonsense" not in pd.read_csv(log_file).columns

@@ -153,7 +153,7 @@ def row_to_log_schema(entry: dict, existing: pd.DataFrame,
     row["GAME_ID"] = next_game_id(existing)
     row["Team"] = team
 
-    columns = (list(existing.columns) if len(existing.columns)
+    columns = (list(existing.columns) if looks_like_a_log(existing)
                else ["GAME_ID", "Season", "Week", "Team"] + [
                    c for c in ENTRY_FIELDS if c not in ("Season", "Week")] + [
                    "Result", "Total_Yards", "Total_Yards_Allowed",
@@ -163,6 +163,35 @@ def row_to_log_schema(entry: dict, existing: pd.DataFrame,
         value = row.get(column, "")
         ordered[column] = "" if value is None or value == "" else value
     return pd.DataFrame([ordered], columns=columns)
+
+
+def looks_like_a_log(df: pd.DataFrame) -> bool:
+    """True if the parsed frame plausibly is a game log.
+
+    pandas parses almost anything: a file of binary noise comes back as a
+    single column named after the noise, which passes a bare "does it
+    have a header" check and then gets a row appended into a schema that
+    shares nothing with a game.
+    """
+    if not len(df.columns):
+        return False
+    known = set(ENTRY_FIELDS) | {"GAME_ID", "Team", "Result"}
+    return bool(known & set(df.columns))
+
+
+def _has_content(path: str) -> bool:
+    """True if the file exists and holds more than whitespace.
+
+    Distinguishes a truncated log (safe to start fresh) from one that is
+    unreadable for some other reason (must not be overwritten).
+    """
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "r", newline="", errors="replace") as handle:
+            return bool(handle.read().strip())
+    except OSError:
+        return True  # unreadable: assume it holds something
 
 
 def _format(value) -> str:
@@ -188,17 +217,26 @@ def append_game(path: str, entry: dict, team: str) -> "tuple[bool, str]":
     as `25.0`. Appending a line cannot corrupt what is above it.
     """
     existing = read_log(path)
+    # Whether to write a header depends on whether the file already has
+    # one, not on whether it exists. Keying this off os.path.exists meant
+    # a truncated log got a headerless row appended: pandas then read the
+    # game itself as the header and the file came back with zero rows,
+    # while the form reported success.
+    has_header = looks_like_a_log(existing)
+    if not has_header and _has_content(path):
+        return False, ("The game log exists but could not be read, so "
+                       "nothing was written — overwriting it would lose "
+                       "whatever is in it. Check data/game_logs.csv.")
     try:
         added = row_to_log_schema(entry, existing, team)
         line = ",".join(
             _csv_cell(_format(added[column].iloc[0]))
             for column in added.columns)
 
-        if existing.empty and not os.path.exists(path):
+        if not has_header:
             header = ",".join(_csv_cell(c) for c in added.columns)
-            body = f"{header}\n{line}\n"
             with open(path, "w", newline="") as handle:
-                handle.write(body)
+                handle.write(f"{header}\n{line}\n")
         else:
             with open(path, "r", newline="") as handle:
                 needs_newline = not handle.read().endswith("\n")
@@ -210,7 +248,9 @@ def append_game(path: str, entry: dict, team: str) -> "tuple[bool, str]":
                        "read-only. Download the CSV and log locally.")
     except Exception as exc:
         return False, f"Could not write the game log: {exc}"
-    return True, f"Logged game #{int(added['GAME_ID'].iloc[0])}."
+    # Read from the entry, not from `added`: a log of the user's own
+    # making need not carry a GAME_ID column at all.
+    return True, f"Logged game #{next_game_id(existing)}."
 
 
 def _csv_cell(text: str) -> str:
