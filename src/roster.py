@@ -87,8 +87,14 @@ def _load_rosters() -> pd.DataFrame:
     the whole app — including the Roster Explorer panel that would have
     explained the problem. An earlier version claimed to fall back but
     left `pd.read_csv` and the position normalisation unguarded: an empty
-    file (EmptyDataError), a ragged row (ParserError) and a blank Position
-    cell (AttributeError on nan) each still killed startup.
+    file (EmptyDataError) and a blank Position cell (AttributeError on
+    nan) each still killed startup.
+
+    A ragged row is not among those cases, despite an earlier version of
+    this docstring saying so: pandas does not raise on one. It treats the
+    first field as an index and shifts every column left, so `OVR` ends
+    up holding a position string. The load survives it and
+    `validate_roster_df` is what surfaces the corruption.
     """
     if not os.path.exists(_ROSTER_CSV):
         return _demo_roster()

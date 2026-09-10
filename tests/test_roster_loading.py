@@ -186,6 +186,56 @@ class TestPersistRoster:
         from src import ai_gm
         assert ai_gm.persist_roster("GB", []) is True
 
+    def test_repeated_saves_do_not_duplicate_players(self, tmp_path,
+                                                     monkeypatch):
+        """app.py passes the whole session list after every addition.
+
+        Appending it wholesale wrote each player once more per subsequent
+        save: three additions produced seven rows instead of four, with
+        the first player in the file three times.
+        """
+        from src import ai_gm, roster as roster_mod
+        csv_path = tmp_path / "roster.csv"
+        csv_path.write_text("Player Name,Position,Age,OVR,Dev Trait\n"
+                            "M. Parsons,REDG,27,98,X-Factor\n")
+        monkeypatch.setattr(roster_mod, "_ROSTER_CSV", str(csv_path))
+        monkeypatch.setattr(
+            roster_mod, "SOURCE_COLUMNS",
+            ["Player Name", "Position", "Age", "OVR", "Dev Trait"])
+
+        session = []
+        for i in (1, 2, 3):
+            session.append({"Name": f"P{i}", "Pos": "WR", "Age": 22,
+                            "OVR": 70 + i, "Dev": "Normal", "Team": "GB",
+                            "_id": f"id{i}"})
+            assert ai_gm.persist_roster("GB", session) is True
+
+        out = pd.read_csv(csv_path)
+        assert out["Player Name"].tolist() == ["M. Parsons", "P1", "P2", "P3"]
+
+    def test_a_player_from_another_team_is_not_written(self, tmp_path,
+                                                       monkeypatch):
+        # persist_roster accepted `team` and ignored it, so a player added
+        # under one franchise could land in another's roster file.
+        from src import ai_gm, roster as roster_mod
+        csv_path = tmp_path / "roster.csv"
+        csv_path.write_text("Player Name,Position,Age,OVR,Dev Trait\n"
+                            "M. Parsons,REDG,27,98,X-Factor\n")
+        monkeypatch.setattr(roster_mod, "_ROSTER_CSV", str(csv_path))
+        monkeypatch.setattr(
+            roster_mod, "SOURCE_COLUMNS",
+            ["Player Name", "Position", "Age", "OVR", "Dev Trait"])
+
+        ai_gm.persist_roster("GB", [
+            {"Name": "Mine", "Pos": "WR", "Age": 22, "OVR": 74,
+             "Dev": "Normal", "Team": "GB", "_id": "a"},
+            {"Name": "Theirs", "Pos": "WR", "Age": 23, "OVR": 75,
+             "Dev": "Normal", "Team": "CHI", "_id": "b"},
+        ])
+        names = pd.read_csv(csv_path)["Player Name"].tolist()
+        assert "Mine" in names
+        assert "Theirs" not in names
+
     def test_appends_without_disturbing_existing_rows(self, tmp_path, monkeypatch):
         from src import ai_gm, roster as roster_mod
         csv_path = tmp_path / "roster.csv"

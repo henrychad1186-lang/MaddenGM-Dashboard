@@ -79,6 +79,28 @@ def missing_required_columns(df: pd.DataFrame) -> "list[str]":
     return [c for c in REQUIRED_COLUMNS if c not in df.columns]
 
 
+def source_column_for(canonical: str, raw: pd.DataFrame) -> str:
+    """The heading `raw` actually uses for a canonical column name.
+
+    "Name" is "Player Name" in the exported schema and "Name" in the
+    canonical one; callers that need to look a value up in the file
+    itself have to ask which.
+    """
+    for source, target in COLUMN_ALIASES.items():
+        if target == canonical and source in raw.columns \
+                and canonical not in raw.columns:
+            return source
+    return canonical
+
+
+def existing_player_names(raw: pd.DataFrame) -> "set[str]":
+    """Names already in the file, for skipping players that are in it."""
+    column = source_column_for("Name", raw)
+    if column not in raw.columns:
+        return set()
+    return {str(n).strip() for n in raw[column].dropna()}
+
+
 def rows_to_source_schema(players: "list[dict]", raw: pd.DataFrame) -> pd.DataFrame:
     """Render session-added players as rows matching `raw`'s own schema.
 

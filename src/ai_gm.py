@@ -167,7 +167,25 @@ def persist_roster(team: str, extra_players: "list[dict] | None" = None) -> bool
 
     try:
         raw = pd.read_csv(roster_mod._ROSTER_CSV)
-        added = roster_csv.rows_to_source_schema(extra_players, raw)
+
+        # `extra_players` is the whole session list, and the caller passes
+        # it again after every addition — so appending it wholesale wrote
+        # each player once more per subsequent save. Three additions with
+        # "save to roster CSV" on produced seven rows instead of four,
+        # the first player appearing three times.
+        already = roster_csv.existing_player_names(raw)
+        pending = [
+            p for p in extra_players
+            # A player carries the team it was added under. Writing one
+            # team's signing into another team's roster file is what the
+            # `team` argument exists to prevent.
+            if str(p.get("Team", team)) == str(team)
+            and str(p.get("Name", "")).strip() not in already
+        ]
+        if not pending:
+            return True  # everything already on file
+
+        added = roster_csv.rows_to_source_schema(pending, raw)
         combined = pd.concat([raw, added], ignore_index=True)
         combined.to_csv(roster_mod._ROSTER_CSV, index=False)
         return True
