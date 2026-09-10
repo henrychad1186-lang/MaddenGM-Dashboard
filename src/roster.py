@@ -6,7 +6,16 @@ Loads real roster data from data/packers_roster.csv when available.
 import os
 import pandas as pd
 
+from src import roster_csv
 from src.theme import RANK_COLORS, rank_color
+
+# Problems found while loading the CSV, surfaced in the Roster Explorer
+# alongside ROSTER_WARNINGS. Populated during _load_rosters().
+SOURCE_COLUMN_ISSUES: "list[str]" = []
+
+# The headings the roster CSV was actually read with, so writes can go
+# back out in the same schema. Populated during _load_rosters().
+SOURCE_COLUMNS: "list[str]" = []
 
 # ──────────────────────────────────────────────
 # POSITION → GROUP MAPPING
@@ -14,29 +23,44 @@ from src.theme import RANK_COLORS, rank_color
 
 _OFFENSE_POS = {"QB", "HB", "FB", "WR",
                 "TE", "LT", "LG", "C", "RG", "RT", "OL"}
+# SAM/WILL/MIKE are Madden's linebacker labels (strongside, weakside,
+# middle). They were absent here, so _assign_group fell through to its
+# "Offense" default and filed linebackers with the offensive line.
 _DEFENSE_POS = {"EDGE", "REDG", "LEDG", "DT", "DL", "MLB", "OLB", "LOLB", "ROLB",
-                "CB", "FS", "SS", "S", "LB"}
+                "SAM", "WILL", "MIKE", "CB", "FS", "SS", "S", "LB"}
 _ST_POS = {"K", "P"}
+
+# Unrecognised positions default to Offense, which is silent and wrong for
+# anything defensive. Collected so the Roster Explorer can say so.
+UNKNOWN_POSITIONS: "set[str]" = set()
 
 
 def _assign_group(pos: str) -> str:
-    pos_upper = pos.upper().strip()
+    pos_upper = str(pos).upper().strip()
     if pos_upper in _OFFENSE_POS:
         return "Offense"
     elif pos_upper in _DEFENSE_POS:
         return "Defense"
     elif pos_upper in _ST_POS:
         return "Special Teams"
+    UNKNOWN_POSITIONS.add(pos_upper)
     return "Offense"  # default
 
 
 def _normalize_pos(pos: str) -> str:
-    """Normalize position names (e.g., REDG/LEDG → EDGE, LOLB/ROLB → OLB)."""
-    pos_upper = pos.upper().strip()
+    """Normalize position names (e.g., REDG/LEDG → EDGE, SAM/WILL → OLB).
+
+    Takes str() defensively: a blank cell in the CSV arrives as a float
+    nan, and `nan.upper()` raised AttributeError during module import,
+    which killed the app before any error could be displayed.
+    """
+    pos_upper = str(pos).upper().strip()
     if pos_upper in ("REDG", "LEDG"):
         return "EDGE"
-    if pos_upper in ("LOLB", "ROLB"):
+    if pos_upper in ("LOLB", "ROLB", "SAM", "WILL"):
         return "OLB"
+    if pos_upper == "MIKE":
+        return "MLB"
     return pos_upper
 
 
@@ -48,25 +72,61 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
 
 
+def _demo_roster() -> pd.DataFrame:
+    """Minimal stand-in used when the CSV is absent or unusable."""
+    return pd.DataFrame([
+        {"Team": "GB", "Name": "Demo Player", "Pos": "QB", "OVR": 75,
+         "Age": 25, "Dev": "Normal", "Group": "Offense"},
+    ])
+
+
 def _load_rosters() -> pd.DataFrame:
-    """Load roster data from CSV if available, otherwise use minimal demo."""
-    if os.path.exists(_ROSTER_CSV):
-        df = pd.read_csv(_ROSTER_CSV)
-        # Ensure required columns
-        if "Team" not in df.columns:
-            df["Team"] = "GB"
-        if "Dev" not in df.columns:
-            df["Dev"] = "Normal"
+    """Load roster data from CSV if available, otherwise use minimal demo.
+
+    Never raises. This runs at import, so anything thrown here takes down
+    the whole app — including the Roster Explorer panel that would have
+    explained the problem. An earlier version claimed to fall back but
+    left `pd.read_csv` and the position normalisation unguarded: an empty
+    file (EmptyDataError) and a blank Position cell (AttributeError on
+    nan) each still killed startup.
+
+    A ragged row is not among those cases, despite an earlier version of
+    this docstring saying so: pandas does not raise on one. It treats the
+    first field as an index and shifts every column left, so `OVR` ends
+    up holding a position string. The load survives it and
+    `validate_roster_df` is what surfaces the corruption.
+    """
+    if not os.path.exists(_ROSTER_CSV):
+        return _demo_roster()
+
+    try:
+        raw = pd.read_csv(_ROSTER_CSV)
+        df = roster_csv.normalize_roster_df(raw)
+
+        missing = roster_csv.missing_required_columns(df)
+        if missing:
+            SOURCE_COLUMN_ISSUES.append(
+                f"Roster CSV is missing required column(s): "
+                f"{', '.join(missing)}. The file's columns are: "
+                f"{', '.join(map(str, raw.columns))}. Using demo data until "
+                f"the file provides them.")
+            return _demo_roster()
+
         # Normalize positions and assign groups
         df["Pos"] = df["Pos"].apply(_normalize_pos)
         df["Group"] = df["Pos"].apply(_assign_group)
-        return df
-    else:
-        # Minimal fallback demo
-        return pd.DataFrame([
-            {"Team": "GB", "Name": "Demo Player", "Pos": "QB", "OVR": 75,
-             "Age": 25, "Dev": "Normal", "Group": "Offense"},
-        ])
+    except Exception as exc:                       # noqa: BLE001 — see docstring
+        SOURCE_COLUMN_ISSUES.append(
+            f"Roster CSV could not be read ({type(exc).__name__}: {exc}). "
+            f"Using demo data until the file is fixed.")
+        return _demo_roster()
+
+    # Only now, having actually loaded the file, record its headings.
+    # Recording them earlier meant a fallback-to-demo still looked
+    # writable, and "Save to roster CSV" replaced the user's roster with
+    # the single demo row.
+    SOURCE_COLUMNS[:] = list(raw.columns)
+    return df
 
 
 def validate_roster_df(df: pd.DataFrame) -> list[str]:

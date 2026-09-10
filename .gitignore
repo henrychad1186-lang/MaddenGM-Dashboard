@@ -9,6 +9,7 @@ build/
 
 # Data files (user-specific)
 data/progression_log.csv
+dynasty_history.json
 
 # Virtual environments
 venv/

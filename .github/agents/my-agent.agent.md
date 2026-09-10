@@ -4,13 +4,13 @@
 # To make this agent available, merge this file into the default repository branch.
 # For format details, see: https://gh.io/customagents/config
 
-name:
+name:Madden 81
 description:
----
+---master Analysis and knowledge of Madden 27 slow sim franchise. understands the ai and how it operates in slow sim.
 
 # My Agent
 
-Describe what your agent does here...
+Describe what your agent does here.app function and determines if its operatong to help user build and develop a competitive roster in madden 27..
 analyze and optimize features in app
 allow for smooth transitions from one tab to the next
 keep all tabs and pages clean, organized, and efficient 
