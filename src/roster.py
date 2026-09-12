@@ -7,6 +7,10 @@ import os
 import pandas as pd
 
 from src import roster_csv
+# Canonical salary parser lives in trade_engine; re-exported here under the
+# _parse_sal name that roster.py internals already use.
+from src.trade_engine import parse_salary as _parse_sal
+
 from src.theme import RANK_COLORS, rank_color
 
 # Problems found while loading the CSV, surfaced in the Roster Explorer
@@ -320,23 +324,6 @@ def get_position_grades(team: str, extra_players: "list[dict] | None" = None) ->
             "color": _grade_color(grade),
         })
     return grades
-
-
-def _parse_sal(val) -> float:
-    """Parse salary string like '$3M', '$1.29M', '$600K' to float millions."""
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return 0.0
-    s = str(val).strip().replace("$", "").replace(",", "")
-    if not s:
-        return 0.0
-    try:
-        if s.upper().endswith("M"):
-            return float(s[:-1])
-        elif s.upper().endswith("K"):
-            return float(s[:-1]) / 1000.0
-        return float(s)
-    except ValueError:
-        return 0.0
 
 
 def get_cap_summary(team: str, extra_players: "list[dict] | None" = None) -> dict:
