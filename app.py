@@ -21,6 +21,7 @@ from src import ai_gm
 from src import ai_client
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
+from src import season as season_mod
 from src.roster import (
     get_roster,
     get_team_summary,
@@ -743,11 +744,20 @@ def render_game_log_form() -> None:
         with st.form("log_game_form"):
             when1, when2, when3 = st.columns(3)
             with when1:
-                season = st.number_input("Season", min_value=1, max_value=30,
-                                         value=default_season, step=1)
+                # Bounds come from src/season.py so this widget, the
+                # Progression snapshot and the Dynasty archive cannot
+                # drift apart again — which is how the game log ended up
+                # counting 1, 2, 3 while Dynasty counted calendar years.
+                season = st.number_input(
+                    "Season", min_value=season_mod.SEASON_MIN,
+                    max_value=season_mod.SEASON_MAX,
+                    value=season_mod.clamp_season(default_season), step=1,
+                    help="Calendar year, as Madden labels it.")
             with when2:
-                week = st.number_input("Week", min_value=1, max_value=22,
-                                       value=min(default_week, 22), step=1)
+                week = st.number_input(
+                    "Week", min_value=season_mod.WEEK_MIN,
+                    max_value=season_mod.WEEK_MAX,
+                    value=season_mod.clamp_week(default_week), step=1)
             with when3:
                 opponents = [t for t in game_log.NFL_TEAMS if t != MY_TEAM]
                 opponent = st.selectbox("Opponent", opponents)
@@ -1517,7 +1527,9 @@ with tabs[3]:
         acol1, acol2 = st.columns(2)
         with acol1:
             new_season = st.number_input(
-                "Season Year", min_value=2020, max_value=2040, value=2027)
+                "Season Year", min_value=season_mod.SEASON_MIN,
+                max_value=season_mod.SEASON_MAX,
+                value=season_mod.DEFAULT_SEASON)
             new_era = st.text_input("Era Name", placeholder="e.g. The Rebuild")
             new_record = st.text_input("Record (W-L)", placeholder="e.g. 11-6")
         with acol2:
@@ -2013,11 +2025,15 @@ with tabs[7]:
     # Snapshot controls
     snap_c1, snap_c2, snap_c3 = st.columns([1, 1, 2])
     with snap_c1:
-        snap_season = st.number_input("Season", min_value=1, max_value=30,
-                                      value=1, key="snap_season")
+        snap_season = st.number_input(
+            "Season", min_value=season_mod.SEASON_MIN,
+            max_value=season_mod.SEASON_MAX,
+            value=season_mod.DEFAULT_SEASON, key="snap_season")
     with snap_c2:
-        snap_week = st.number_input("Week", min_value=1, max_value=22,
-                                    value=1, key="snap_week")
+        snap_week = st.number_input(
+            "Week", min_value=season_mod.WEEK_MIN,
+            max_value=season_mod.WEEK_MAX,
+            value=season_mod.WEEK_MIN, key="snap_week")
     with snap_c3:
         if st.button("📸 Save Current OVR Snapshot", type="primary"):
             count = snapshot_roster(MY_TEAM, snap_season, snap_week)

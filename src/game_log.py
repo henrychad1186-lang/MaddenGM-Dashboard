@@ -16,6 +16,8 @@ import os
 
 import pandas as pd
 
+from src.season import DEFAULT_SEASON, WEEK_MIN
+
 # What the entry form asks for. Everything else in the file is either
 # derived (see `derive_fields`) or bookkeeping (`GAME_ID`, `Team`).
 ENTRY_FIELDS = [
@@ -111,19 +113,24 @@ def duplicate_week(existing: pd.DataFrame, season, week, team: str) -> bool:
 
 
 def next_season_week(existing: pd.DataFrame, team: str) -> "tuple[int, int]":
-    """Suggest the season/week to log next, from what is already recorded."""
+    """Suggest the season/week to log next, from what is already recorded.
+
+    Falls back to `season.DEFAULT_SEASON` rather than 1: seasons are
+    calendar years, and every shipped row has a blank Season, so a fresh
+    franchise gets that fallback rather than a derived value.
+    """
     if existing.empty or not {"Season", "Week", "Team"} <= set(existing.columns):
-        return 1, 1
+        return DEFAULT_SEASON, WEEK_MIN
     mine = existing[existing["Team"].astype(str) == str(team)]
     seasons = pd.to_numeric(mine.get("Season"), errors="coerce").dropna()
     if not len(seasons):
-        return 1, 1
+        return DEFAULT_SEASON, WEEK_MIN
     season = int(seasons.max())
     weeks = pd.to_numeric(
         mine[pd.to_numeric(mine["Season"], errors="coerce") == season]["Week"],
         errors="coerce").dropna()
     if not len(weeks):
-        return season, 1
+        return season, WEEK_MIN
     return season, int(weeks.max()) + 1
 
 
