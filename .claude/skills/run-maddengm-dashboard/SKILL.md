@@ -1,14 +1,25 @@
 ---
 name: run-maddengm-dashboard
-description: Build, run, and drive the MaddenGM Dashboard Streamlit app. Use when asked to start the dashboard, launch the app, take a screenshot of the UI, click through its tabs (Scheme Performance, Trade Machine, Roster Explorer, etc.), or verify a change works in the running app.
+description: Build, run, and drive the MaddenGM Dashboard Streamlit app. Use when asked to start the dashboard, launch the app, take a screenshot of the UI, click through its tabs (Home, Schemes, Trades, Dynasty, Roster, Awards, Coach DNA, Progression, Raw Data, AI GM), or verify a change works in the running app.
 ---
 
 This is a Streamlit app (`app.py` at repo root) — a single-page dashboard
-with a tab strip (Scheme Performance, Wear & Tear, Trade Machine, Dynasty,
-Roster Explorer, Season Awards, Coach DNA, Progression, ...). Drive it by
-starting the Streamlit server, then running the headless-Chromium driver at
+with an eleven-tab strip. Drive it by starting the Streamlit server, then
+running the headless-Chromium driver at
 `.claude/skills/run-maddengm-dashboard/driver.py` against it. No `chromium-cli`
 in this container — the driver is a small Playwright script instead.
+
+The tab labels are short and emoji-prefixed, and the driver matches them
+literally (see Gotchas):
+
+```
+🏠 Home   📊 Schemes   💪 Wear       🏈 Trades    🏛️ Dynasty   📋 Roster
+🏆 Awards 🎯 Coach DNA 📈 Progression 🗂️ Raw Data 🤖 AI GM
+```
+
+Each tab's own header still carries its long name ("Trade Machine",
+"Roster Explorer", ...), which is why those strings appear on the page but
+are not clickable as tabs.
 
 All paths below are relative to the repo root.
 
@@ -30,6 +41,10 @@ pip install playwright
 pip install -r requirements.txt
 ```
 
+Needs **Python 3.10+** and **Streamlit 1.51+**. 3.9 was dropped: it caps
+Streamlit at 1.50, which has no `width` parameter on `st.plotly_chart`, and
+`app.py` uses `width="stretch"` throughout. CI builds 3.10 and 3.11.
+
 No env vars are required to launch — the app auto-loads local sample data
 under `data/` and shows a "Local Franchise Data Loaded!" banner. An
 `ANTHROPIC_API_KEY` env var (or `.streamlit/secrets.toml`) enables the
@@ -50,11 +65,11 @@ Then drive it — the driver loads the home page, screenshots it, and clicks
 any tab labels you pass as args, screenshotting after each:
 
 ```bash
-python3 .claude/skills/run-maddengm-dashboard/driver.py "Trade Machine" "Roster Explorer"
+python3 .claude/skills/run-maddengm-dashboard/driver.py "🏈 Trades" "📋 Roster"
 ```
 
 Screenshots land in `.claude/skills/run-maddengm-dashboard/shots/`
-(`00_home.png`, `01_Trade_Machine.png`, `02_Roster_Explorer.png`, ...). The
+(`00_home.png`, `01_🏈_Trades.png`, `02_📋_Roster.png`, ...). The
 driver prints each screenshot path, then prints any browser console errors
 and exits 1 if there were any — check both, not just that the process
 exited 0.
@@ -81,8 +96,13 @@ pip install pytest
 python -m pytest -q
 ```
 
-20 tests pass (`tests/test_roster.py`, `tests/test_roster_analyzer.py`,
-`tests/test_ai_client.py`).
+227 tests pass across 12 files in `tests/`.
+
+`tests/test_app_smoke.py` is the one that actually runs `app.py`, via
+Streamlit's `AppTest` — in-process, no browser, ~2s. CI otherwise only
+`py_compile`s `app.py`, so that file is what catches a module raising at
+import or a Streamlit kwarg being removed. The driver below is still worth
+running for anything visual; `AppTest` cannot see layout.
 
 ## Gotchas
 
@@ -92,6 +112,14 @@ python -m pytest -q
   path explicitly as `executable_path` (the driver already does) — the
   default `p.chromium.launch()` looks for a different revision path and
   fails with "executable doesn't exist".
+- **Pass the emoji tab label, not the long name.** The driver does
+  `page.click(f"text={tab}")`, a literal match. `"Trade Machine"` and
+  `"Roster Explorer"` were the labels before the strip was shortened to fit
+  1366px; passing them now hangs for the full 30s and dies with
+  `TimeoutError: waiting for locator("text=Trade Machine")`. Use `"🏈 Trades"`
+  and `"📋 Roster"`. Those long names do still appear on the page — as each
+  tab's own header — which is why the failure looks puzzling rather than
+  obviously "no such tab".
 - **`curl` on `/` only proves the Streamlit shell loaded**, not that the app
   rendered — the page body is a near-empty HTML shell until the client JS
   connects over websocket and Streamlit runs `app.py` server-side. Always
