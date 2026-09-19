@@ -19,6 +19,8 @@ def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list
         Depth, Verdict, Verdict_Reason
     """
     roster = get_roster(team, "All", extra_players)
+    if roster.empty:
+        return []
     cap = get_cap_summary(team, extra_players)
 
     # cap["players"] is sorted by Penalty and can't be zipped positionally
@@ -31,16 +33,26 @@ def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list
     for p in cap["players"]:
         cap_by_name[p["Name"]].append(p)
 
+    # Positional depth, counted once. This used to be
+    # `len(roster[roster["Pos"] == row["Pos"]])` inside the loop, which
+    # builds a full boolean mask over the roster for every player — O(n^2)
+    # scans to answer n questions that one pass already answers.
+    pos_counts = roster["Pos"].value_counts().to_dict()
+
+    # `to_dict("records")` in place of `iterrows()`, which allocates a
+    # Series per row before the dict conversion. Row order is preserved,
+    # which the cap queue below depends on.
+    players = roster.to_dict("records")
+
     results = []
-    for _, row in roster.iterrows():
-        player = row.to_dict()
+    for player in players:
         tv = get_trade_value(player)
 
-        candidates = cap_by_name.get(row["Name"], [])
+        candidates = cap_by_name.get(player["Name"], [])
         if candidates:
             match_idx = next(
                 (i for i, c in enumerate(candidates)
-                 if c["Pos"] == row["Pos"] and c["OVR"] == int(row["OVR"])),
+                 if c["Pos"] == player["Pos"] and c["OVR"] == int(player["OVR"])),
                 0,
             )
             cap_info = candidates.pop(match_idx)
@@ -49,10 +61,10 @@ def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list
         savings = cap_info["Savings"]
         penalty = cap_info["Penalty"]
 
-        # Count positional depth (how many players at this position)
-        pos_count = len(roster[roster["Pos"] == row["Pos"]])
-        ovr = int(row["OVR"])
-        age = int(row["Age"])
+        pos = player["Pos"]
+        pos_count = int(pos_counts.get(pos, 0))
+        ovr = int(player["OVR"])
+        age = int(player["Age"])
 
         # ── Verdict Logic ──
         verdict = "KEEP"
@@ -61,7 +73,7 @@ def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list
         # CUT candidates: low OVR + net cap savings from cutting + deep position
         if ovr < 72 and savings > penalty and pos_count >= 3:
             verdict = "CUT"
-            reason = f"Low OVR ({ovr}), net ${savings - penalty:.1f}M cap relief, {pos_count} deep at {row['Pos']}"
+            reason = f"Low OVR ({ovr}), net ${savings - penalty:.1f}M cap relief, {pos_count} deep at {pos}"
         elif ovr < 68 and pos_count >= 2:
             verdict = "CUT"
             reason = f"Below replacement level ({ovr} OVR)"
@@ -81,17 +93,17 @@ def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list
                 reason = "Core player — franchise cornerstone"
             elif ovr >= 78:
                 reason = "Solid contributor — good value"
-            elif age <= 24 and str(row.get("Dev", "")).lower() in ("superstar", "superstar x", "star"):
+            elif age <= 24 and str(player.get("Dev", "")).lower() in ("superstar", "superstar x", "star"):
                 reason = "Young dev talent — high ceiling"
             else:
                 reason = "Roster depth piece"
 
         results.append({
-            "Name": row["Name"],
-            "Pos": row["Pos"],
+            "Name": player["Name"],
+            "Pos": pos,
             "OVR": ovr,
             "Age": age,
-            "Dev": str(row.get("Dev", "Normal")),
+            "Dev": str(player.get("Dev", "Normal")),
             "Trade_Value": round(tv, 1),
             "Savings": savings,
             "Penalty": penalty,

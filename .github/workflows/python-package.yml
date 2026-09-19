@@ -12,7 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+        # 3.9 dropped: it reached end of life on 2025-10-05, and it caps
+        # Streamlit at 1.50, which has no `width` parameter on
+        # st.plotly_chart. Keeping it would have pinned the app to the
+        # deprecated `use_container_width` indefinitely.
+        python-version: ["3.10", "3.11"]
 
     steps:
     - uses: actions/checkout@v4
