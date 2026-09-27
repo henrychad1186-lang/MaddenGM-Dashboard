@@ -1087,7 +1087,8 @@ def render_game_log_form() -> None:
 # TABS — Home + Original + New Features
 # ──────────────────────────────────────────────────────
 # Home is prepended and then sliced off, so the ten original tab bodies
-# below keep their existing tabs[0]..tabs[9] indices unchanged.
+# below keep their existing tabs[0]..tabs[9] indices unchanged; Chat was
+# appended after them as tabs[10].
 # Labels are short on purpose. The full names ("Scheme Performance",
 # "AI GM Assistant", ...) overflowed the strip into a scroll chevron even
 # at 1366px, hiding the last tabs entirely; adding Home made that worse.

@@ -4,9 +4,9 @@
 Usage:
     python3 driver.py [tab-text ...]
 
-With no args: loads the home page (Scheme Performance tab, the
-default) and screenshots it. Each extra arg is clicked as a tab label
-(e.g. "Trade Machine") in order, with a screenshot after each click.
+With no args: loads the home page (the Home tab, the default) and
+screenshots it. Each extra arg is clicked as a tab label, emoji included
+(e.g. "🏈 Trades"), in order, with a screenshot after each click.
 Prints any browser console errors at the end and exits 1 if there
 were any.
 

@@ -359,6 +359,14 @@ class TestAgainstTheShippedLog:
         missing = [f for f in game_log.ENTRY_FIELDS if f not in df.columns]
         assert not missing, f"form writes columns the log lacks: {missing}"
 
+    def test_point_differential_matches_the_score(self):
+        # Four losses (games 27, 29, 30, 32) once shipped with a
+        # differential of 0. Nothing charts the column, so it went unseen.
+        df = pd.read_csv("data/game_logs.csv")
+        bad = df[df["Point_Differential"]
+                 != df["Points_For"] - df["Points_Against"]]
+        assert bad.empty, f"differential != score in games {bad['GAME_ID'].tolist()}"
+
     def test_the_shipped_log_carries_season_and_week(self):
         df = pd.read_csv("data/game_logs.csv")
         assert "Season" in df.columns and "Week" in df.columns
