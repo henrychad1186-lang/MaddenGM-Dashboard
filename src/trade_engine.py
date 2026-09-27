@@ -151,6 +151,38 @@ def parse_salary(val) -> float:
         return 0.0
 
 
+# Position-specific age curves
+# (peak_start, peak_end, bonus_per_yr_under, penalty_per_yr_over, floor)
+AGE_CURVES = {
+    "QB":   (26, 32, 0.02, 0.03, 0.60),  # QBs age gracefully
+    "HB":   (23, 27, 0.03, 0.07, 0.40),  # RBs cliff hard
+    "WR":   (23, 28, 0.03, 0.06, 0.45),
+    "TE":   (24, 30, 0.02, 0.04, 0.50),
+    "LT":   (24, 31, 0.02, 0.04, 0.50),  # OL stays productive
+    "LG":   (24, 31, 0.02, 0.04, 0.50),
+    "C":    (24, 31, 0.02, 0.04, 0.50),
+    "RG":   (24, 31, 0.02, 0.04, 0.50),
+    "RT":   (24, 31, 0.02, 0.04, 0.50),
+    "EDGE": (23, 29, 0.03, 0.05, 0.45),  # Pass rushers
+    "REDG": (23, 29, 0.03, 0.05, 0.45),
+    "LEDG": (23, 29, 0.03, 0.05, 0.45),
+    "DT":   (24, 30, 0.02, 0.04, 0.50),
+    "MLB":  (24, 29, 0.03, 0.05, 0.45),
+    "OLB":  (24, 29, 0.03, 0.05, 0.45),
+    "CB":   (23, 28, 0.03, 0.06, 0.40),  # CBs lose a step fast
+    "FS":   (24, 29, 0.03, 0.05, 0.45),
+    "SS":   (24, 29, 0.03, 0.05, 0.45),
+    "K":    (24, 35, 0.01, 0.02, 0.70),  # Kickers age slowly
+    "P":    (24, 35, 0.01, 0.02, 0.70),
+}
+_DEFAULT_AGE_CURVE = (24, 29, 0.03, 0.05, 0.45)
+
+
+def age_curve(pos: str) -> tuple:
+    """(peak_start, peak_end, bonus/yr under, penalty/yr over, floor) for a position."""
+    return AGE_CURVES.get(pos, _DEFAULT_AGE_CURVE)
+
+
 def get_trade_value(player: dict) -> float:
     """Calculate a trade-value score for a single player.
 
@@ -169,33 +201,8 @@ def get_trade_value(player: dict) -> float:
     pos_weight = POSITION_WEIGHTS.get(pos, 0.85)
     base *= pos_weight
 
-    # Position-specific age curves
-    # (peak_start, peak_end, bonus_per_yr_under, penalty_per_yr_over, floor)
-    _AGE_CURVES = {
-        "QB":   (26, 32, 0.02, 0.03, 0.60),  # QBs age gracefully
-        "HB":   (23, 27, 0.03, 0.07, 0.40),  # RBs cliff hard
-        "WR":   (23, 28, 0.03, 0.06, 0.45),
-        "TE":   (24, 30, 0.02, 0.04, 0.50),
-        "LT":   (24, 31, 0.02, 0.04, 0.50),  # OL stays productive
-        "LG":   (24, 31, 0.02, 0.04, 0.50),
-        "C":    (24, 31, 0.02, 0.04, 0.50),
-        "RG":   (24, 31, 0.02, 0.04, 0.50),
-        "RT":   (24, 31, 0.02, 0.04, 0.50),
-        "EDGE": (23, 29, 0.03, 0.05, 0.45),  # Pass rushers
-        "REDG": (23, 29, 0.03, 0.05, 0.45),
-        "LEDG": (23, 29, 0.03, 0.05, 0.45),
-        "DT":   (24, 30, 0.02, 0.04, 0.50),
-        "MLB":  (24, 29, 0.03, 0.05, 0.45),
-        "OLB":  (24, 29, 0.03, 0.05, 0.45),
-        "CB":   (23, 28, 0.03, 0.06, 0.40),  # CBs lose a step fast
-        "FS":   (24, 29, 0.03, 0.05, 0.45),
-        "SS":   (24, 29, 0.03, 0.05, 0.45),
-        "K":    (24, 35, 0.01, 0.02, 0.70),  # Kickers age slowly
-        "P":    (24, 35, 0.01, 0.02, 0.70),
-    }
     # Default curve for unmapped positions
-    peak_start, peak_end, bonus_yr, penalty_yr, floor = _AGE_CURVES.get(
-        pos, (24, 29, 0.03, 0.05, 0.45))
+    peak_start, peak_end, bonus_yr, penalty_yr, floor = age_curve(pos)
 
     if age < peak_start:
         age_factor = 1.0 + (peak_start - age) * bonus_yr

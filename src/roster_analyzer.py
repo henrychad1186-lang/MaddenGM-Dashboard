@@ -8,7 +8,7 @@ and OVR to recommend: KEEP / TRADE / CUT for every player.
 from collections import defaultdict
 
 from src.roster import get_roster, get_cap_summary
-from src.trade_engine import get_trade_value
+from src.trade_engine import age_curve, get_trade_value
 
 
 def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
@@ -67,30 +67,44 @@ def analyze_roster(team: str, extra_players: "list[dict] | None" = None) -> list
         age = int(player["Age"])
 
         # ── Verdict Logic ──
+        # In Madden franchise mode a trade charges the same remaining-bonus
+        # dead cap as a release, so `penalty` is the cost of moving a
+        # player either way and `savings - penalty` is the net cap effect
+        # of any move. An earlier rule read "dead cap > savings" as a
+        # reason to TRADE, which is backwards: it flagged 12 of 37 GB
+        # players, including the only QB and a 98 OVR 27-year-old.
         verdict = "KEEP"
         reason = ""
+        net_cap = savings - penalty
+        peak_end = age_curve(pos)[1]
+        past_peak = age > peak_end
+        has_backup = pos_count >= 2
+        core = ovr >= 85 and not past_peak
 
         # CUT candidates: low OVR + net cap savings from cutting + deep position
-        if ovr < 72 and savings > penalty and pos_count >= 3:
+        if ovr < 72 and net_cap > 0 and pos_count >= 3:
             verdict = "CUT"
-            reason = f"Low OVR ({ovr}), net ${savings - penalty:.1f}M cap relief, {pos_count} deep at {pos}"
-        elif ovr < 68 and pos_count >= 2:
+            reason = f"Low OVR ({ovr}), net ${net_cap:.1f}M cap relief, {pos_count} deep at {pos}"
+        elif ovr < 68 and has_backup and net_cap >= 0:
             verdict = "CUT"
             reason = f"Below replacement level ({ovr} OVR)"
-        # TRADE candidates: aging + replaceable + has value
-        elif tv > 200 and age >= 29 and pos_count >= 2:
+        # TRADE candidates: past this position's age peak, still a
+        # starter-grade player, a backup behind him, and moving him
+        # doesn't cost more cap than it frees.
+        elif (past_peak and ovr >= 75 and has_backup and not core
+              and net_cap >= 0):
             verdict = "TRADE"
-            reason = f"Aging ({age}yo), tradeable value ({tv:.0f}), backup available"
-        elif tv > 300 and penalty > savings and age >= 27:
-            verdict = "TRADE"
-            reason = f"Cap negative (${penalty:.1f}M dead > ${savings:.1f}M sav), still has value"
-        elif ovr >= 75 and age >= 31 and pos_count >= 2:
-            verdict = "TRADE"
-            reason = f"Veteran ({age}yo, {ovr} OVR), sell high before decline"
+            reason = (f"Past {pos} peak ({age}yo, peak ends {peak_end}), {ovr} OVR — "
+                      f"sell before decline, frees ${net_cap:.1f}M")
         # KEEP: everyone else (default)
         else:
-            if ovr >= 85:
+            if core:
                 reason = "Core player — franchise cornerstone"
+            elif past_peak and ovr >= 75 and net_cap < 0:
+                reason = (f"Past peak, but ${penalty:.1f}M dead cap vs ${savings:.1f}M "
+                          f"saved if moved — ride out the contract")
+            elif not has_backup and ovr >= 70:
+                reason = f"Only {pos} on the roster — no replacement"
             elif ovr >= 78:
                 reason = "Solid contributor — good value"
             elif age <= 24 and str(player.get("Dev", "")).lower() in ("superstar", "superstar x", "star"):
