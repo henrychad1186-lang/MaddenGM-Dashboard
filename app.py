@@ -21,6 +21,7 @@ from src import ai_gm
 from src import ai_client
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
+from src import season as season_mod
 from src.roster import (
     get_roster,
     get_team_summary,
@@ -743,11 +744,20 @@ def render_game_log_form() -> None:
         with st.form("log_game_form"):
             when1, when2, when3 = st.columns(3)
             with when1:
-                season = st.number_input("Season", min_value=1, max_value=30,
-                                         value=default_season, step=1)
+                # Bounds come from src/season.py so this widget, the
+                # Progression snapshot and the Dynasty archive cannot
+                # drift apart again — which is how the game log ended up
+                # counting 1, 2, 3 while Dynasty counted calendar years.
+                season = st.number_input(
+                    "Season", min_value=season_mod.SEASON_MIN,
+                    max_value=season_mod.SEASON_MAX,
+                    value=season_mod.clamp_season(default_season), step=1,
+                    help="Calendar year, as Madden labels it.")
             with when2:
-                week = st.number_input("Week", min_value=1, max_value=22,
-                                       value=min(default_week, 22), step=1)
+                week = st.number_input(
+                    "Week", min_value=season_mod.WEEK_MIN,
+                    max_value=season_mod.WEEK_MAX,
+                    value=season_mod.clamp_week(default_week), step=1)
             with when3:
                 opponents = [t for t in game_log.NFL_TEAMS if t != MY_TEAM]
                 opponent = st.selectbox("Opponent", opponents)
@@ -919,7 +929,7 @@ with tabs[0]:
                 template="plotly_dark",
                 title="Madden 27 Strategy Map",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.warning("Insufficient data for Strategy Map.")
     with col2:
@@ -1020,7 +1030,7 @@ with tabs[0]:
         )
         fig_compare.update_layout(yaxis_title="Per Game Average",
                                   xaxis_title="")
-        st.plotly_chart(fig_compare, use_container_width=True)
+        st.plotly_chart(fig_compare, width="stretch")
 
         # GM Text Analysis
         st.markdown("#### 🧠 GM Analysis")
@@ -1092,7 +1102,7 @@ with tabs[0]:
             legend=dict(x=0.01, y=0.99),
             hovermode="x unified",
         )
-        st.plotly_chart(fig_momentum, use_container_width=True)
+        st.plotly_chart(fig_momentum, width="stretch")
 
         # Quick insights
         best_streak = 0
@@ -1124,7 +1134,7 @@ with tabs[1]:
             title="Fatigue Level vs Offensive Production",
             template="plotly_dark",
         )
-        st.plotly_chart(fig_fatigue, use_container_width=True)
+        st.plotly_chart(fig_fatigue, width="stretch")
 
     # Turnovers impact
     if "Turnovers" in df.columns and "Points_For" in df.columns:
@@ -1139,7 +1149,7 @@ with tabs[1]:
                 title="Turnovers vs Points Scored",
                 template="plotly_dark",
             )
-            st.plotly_chart(fig_to, use_container_width=True)
+            st.plotly_chart(fig_to, width="stretch")
         with wt2:
             if "Total_Yards_Allowed" in df.columns and "Takeaways" in df.columns:
                 fig_def = px.scatter(
@@ -1150,7 +1160,7 @@ with tabs[1]:
                     title="Yards Allowed vs Takeaways",
                     template="plotly_dark",
                 )
-                st.plotly_chart(fig_def, use_container_width=True)
+                st.plotly_chart(fig_def, width="stretch")
 
     # Rush vs Pass balance
     if "Pass_Yards" in df.columns and "Rush_Yards" in df.columns:
@@ -1166,7 +1176,7 @@ with tabs[1]:
         fig_bal.update_layout(legend_title="Yard Type",
                               yaxis_title="Yards",
                               xaxis_title="Opponent")
-        st.plotly_chart(fig_bal, use_container_width=True)
+        st.plotly_chart(fig_bal, width="stretch")
 
 # ── TAB 3: Trade Machine ──
 with tabs[2]:
@@ -1295,7 +1305,7 @@ with tabs[2]:
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
             )
-            st.plotly_chart(fig_radar, use_container_width=True)
+            st.plotly_chart(fig_radar, width="stretch")
         else:
             st.caption(
                 "📊 _Radar chart available when SPD/ACC/AGI data is filled in._")
@@ -1368,7 +1378,7 @@ with tabs[2]:
         ]
         st.markdown('</div>', unsafe_allow_html=True)
 
-        if st.button("📋 Evaluate Trade", key="eval_trade_btn", use_container_width=True):
+        if st.button("📋 Evaluate Trade", key="eval_trade_btn", width="stretch"):
             if not offered or not requested:
                 st.warning("Select at least one player on each side.")
             else:
@@ -1412,7 +1422,7 @@ with tabs[2]:
                                gridcolor='rgba(0,0,0,0)'),
                     bargap=0.35,
                 )
-                st.plotly_chart(fig_compare, use_container_width=True)
+                st.plotly_chart(fig_compare, width="stretch")
 
                 # Diff metric
                 diff = result['diff']
@@ -1456,7 +1466,7 @@ with tabs[3]:
         fig_timeline.update_traces(marker=dict(
             line=dict(width=2, color="white")))
         fig_timeline.update_layout(xaxis=dict(dtick=1))
-        st.plotly_chart(fig_timeline, use_container_width=True)
+        st.plotly_chart(fig_timeline, width="stretch")
 
         # Season detail cards
         st.markdown("#### 📜 The Chronicles")
@@ -1504,7 +1514,7 @@ with tabs[3]:
                 "Total Yds": "{:,.0f}",
             }),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     else:
         st.info("No career leaders data available yet.")
@@ -1517,7 +1527,9 @@ with tabs[3]:
         acol1, acol2 = st.columns(2)
         with acol1:
             new_season = st.number_input(
-                "Season Year", min_value=2020, max_value=2040, value=2027)
+                "Season Year", min_value=season_mod.SEASON_MIN,
+                max_value=season_mod.SEASON_MAX,
+                value=season_mod.DEFAULT_SEASON)
             new_era = st.text_input("Era Name", placeholder="e.g. The Rebuild")
             new_record = st.text_input("Record (W-L)", placeholder="e.g. 11-6")
         with acol2:
@@ -1639,7 +1651,7 @@ with tabs[4]:
             )
 
             st.dataframe(styled, hide_index=True,
-                         use_container_width=True, height=500)
+                         width="stretch", height=500)
 
             # Position breakdown chart
             st.markdown("#### Position Breakdown")
@@ -1654,7 +1666,7 @@ with tabs[4]:
                 color_continuous_scale="Viridis",
             )
             fig_pos.update_layout(showlegend=False)
-            st.plotly_chart(fig_pos, use_container_width=True)
+            st.plotly_chart(fig_pos, width="stretch")
 
     # ── Trade Value Leaderboard ──
     st.markdown("---")
@@ -1685,7 +1697,7 @@ with tabs[4]:
         styled_tv = tv_df.style.map(style_tv, subset=["Trade Value"]).map(
             style_ovr, subset=["OVR"]).format({"Trade Value": "{:.1f}"})
 
-        st.dataframe(styled_tv, use_container_width=True, height=450)
+        st.dataframe(styled_tv, width="stretch", height=450)
 
     # ── Position Group Grades ──
     st.markdown("---")
@@ -1737,7 +1749,7 @@ with tabs[4]:
                 lambda x: f"${x:.2f}M")
             dead_df["Savings"] = dead_df["Savings"].apply(
                 lambda x: f"${x:.2f}M")
-            st.dataframe(dead_df, hide_index=True, use_container_width=True)
+            st.dataframe(dead_df, hide_index=True, width="stretch")
         else:
             st.info("No dead cap obligations found.")
     else:
@@ -1992,7 +2004,7 @@ with tabs[6]:
             title="Coaching DNA Radar",
             margin=dict(t=60, b=30),
         )
-        st.plotly_chart(fig_dna, use_container_width=True)
+        st.plotly_chart(fig_dna, width="stretch")
 
         # Stat breakdown
         dna1, dna2, dna3, dna4, dna5 = st.columns(5)
@@ -2018,11 +2030,15 @@ with tabs[7]:
     # Snapshot controls
     snap_c1, snap_c2, snap_c3 = st.columns([1, 1, 2])
     with snap_c1:
-        snap_season = st.number_input("Season", min_value=1, max_value=30,
-                                      value=1, key="snap_season")
+        snap_season = st.number_input(
+            "Season", min_value=season_mod.SEASON_MIN,
+            max_value=season_mod.SEASON_MAX,
+            value=season_mod.DEFAULT_SEASON, key="snap_season")
     with snap_c2:
-        snap_week = st.number_input("Week", min_value=1, max_value=22,
-                                    value=1, key="snap_week")
+        snap_week = st.number_input(
+            "Week", min_value=season_mod.WEEK_MIN,
+            max_value=season_mod.WEEK_MAX,
+            value=season_mod.WEEK_MIN, key="snap_week")
     with snap_c3:
         if st.button("📸 Save Current OVR Snapshot", type="primary"):
             count = snapshot_roster(MY_TEAM, snap_season, snap_week)
@@ -2064,7 +2080,7 @@ with tabs[7]:
     if not prog_log.empty:
         st.markdown("##### 📚 Full Progression Log")
         st.dataframe(prog_log, hide_index=True,
-                     use_container_width=True, height=300)
+                     width="stretch", height=300)
 
 # ── TAB 9: Raw Data ──
 with tabs[8]:
@@ -2140,7 +2156,7 @@ with tabs[9]:
                 "💾 Save to roster CSV (persists across restarts)", value=False)
 
             submitted = st.form_submit_button(
-                "🔮 Scout & Add to Roster", use_container_width=True)
+                "🔮 Scout & Add to Roster", width="stretch")
 
         if submitted:
             new_player = {
@@ -2230,7 +2246,7 @@ with tabs[9]:
                 rm_col, regen_col = st.columns(2)
                 with rm_col:
                     if st.button("🗑️ Remove", key=f"ai_gm_remove_{rep['_id']}",
-                                use_container_width=True):
+                                width="stretch"):
                         st.session_state.ai_gm_players = ai_gm.remove_from_list(
                             st.session_state.ai_gm_players, rep["_id"])
                         st.session_state.ai_gm_log = [
@@ -2242,7 +2258,7 @@ with tabs[9]:
                     # Claude is actually writing the narrative.
                     if ai_client.is_available():
                         if st.button("🔄 Regenerate", key=f"ai_gm_regen_{rep['_id']}",
-                                    use_container_width=True):
+                                    width="stretch"):
                             source_player = next(
                                 (p for p in st.session_state.ai_gm_players
                                  if p["_id"] == rep["_id"]), None)
@@ -2287,14 +2303,14 @@ with tabs[9]:
         if st.session_state.ai_gm_chat:
             clear_col, regen_col = st.columns(2)
             with clear_col:
-                if st.button("🗑️ Clear chat", key="ai_gm_chat_clear", use_container_width=True):
+                if st.button("🗑️ Clear chat", key="ai_gm_chat_clear", width="stretch"):
                     st.session_state.ai_gm_chat = []
                     st.rerun()
             with regen_col:
                 last_msg = st.session_state.ai_gm_chat[-1]
                 if last_msg["role"] == "assistant":
                     if st.button("🔄 Regenerate last answer", key="ai_gm_chat_regen",
-                                use_container_width=True):
+                                width="stretch"):
                         st.session_state.ai_gm_chat.pop()  # drop the stale answer
                         last_question = st.session_state.ai_gm_chat[-1]["content"]
                         history = st.session_state.ai_gm_chat[:-1][-12:]

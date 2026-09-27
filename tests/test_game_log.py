@@ -273,9 +273,12 @@ class TestDuplicateWeek:
 
 class TestNextSeasonWeek:
 
-    def test_all_blank_log_starts_at_one_one(self):
+    def test_all_blank_log_starts_at_the_default_season(self):
+        # Every shipped row has a blank Season, so there is nothing to
+        # derive from and the shared default applies.
+        from src.season import DEFAULT_SEASON, WEEK_MIN
         df = pd.read_csv("data/game_logs.csv")
-        assert game_log.next_season_week(df, "GB") == (1, 1)
+        assert game_log.next_season_week(df, "GB") == (DEFAULT_SEASON, WEEK_MIN)
 
     def test_advances_past_the_last_logged_week(self, log_file):
         df = pd.read_csv(log_file)
@@ -283,8 +286,16 @@ class TestNextSeasonWeek:
         df.loc[len(df) - 1, ["Season", "Week"]] = [2, 7]
         assert game_log.next_season_week(df, "GB") == (2, 8)
 
-    def test_empty_log_starts_at_one_one(self):
-        assert game_log.next_season_week(pd.DataFrame(), "GB") == (1, 1)
+    def test_empty_log_starts_at_the_default_season(self):
+        from src.season import DEFAULT_SEASON, WEEK_MIN
+        assert game_log.next_season_week(
+            pd.DataFrame(), "GB") == (DEFAULT_SEASON, WEEK_MIN)
+
+    def test_a_calendar_year_already_logged_is_carried_forward(self, log_file):
+        df = pd.read_csv(log_file)
+        df.loc[len(df)] = df.iloc[0]
+        df.loc[len(df) - 1, ["Season", "Week"]] = [2027, 9]
+        assert game_log.next_season_week(df, "GB") == (2027, 10)
 
 
 class TestAgainstTheShippedLog:
