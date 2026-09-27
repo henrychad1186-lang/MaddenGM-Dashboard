@@ -19,6 +19,8 @@ from src.theme import RANK_COLORS, VERDICT_COLORS, rank_color
 from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
+from src import chat_store
+from src import close_games
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
 from src import season as season_mod
@@ -236,10 +238,18 @@ st.markdown("""
     background: linear-gradient(180deg, #0d0d22 0%, #1a1a3e 100%);
     border-right: 1px solid rgba(99, 102, 241, 0.2);
 }
-[data-testid="stTabs"] [data-baseweb="tab-list"] {
+/* Streamlit <1.6x renders tabs with baseweb; newer versions with
+   react-aria (role="tablist" / data-testid="stTab"). Match both. */
+[data-testid="stTabs"] [data-baseweb="tab-list"],
+[data-testid="stTabs"] [role="tablist"] {
     gap: 8px;
+    /* Twelve tabs don't fit one row at 1366px; wrapping to a second row
+       keeps every tab visible instead of hiding the tail behind a scroll
+       chevron. */
+    flex-wrap: wrap;
 }
-[data-testid="stTabs"] [data-baseweb="tab"] {
+[data-testid="stTabs"] [data-baseweb="tab"],
+[data-testid="stTabs"] [data-testid="stTab"] {
     background: rgba(20, 20, 50, 0.6);
     border-radius: 10px 10px 0 0;
     border: 1px solid rgba(99, 102, 241, 0.15);
@@ -298,9 +308,14 @@ def render_tab_header(icon: str, title: str, subtitle: str = "") -> None:
         unsafe_allow_html=True)
 
 
-def _kpi_card_html(label: str, value: str, delta: str = "", delta_positive: bool = True) -> str:
+def _kpi_card_html(label: str, value: str, delta: str = "", delta_positive: bool = True,
+                   note: str = "") -> str:
     delta_html = ""
-    if delta:
+    if note:
+        # Context, not a direction — no arrow, no good/bad colour.
+        delta_html = (f'<div style="color:var(--text-muted); font-size:0.75rem; '
+                      f'margin-top:4px;">{note}</div>')
+    elif delta:
         cls = "kpi-delta-up" if delta_positive else "kpi-delta-down"
         arrow = "▲" if delta_positive else "▼"
         delta_html = f'<div class="{cls}">{arrow} {delta}</div>'
@@ -604,7 +619,7 @@ if df.empty or len(df) == 0:
 
 # --- 3. DASHBOARD VISUALS ---
 st.markdown("#### 📊 Franchise Key Performance Indicators")
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+kpi1, kpi2, kpi3, kpi4, kpi5, kpi6 = st.columns(6)
 
 avg_pts_for = df["Points_For"].mean() if "Points_For" in df.columns else 0
 avg_pts_against = (
@@ -634,6 +649,33 @@ with kpi3:
     st.markdown(_kpi_card_html("Win Rate", f"{win_rate:.1f}%"), unsafe_allow_html=True)
 with kpi4:
     st.markdown(_kpi_card_html("Games Tracked", str(len(df))), unsafe_allow_html=True)
+
+# Third-down rate and red zone TD% are this franchise's two strongest win
+# predictors. Shown over only the games that recorded attempts, and the
+# sample size is on the card, since older logs have none.
+_eff = game_log.efficiency_rates(df)
+
+
+def _games_note(n: int) -> str:
+    return f"{n} game{'' if n == 1 else 's'} tracked"
+
+
+with kpi5:
+    if _eff["third_down_pct"] is None:
+        st.markdown(_kpi_card_html("3rd Down Conv", "—", note="log 3rd down attempts"),
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(_kpi_card_html(
+            "3rd Down Conv", f"{_eff['third_down_pct']:.1f}%",
+            note=_games_note(_eff["third_down_games"])), unsafe_allow_html=True)
+with kpi6:
+    if _eff["rz_td_pct"] is None:
+        st.markdown(_kpi_card_html("Red Zone TD%", "—", note="log red zone trips"),
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(_kpi_card_html(
+            "Red Zone TD%", f"{_eff['rz_td_pct']:.1f}%",
+            note=_games_note(_eff["rz_games"])), unsafe_allow_html=True)
 
 st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
 
@@ -715,6 +757,144 @@ def render_franchise_home() -> None:
         """, unsafe_allow_html=True)
 
 
+def _fmt_stat(label: str, value: float) -> str:
+    if "Yards" in label:
+        return f"{value:.0f}"
+    if label == "Turnover margin":
+        return f"{value:+.2f}"
+    return f"{value:.1f}"
+
+
+def render_close_games() -> None:
+    """Close-game record and what changes in one-score games.
+
+    Close-game performance is a standing metric for this franchise. The
+    comparison is against games decided by more than one score, from the
+    same filtered log as the KPI row, so the Dashboard Filters apply.
+    """
+    result = close_games.analyze(df)
+    st.markdown(f"#### ⏱️ Close Games — decided by {close_games.CLOSE_MARGIN} or fewer")
+    if result is None or not result["close"]["games"]:
+        st.caption("No one-score games in the current filter.")
+        return
+
+    c, d = result["close"], result["decided"]
+
+    def _record_card(label, rec, note):
+        pct = "—" if rec["win_pct"] is None else f"{rec['win_pct']:.0f}%"
+        return f"""
+        <div class="trade-card">
+            <div class="card-label">{label}</div>
+            <div style="font-size:1.8rem; font-weight:800; color:#f1f5f9; margin-top:4px;">{rec['record']}</div>
+            <div style="color:var(--text-muted); font-size:0.8rem; margin-top:6px;">{pct} win rate · {note}</div>
+        </div>"""
+
+    r1, r2, r3 = st.columns(3)
+    with r1:
+        st.markdown(_record_card("Close games", c, f"{c['games']} games"),
+                    unsafe_allow_html=True)
+    with r2:
+        st.markdown(_record_card(
+            f"Decided by {close_games.CLOSE_MARGIN + 1}+", d, f"{d['games']} games"),
+            unsafe_allow_html=True)
+    with r3:
+        fg, mid = result["fg"], result["one_score_4_8"]
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Close games by margin</div>
+            <div style="display:flex; justify-content:space-between; margin-top:8px;">
+                <span style="color:var(--text-dim);">≤ {close_games.FG_MARGIN} pts (field goal)</span>
+                <span style="color:#f1f5f9; font-weight:700;">{fg['record']}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-top:6px;">
+                <span style="color:var(--text-dim);">4–{close_games.CLOSE_MARGIN} pts</span>
+                <span style="color:#f1f5f9; font-weight:700;">{mid['record']}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    t_col, why_col = st.columns([3, 2], gap="large")
+    with t_col:
+        body = ""
+        for r in result["rows"]:
+            gap = r["close"] - r["decided"]
+            better = gap > 0 if r["higher_is_better"] else gap < 0
+            level = abs(gap) <= abs(r["decided"] or 1.0) * close_games.NEUTRAL_REL_GAP
+            color = ("var(--text-muted)" if level else
+                     "var(--status-good)" if better else "var(--status-bad)")
+            if level:
+                sign_gap = "≈"
+            else:
+                sign_gap = (("+" if gap > 0 else "−")
+                            + _fmt_stat(r["label"], abs(gap)).lstrip("+"))
+            body += (
+                f'<tr><td style="color:var(--text-dim); padding:4px 8px;">{r["label"]}</td>'
+                f'<td style="text-align:right; padding:4px 8px; color:#f1f5f9;">{_fmt_stat(r["label"], r["close"])}</td>'
+                f'<td style="text-align:right; padding:4px 8px; color:#f1f5f9;">{_fmt_stat(r["label"], r["decided"])}</td>'
+                f'<td style="text-align:right; padding:4px 8px; color:{color}; font-weight:700;">{sign_gap}</td></tr>')
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Per game — close vs decided</div>
+            <table style="width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:6px;">
+                <tr style="color:var(--text-muted); font-size:0.75rem;">
+                    <th style="text-align:left; padding:4px 8px;">Stat</th>
+                    <th style="text-align:right; padding:4px 8px;">Close</th>
+                    <th style="text-align:right; padding:4px 8px;">Decided</th>
+                    <th style="text-align:right; padding:4px 8px;">Gap</th>
+                </tr>
+                {body}
+            </table>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with why_col:
+        if result["drivers"]:
+            items = "".join(
+                f'<li style="margin-top:6px; color:var(--text-dim);">'
+                f'<b style="color:#f1f5f9;">{r["label"]}</b>: '
+                f'{_fmt_stat(r["label"], r["close"])} vs {_fmt_stat(r["label"], r["decided"])}'
+                f'</li>'
+                for r in result["drivers"][:4])
+            drivers_html = f'<ul style="margin:4px 0 0 1rem; padding:0;">{items}</ul>'
+        else:
+            drivers_html = ('<div style="color:var(--text-muted); margin-top:6px;">'
+                            'No stat is meaningfully worse in close games.</div>')
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Worse in close games</div>
+            {drivers_html}
+            <div style="color:var(--text-muted); font-size:0.72rem; margin-top:10px;">
+                {c['games']} close games — small sample. Close games also skew toward
+                stronger opponents, so yards allowed is partly who you played.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    games = result["games"].tail(8).iloc[::-1]
+    rows_html = ""
+    for _, g in games.iterrows():
+        res = str(g.get("Result", ""))
+        color = ("var(--status-good)" if res == "WIN" else
+                 "var(--status-bad)" if res == "LOSS" else "var(--text-muted)")
+        wk = (f"S{int(g['Season'])} W{int(g['Week'])}"
+              if pd.notna(g.get("Season")) and pd.notna(g.get("Week"))
+              else f"G{g.get('GAME_ID', '')}")
+        pf, pa = g.get("Points_For"), g.get("Points_Against")
+        score = f"{int(pf)}-{int(pa)}" if pd.notna(pf) and pd.notna(pa) else ""
+        to = g.get("Turnovers")
+        to_txt = f"{int(to)} TO" if pd.notna(to) else ""
+        rows_html += (
+            f'<div style="display:flex; justify-content:space-between; margin-top:4px; font-size:0.85rem;">'
+            f'<span style="color:var(--text-muted); width:4.5rem;">{wk}</span>'
+            f'<span style="color:var(--text-dim); flex:1;">vs {g.get("Opponent", "?")}</span>'
+            f'<span style="color:{color}; font-weight:700; width:1.5rem;">{res[:1]}</span>'
+            f'<span style="color:#f1f5f9; width:3.5rem; text-align:right;">{score}</span>'
+            f'<span style="color:var(--text-muted); width:3.5rem; text-align:right;">{to_txt}</span>'
+            f'</div>')
+    with st.expander(f"Last {len(games)} close games", expanded=False):
+        st.markdown(rows_html, unsafe_allow_html=True)
+
+
 def render_game_log_form() -> None:
     """One-week game entry, appended to the game log CSV.
 
@@ -777,7 +957,7 @@ def render_game_log_form() -> None:
                 first_downs = st.number_input("First downs", min_value=0,
                                               max_value=60, value=0, step=1)
 
-            off5, off6, off7, _off8 = st.columns(4)
+            off5, off6, off7, off8 = st.columns(4)
             with off5:
                 turnovers = st.number_input("Turnovers lost", min_value=0,
                                             max_value=15, value=0, step=1)
@@ -787,6 +967,22 @@ def render_game_log_form() -> None:
             with off7:
                 top = st.text_input("Time of possession", value="30:00",
                                     help="MM:SS, e.g. 31:12")
+            with off8:
+                rz_att = st.number_input(
+                    "Red zone trips", min_value=0, max_value=15, value=0,
+                    step=1, help="Drives that reached the opponent's 20. "
+                                 "Needed for red zone TD%. Leave 0 if not tracked.")
+
+            eff1, eff2, _eff3, _eff4 = st.columns(4)
+            with eff1:
+                td_att = st.number_input(
+                    "3rd down attempts", min_value=0, max_value=30, value=0,
+                    step=1, help="From the post-game team stats. Leave 0 if "
+                                 "not tracked.")
+            with eff2:
+                td_conv = st.number_input(
+                    "3rd down conversions", min_value=0, max_value=30,
+                    value=0, step=1)
 
             st.markdown("**Your defense**")
             def1, def2, def3, def4 = st.columns(4)
@@ -834,6 +1030,14 @@ def render_game_log_form() -> None:
             st.error(f"Time of possession '{top}' isn't MM:SS — "
                      "e.g. 31:12. Nothing was logged.")
             return
+        if td_conv > td_att:
+            st.error(f"3rd down conversions ({td_conv}) can't exceed attempts "
+                     f"({td_att}). Nothing was logged.")
+            return
+        if rz_att and rz_td > rz_att:
+            st.error(f"Red zone TDs ({rz_td}) can't exceed red zone trips "
+                     f"({rz_att}). Nothing was logged.")
+            return
         if game_log.duplicate_week(existing, season, week, MY_TEAM):
             st.error(f"Season {season}, Week {week} is already logged for "
                      f"{MY_TEAM}. Nothing was logged.")
@@ -850,6 +1054,11 @@ def render_game_log_form() -> None:
             "Rush_Yards_Allowed": int(rush_allowed),
             "Sacks_For": int(sacks), "Takeaways": int(takeaways),
             "Playbook": playbook,
+            # 0 attempts means "not tracked this game", written blank so
+            # it's left out of the rates instead of counting as 0-for-0.
+            "Third_Down_Att": int(td_att) if td_att else "",
+            "Third_Down_Conv": int(td_conv) if td_att else "",
+            "RZ_Att": int(rz_att) if rz_att else "",
         }, MY_TEAM)
 
         if not ok:
@@ -895,6 +1104,7 @@ _all_tabs = st.tabs([
     "📈 Progression",
     "🗂️ Raw Data",
     "🤖 AI GM",
+    "💬 Chat",
 ])
 home_tab, tabs = _all_tabs[0], _all_tabs[1:]
 
@@ -904,6 +1114,7 @@ with home_tab:
                       f"Record, cap exposure, needs and moves for {MY_TEAM}")
     render_game_log_form()
     render_franchise_home()
+    render_close_games()
 
 # ── TAB 1: Scheme Performance ──
 with tabs[0]:
@@ -2274,69 +2485,193 @@ with tabs[9]:
                                         "Regeneration failed — keeping the previous version.")
                             st.rerun()
 
-    # ── Ask the AI GM — free-form chat grounded in real roster data ──
     st.markdown("---")
-    st.markdown("#### 💬 Ask the AI GM")
-    st.caption(
-        "Ask anything about your roster, cap situation, trade targets, or "
-        "needs — every answer is grounded in your actual data below, not "
-        "a generic guess.")
+    st.caption("💬 Free-form questions about this roster now live in the "
+               "**Chat** tab, with saved conversations.")
 
-    if "ai_gm_chat" not in st.session_state:
-        st.session_state.ai_gm_chat = []
-    # Stale chat referencing a different team's data would be misleading —
-    # reset on team switch rather than let old answers linger.
-    if st.session_state.get("ai_gm_chat_team") != MY_TEAM:
-        st.session_state.ai_gm_chat = []
-        st.session_state.ai_gm_chat_team = MY_TEAM
 
-    if not ai_client.is_available():
-        st.info(
-            "💬 Chat requires a live Claude connection — set `ANTHROPIC_API_KEY` "
-            "(env var locally, or Streamlit Cloud Settings → Secrets) to unlock it. "
-            "The scouting reports above still work either way.")
-    else:
-        for msg in st.session_state.ai_gm_chat:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+# ── TAB 11: GM Chat — dedicated chat with a conversation sidebar ──
+# Replaces the chat box that used to sit at the bottom of the AI GM tab,
+# where it was below a long form and the reply rendered off-screen.
+# Laid out like a chat app: conversation list on the left, a fixed-height
+# message pane with the input under it on the right.
+_CHAT_SUGGESTIONS = [
+    "What are my three biggest roster needs right now?",
+    "Which contracts should I cut or trade to free cap?",
+    "How are we doing in close games, and what's driving it?",
+    "Which playbook has worked best for us?",
+    "Who are my best trade chips that aren't core starters?",
+    "Grade my offensive line and name the weakest link.",
+]
 
-        if st.session_state.ai_gm_chat:
-            clear_col, regen_col = st.columns(2)
-            with clear_col:
-                if st.button("🗑️ Clear chat", key="ai_gm_chat_clear", width="stretch"):
-                    st.session_state.ai_gm_chat = []
-                    st.rerun()
-            with regen_col:
-                last_msg = st.session_state.ai_gm_chat[-1]
-                if last_msg["role"] == "assistant":
-                    if st.button("🔄 Regenerate last answer", key="ai_gm_chat_regen",
-                                width="stretch"):
-                        st.session_state.ai_gm_chat.pop()  # drop the stale answer
-                        last_question = st.session_state.ai_gm_chat[-1]["content"]
-                        history = st.session_state.ai_gm_chat[:-1][-12:]
-                        context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
-                        with st.spinner("Asking again..."):
-                            answer = ai_client.answer_gm_question(
-                                last_question, context_summary, history, MY_TEAM)
-                            if answer is None:
-                                answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
-                        st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
+
+def _chat_default_persist() -> bool:
+    """Saving is opt-in: on a shared deployment (Streamlit Cloud) the file
+    is shared by every visitor, so defaulting it on would leak one
+    person's chats to the next. Set GM_CHAT_SAVE=1 to default it on."""
+    val = os.environ.get("GM_CHAT_SAVE")
+    if val is None:
+        try:
+            val = st.secrets.get("GM_CHAT_SAVE")
+        except Exception:
+            val = None
+    return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _chat_persist_changed() -> None:
+    # Turning saving on pulls in whatever was saved before, without
+    # clobbering conversations already started this session.
+    if st.session_state.get("chat_persist"):
+        disk = chat_store.load()
+        store = st.session_state.chat_store
+        for team, convs in disk.items():
+            have = {c["id"] for c in store.get(team, [])}
+            store.setdefault(team, []).extend(c for c in convs if c.get("id") not in have)
+        chat_store.save(store)
+
+
+with tabs[10]:
+    render_tab_header("💬", "GM Chat",
+                      f"Ask the AI GM anything about {MY_TEAM} — answers are grounded "
+                      f"in your roster, cap sheet and game log")
+
+    if "chat_persist" not in st.session_state:
+        st.session_state.chat_persist = _chat_default_persist()
+    if "chat_store" not in st.session_state:
+        st.session_state.chat_store = (
+            chat_store.load() if st.session_state.chat_persist else {})
+    chat_db = st.session_state.chat_store
+    active_key = f"chat_active_{MY_TEAM}"
+    active_conv = chat_store.get(chat_db, MY_TEAM, st.session_state.get(active_key))
+    chat_live = ai_client.is_available()
+
+    def _save_chats() -> None:
+        if st.session_state.chat_persist:
+            chat_store.save(chat_db)
+
+    list_col, chat_col = st.columns([1, 3], gap="medium")
+
+    # ── LEFT — conversation list ──
+    with list_col:
+        if st.button("➕ New chat", key="chat_new", type="primary", width="stretch"):
+            st.session_state[active_key] = None
+            st.rerun()
+
+        convs = chat_store.list_conversations(chat_db, MY_TEAM)
+        if convs:
+            chat_filter = st.text_input(
+                "Search chats", key="chat_search", placeholder="🔎 Search chats",
+                label_visibility="collapsed")
+            if chat_filter:
+                q = chat_filter.lower()
+                convs = [c for c in convs
+                         if q in c["title"].lower()
+                         or any(q in m["content"].lower() for m in c["messages"])]
+        st.caption(f"{MY_TEAM} conversations")
+        with st.container(height=440, border=False):
+            if not convs:
+                st.caption("No conversations yet.")
+            for conv in convs:
+                is_active = active_conv is not None and conv["id"] == active_conv["id"]
+                sel_col, del_col = st.columns([4, 1], gap="small")
+                with sel_col:
+                    if st.button(conv["title"], key=f"chat_open_{conv['id']}",
+                                 type="secondary" if not is_active else "primary",
+                                 width="stretch"):
+                        st.session_state[active_key] = conv["id"]
+                        st.rerun()
+                with del_col:
+                    if st.button(":material/delete:", key=f"chat_del_{conv['id']}",
+                                 help="Delete chat", width="stretch"):
+                        chat_store.delete_conversation(chat_db, MY_TEAM, conv["id"])
+                        if is_active:
+                            st.session_state[active_key] = None
+                        _save_chats()
                         st.rerun()
 
-        if prompt := st.chat_input("e.g. Who should I trade for a pass rusher?"):
-            st.session_state.ai_gm_chat.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            with st.chat_message("assistant"):
-                with st.spinner("Consulting the AI GM..."):
-                    context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
-                    # Exclude the prompt just appended — answer_gm_question
-                    # takes it separately — and cap history length so the
-                    # prompt doesn't grow unbounded over a long session.
-                    history = st.session_state.ai_gm_chat[:-1][-12:]
-                    answer = ai_client.answer_gm_question(
-                        prompt, context_summary, history, MY_TEAM)
-                    if answer is None:
-                        answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
-                st.markdown(answer)
-            st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
+        st.toggle("💾 Save chats on this machine", key="chat_persist",
+                  on_change=_chat_persist_changed,
+                  help="Writes conversations to data/chat_history.json so they survive "
+                       "a refresh or restart. Leave off on a shared deployment — the "
+                       "file is shared by everyone using the app.")
+
+    # ── RIGHT — active conversation ──
+    with chat_col:
+        if chat_live:
+            st.markdown('<span style="background:#00e67620; color:#00e676; '
+                        'padding:3px 10px; border-radius:20px; font-size:0.78rem; '
+                        'font-weight:700; border:1px solid #00e67650;">'
+                        '🟢 Live Claude · sees roster, cap, needs &amp; game log '
+                        '(game log respects Dashboard Filters)</span>',
+                        unsafe_allow_html=True)
+        else:
+            st.info(
+                "💬 Chat requires a live Claude connection — set `ANTHROPIC_API_KEY` "
+                "(env var locally, or Streamlit Cloud Settings → Secrets) to unlock it. "
+                "Saved conversations can still be read.")
+
+        pane = st.container(height=520)
+        clicked_suggestion = None
+        with pane:
+            if active_conv is None or not active_conv["messages"]:
+                st.markdown(f"##### What do you want to know about the {MY_TEAM}?")
+                sug_cols = st.columns(2)
+                for i, sug in enumerate(_CHAT_SUGGESTIONS):
+                    with sug_cols[i % 2]:
+                        if st.button(sug, key=f"chat_sug_{i}", width="stretch",
+                                     disabled=not chat_live):
+                            clicked_suggestion = sug
+            else:
+                for msg in active_conv["messages"]:
+                    with st.chat_message(msg["role"],
+                                         avatar="🧑‍💼" if msg["role"] == "user" else "🏈"):
+                        st.markdown(msg["content"])
+
+        typed = st.chat_input(
+            f"Message the AI GM about {MY_TEAM}…", key="chat_input",
+            disabled=not chat_live)
+
+        def _ask(question: str, conv: dict) -> None:
+            """Stream an answer to `question` into the pane and store it."""
+            history = conv["messages"][:-1][-12:]
+            context = (ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
+                       + "\n\n" + ai_gm.build_game_log_summary(df))
+            with pane:
+                with st.chat_message("assistant", avatar="🏈"):
+                    answer = st.write_stream(
+                        ai_client.stream_gm_answer(question, context, history, MY_TEAM))
+            if not isinstance(answer, str):
+                answer = "".join(str(a) for a in answer)
+            chat_store.append_message(conv, "assistant",
+                                      answer or ai_client.CHAT_ERROR_MESSAGE)
+            _save_chats()
+
+        question = typed or clicked_suggestion
+        if question and chat_live:
+            if active_conv is None:
+                active_conv = chat_store.new_conversation(chat_db, MY_TEAM)
+                st.session_state[active_key] = active_conv["id"]
+            chat_store.append_message(active_conv, "user", question)
+            with pane:
+                with st.chat_message("user", avatar="🧑‍💼"):
+                    st.markdown(question)
+            _ask(question, active_conv)
+            # Rerun so the conversation list picks up the new title/order.
+            st.rerun()
+
+        if active_conv is not None and active_conv["messages"]:
+            act1, act2 = st.columns(2)
+            with act1:
+                last = active_conv["messages"][-1]
+                if chat_live and last["role"] == "assistant":
+                    if st.button("🔄 Regenerate last answer", key="chat_regen",
+                                 width="stretch"):
+                        active_conv["messages"].pop()
+                        _ask(active_conv["messages"][-1]["content"], active_conv)
+                        st.rerun()
+            with act2:
+                st.download_button(
+                    "⬇️ Export chat (.md)",
+                    chat_store.export_markdown(active_conv, MY_TEAM),
+                    file_name=f"gm_chat_{active_conv['id']}.md",
+                    mime="text/markdown", key="chat_export", width="stretch")

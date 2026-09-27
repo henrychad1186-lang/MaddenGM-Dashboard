@@ -4,7 +4,7 @@ description: Build, run, and drive the MaddenGM Dashboard Streamlit app. Use whe
 ---
 
 This is a Streamlit app (`app.py` at repo root) — a single-page dashboard
-with an eleven-tab strip. Drive it by starting the Streamlit server, then
+with a twelve-tab strip. Drive it by starting the Streamlit server, then
 running the headless-Chromium driver at
 `.claude/skills/run-maddengm-dashboard/driver.py` against it. No `chromium-cli`
 in this container — the driver is a small Playwright script instead.
@@ -14,7 +14,7 @@ literally (see Gotchas):
 
 ```
 🏠 Home   📊 Schemes   💪 Wear       🏈 Trades    🏛️ Dynasty   📋 Roster
-🏆 Awards 🎯 Coach DNA 📈 Progression 🗂️ Raw Data 🤖 AI GM
+🏆 Awards 🎯 Coach DNA 📈 Progression 🗂️ Raw Data 🤖 AI GM  💬 Chat
 ```
 
 Each tab's own header still carries its long name ("Trade Machine",
@@ -96,7 +96,7 @@ pip install pytest
 python -m pytest -q
 ```
 
-227 tests pass across 12 files in `tests/`.
+247 tests pass across 13 files in `tests/`.
 
 `tests/test_app_smoke.py` is the one that actually runs `app.py`, via
 Streamlit's `AppTest` — in-process, no browser, ~2s. CI otherwise only

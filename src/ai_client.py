@@ -131,7 +131,10 @@ def generate_scouting_narrative(player: dict, report: dict, team: str) -> "str |
         return None
 
 
-_CHAT_MAX_TOKENS = 600
+# The dedicated chat tab invites longer comparative questions ("rank my
+# three worst contracts and who replaces each") than the old inline box
+# did; 600 cut those off. Streaming makes the longer wait invisible.
+_CHAT_MAX_TOKENS = 1000
 _CHAT_SYSTEM_PROMPT = """You are the AI GM Assistant for a Madden 27 franchise \
 dashboard, answering the user's questions about their team, {team}. Base every \
 answer strictly on the data below — never invent a player, stat, contract, or \
@@ -177,3 +180,44 @@ def answer_gm_question(question: str, context_summary: str,
         return text or None
     except Exception:
         return None
+
+
+CHAT_ERROR_MESSAGE = ("Sorry — I couldn't reach Claude just now. "
+                      "Please try again in a moment.")
+
+
+def stream_gm_answer(question: str, context_summary: str,
+                     history: "list[dict]", team: str):
+    """Streaming version of `answer_gm_question`, for `st.write_stream`.
+
+    Yields text chunks as Claude produces them. Never raises: a missing
+    client or a failure before any text arrived yields
+    `CHAT_ERROR_MESSAGE`; a failure mid-answer appends a short note so a
+    half answer isn't mistaken for a complete one.
+    """
+    client = _get_client()
+    if client is None:
+        yield CHAT_ERROR_MESSAGE
+        return
+
+    messages = list(history) + [{"role": "user", "content": question}]
+    produced = False
+    try:
+        with client.messages.stream(
+            model=_MODEL,
+            max_tokens=_CHAT_MAX_TOKENS,
+            system=_CHAT_SYSTEM_PROMPT.format(team=team, context_summary=context_summary),
+            messages=messages,
+        ) as stream:
+            for chunk in stream.text_stream:
+                if chunk:
+                    produced = True
+                    yield chunk
+            if stream.get_final_message().stop_reason == "max_tokens":
+                yield "\n\n_(answer truncated — ask me to continue)_"
+    except Exception:
+        yield ("\n\n_(connection lost — answer incomplete)_"
+               if produced else CHAT_ERROR_MESSAGE)
+        return
+    if not produced:
+        yield CHAT_ERROR_MESSAGE

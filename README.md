@@ -24,6 +24,7 @@ The app will open at `http://localhost:8501`
 
 | Tab | What It Does |
 |-----|-------------|
+| 🏠 **Home** | Record, cap exposure, top needs, actionable moves, and the **close-game panel**: record in games decided by ≤ 8 vs by more, split by ≤ 3 and 4–8, per-game stat comparison, and which stats get worse in close games |
 | 📊 **Scheme Performance** | Strategy map, scheme head-to-head breakdown, season momentum curve |
 | 💪 **Wear & Tear** | Turnovers, defensive performance, rush/pass balance tracking |
 | 🏈 **Trade Machine** | AI trade finder, player radar charts, deal evaluator |
@@ -34,6 +35,7 @@ The app will open at `http://localhost:8501`
 | 📈 **Progression** | Snapshot roster OVRs over time, track player development |
 | 🗂️ **Raw Data** | Full game log table |
 | 🤖 **AI GM Assistant** | Plug in a new draft pick, UDFA, or trade target and get an instant AI scouting report + roster injection |
+| 💬 **GM Chat** | Dedicated chat with the AI GM — conversation list, search, streaming answers grounded in roster, cap and game log |
 
 ## Data Import
 
@@ -58,6 +60,16 @@ Three ways to get your franchise data into the app:
 | `Turnovers` | 1 | Optional |
 | `Takeaways` | 3 | Optional |
 | `Sacks_For` | 4 | Optional |
+| `RZ_TD_Made` | 3 | Optional |
+| `RZ_Att` | 4 | Optional — with `RZ_TD_Made`, gives Red Zone TD% |
+| `Third_Down_Att` | 13 | Optional |
+| `Third_Down_Conv` | 6 | Optional — with `Third_Down_Att`, gives 3rd Down Conv % |
+
+3rd Down Conv % and Red Zone TD% show in the KPI row and feed the GM Chat.
+Both are totals over totals across the games that recorded attempts; games
+logged without them are left out, not counted as 0-for-0. Logging a game with
+these stats through **➕ Log this week's game** adds the columns to an older
+CSV's header automatically; existing rows are not rewritten.
 
 ### Roster Data (packers_roster.csv)
 
@@ -106,6 +118,27 @@ blurb automatically — the grade/verdict/trade-value logic is unaffected
 either way. The AI GM Assistant tab shows a badge (🟢 Live Claude
 scouting / ⚪ Heuristic scouting) so it's always clear which mode is active,
 and each report card is tagged ✨ Claude or ⚙️ Heuristic accordingly.
+
+## GM Chat
+
+The **💬 Chat** tab is a dedicated chat with the AI GM, laid out like a chat app:
+
+- **Left:** conversation list for the selected team — ➕ New chat, search, open, 🗑️ delete
+- **Right:** message pane with streaming answers, suggested starter questions,
+  🔄 regenerate last answer, ⬇️ export the conversation as Markdown
+
+Every answer is grounded in a text snapshot of the same data the other tabs
+use: roster with cut/keep verdicts and trade values, position grades,
+positional needs, cap/dead-cap, and the game log (record, points, red zone
+TDs, turnovers, close-game record, record by playbook, last 5 games). The
+game-log part respects the sidebar **Dashboard Filters**. The log has no
+third-down or red-zone-attempt columns, and the model is told so rather than
+left to guess.
+
+Requires `ANTHROPIC_API_KEY`. Conversations live in the browser session by
+default. Flip **💾 Save chats on this machine** (or set `GM_CHAT_SAVE=1`) to
+write them to `data/chat_history.json` (gitignored) so they survive restarts.
+Leave it off on a shared deployment: that file is shared by every visitor.
 
 ## GitHub Actions
 
