@@ -1699,9 +1699,14 @@ with tabs[4]:
                 <div style="background: linear-gradient(135deg, rgba(30,30,60,0.9), rgba(50,50,80,0.7));
                     border: 1px solid {g['color']}40; border-radius: 14px; padding: 1rem;
                     text-align: center; margin-bottom: 0.8rem;">
-                    <div style="font-size: 2rem; font-weight: 900; color: {g['color']};">{g['grade']}</div>
-                    <div style="font-size: 1.1rem; font-weight: 700; color: white;">{g['pos']}</div>
-                    <div style="font-size: 0.8rem; color: #aaa;">{g['count']} players · {g['avg_ovr']} avg</div>
+                    <div style="font-size: 2.2rem; font-weight: 900; color: {g['color']}; line-height: 1.1;">{g['grade']}</div>
+                    <div style="font-size: 1.15rem; font-weight: 700; color: white; margin-top: 0.2rem;">{g['pos']}</div>
+                    <div style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; margin-top: 0.25rem;">
+                        Starter: {g.get('starter_ovr', g['avg_ovr'])} OVR
+                    </div>
+                    <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.1rem;">
+                        {g['count']} player{'s' if g['count'] != 1 else ''} · {g['avg_ovr']} room
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
     else:

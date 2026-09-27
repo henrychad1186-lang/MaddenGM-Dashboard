@@ -268,29 +268,60 @@ def ovr_label(ovr: int) -> str:
         return "Developing"
 
 
-def _letter_grade(avg_ovr: float) -> str:
-    """Convert an average OVR to a letter grade."""
-    if avg_ovr >= 90:
+def _letter_grade(rating: float) -> str:
+    """Convert a position group rating to a letter grade calibrated to Madden NFL OVR distribution.
+
+    Grade Tiers:
+      >= 93.0: A+ (Generational / Top 3 NFL elite anchor)
+      >= 88.0: A  (All-Pro caliber room)
+      >= 85.0: A- (Pro Bowl / High-end starter)
+      >= 82.0: B+ (Quality starter / upper-tier room)
+      >= 78.0: B  (Solid NFL starter / good contributor)
+      >= 75.0: B- (Average starter / serviceable)
+      >= 72.0: C+ (Below average starter / bridge starter)
+      >= 68.0: C  (Low starter / clear upgrade need)
+      >= 65.0: C- (Deficient starter / backup quality)
+      >= 60.0: D  (Fringe roster / practice squad caliber)
+      < 60.0:  F  (Critical roster liability)
+    """
+    if rating >= 93.0:
         return "A+"
-    elif avg_ovr >= 85:
+    elif rating >= 88.0:
         return "A"
-    elif avg_ovr >= 80:
+    elif rating >= 85.0:
+        return "A-"
+    elif rating >= 82.0:
         return "B+"
-    elif avg_ovr >= 75:
+    elif rating >= 78.0:
         return "B"
-    elif avg_ovr >= 70:
+    elif rating >= 75.0:
+        return "B-"
+    elif rating >= 72.0:
+        return "C+"
+    elif rating >= 68.0:
         return "C"
-    else:
+    elif rating >= 65.0:
+        return "C-"
+    elif rating >= 60.0:
         return "D"
+    else:
+        return "F"
 
 
 def _grade_color(grade: str) -> str:
     """Return a CSS color for a letter grade (sequential quality scale)."""
     return {
+        "F": RANK_COLORS[0],
         "D": RANK_COLORS[0],
+        "C-": RANK_COLORS[1],
         "C": RANK_COLORS[1],
-        "B": RANK_COLORS[2], "B+": RANK_COLORS[2],
-        "A": RANK_COLORS[3], "A+": RANK_COLORS[3],
+        "C+": RANK_COLORS[1],
+        "B-": RANK_COLORS[2],
+        "B": RANK_COLORS[2],
+        "B+": RANK_COLORS[2],
+        "A-": RANK_COLORS[3],
+        "A": RANK_COLORS[3],
+        "A+": RANK_COLORS[3],
     }.get(grade, "#ffffff")
 
 
@@ -299,11 +330,68 @@ _POS_ORDER = ["QB", "HB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
               "EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
 POSITION_ORDER = _POS_ORDER
 
+# Position starter counts for realistic depth-weighted room ratings
+_THREE_STARTER_POS = {"WR", "CB"}
+_TWO_STARTER_POS = {"EDGE", "DT", "MLB", "OLB"}
+
+
+def _calculate_position_rating(pos: str, ovrs: "list[int]") -> float:
+    """Calculate an accurate depth-weighted rating for a position room.
+
+    In NFL/Madden, starters play 80-100% of snaps. A pure arithmetic mean
+    unfairly penalizes teams with elite starters for keeping raw developmental
+    backups. This weights starters heavily based on modern snap-share realities:
+      - 3-starter positions (WR in 11 personnel, CB in nickel): weights top 3
+      - 2-starter positions (EDGE, DT, LB): weights top 2 starters
+      - 1-starter positions (QB, OL, S, TE, HB, ST): primary starter carries 75-80%
+    """
+    if not ovrs:
+        return 0.0
+    sorted_ovrs = sorted(ovrs, reverse=True)
+    n = len(sorted_ovrs)
+
+    if n == 1:
+        return float(sorted_ovrs[0])
+
+    if pos in _THREE_STARTER_POS:
+        if n == 2:
+            return 0.55 * sorted_ovrs[0] + 0.45 * sorted_ovrs[1]
+        elif n == 3:
+            return 0.40 * sorted_ovrs[0] + 0.35 * sorted_ovrs[1] + 0.25 * sorted_ovrs[2]
+        else:
+            depth_avg = sum(sorted_ovrs[3:]) / len(sorted_ovrs[3:])
+            return (0.35 * sorted_ovrs[0] +
+                    0.30 * sorted_ovrs[1] +
+                    0.22 * sorted_ovrs[2] +
+                    0.13 * depth_avg)
+
+    elif pos in _TWO_STARTER_POS:
+        if n == 2:
+            return 0.55 * sorted_ovrs[0] + 0.45 * sorted_ovrs[1]
+        elif n == 3:
+            return 0.48 * sorted_ovrs[0] + 0.37 * sorted_ovrs[1] + 0.15 * sorted_ovrs[2]
+        else:
+            depth_avg = sum(sorted_ovrs[3:]) / len(sorted_ovrs[3:])
+            return (0.45 * sorted_ovrs[0] +
+                    0.35 * sorted_ovrs[1] +
+                    0.12 * sorted_ovrs[2] +
+                    0.08 * depth_avg)
+
+    else:
+        # Single-starter positions (QB, C, LT, LG, RG, RT, HB, TE, SS, FS, FB, K, P)
+        if n == 2:
+            return 0.78 * sorted_ovrs[0] + 0.22 * sorted_ovrs[1]
+        else:
+            depth_avg = sum(sorted_ovrs[2:]) / len(sorted_ovrs[2:])
+            return (0.75 * sorted_ovrs[0] +
+                    0.18 * sorted_ovrs[1] +
+                    0.07 * depth_avg)
+
 
 def get_position_grades(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Return letter grades per position group for a team.
 
-    Returns list of dicts: {pos, count, avg_ovr, grade, color}.
+    Returns list of dicts: {pos, count, avg_ovr, raw_avg_ovr, starter_ovr, grade, color}.
     """
     df = _effective_all(extra_players)
     df = df[df["Team"] == team]
@@ -314,12 +402,17 @@ def get_position_grades(team: str, extra_players: "list[dict] | None" = None) ->
         pos_df = df[df["Pos"] == pos]
         if pos_df.empty:
             continue
-        avg = round(pos_df["OVR"].mean(), 1)
-        grade = _letter_grade(avg)
+        ovrs = pos_df["OVR"].astype(int).tolist()
+        weighted_ovr = round(_calculate_position_rating(pos, ovrs), 1)
+        raw_avg = round(float(pos_df["OVR"].mean()), 1)
+        starter_ovr = int(max(ovrs))
+        grade = _letter_grade(weighted_ovr)
         grades.append({
             "pos": pos,
             "count": len(pos_df),
-            "avg_ovr": avg,
+            "avg_ovr": weighted_ovr,
+            "raw_avg_ovr": raw_avg,
+            "starter_ovr": starter_ovr,
             "grade": grade,
             "color": _grade_color(grade),
         })
