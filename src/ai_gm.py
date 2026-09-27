@@ -25,6 +25,7 @@ import pandas as pd
 
 from src import roster as roster_mod
 from src import roster_analyzer as roster_analyzer_mod
+from src import close_games
 from src import roster_csv
 from src.game_log import efficiency_rates
 from src.theme import NEED_COLORS
@@ -387,9 +388,6 @@ def build_context_summary(team: str, extra_players: "list[dict] | None" = None) 
     return "\n".join(lines)
 
 
-CLOSE_GAME_MARGIN = 8  # one-score game
-
-
 def build_game_log_summary(game_df: "pd.DataFrame | None", recent: int = 5) -> str:
     """Text snapshot of the franchise's results for the chat prompt.
 
@@ -424,13 +422,7 @@ def build_game_log_summary(game_df: "pd.DataFrame | None", recent: int = 5) -> s
         if v is not None and pd.notna(v):
             lines.append(f"  {label}: {v:.1f}")
 
-    if "Score_Diff" in g.columns:
-        diff = pd.to_numeric(g["Score_Diff"], errors="coerce")
-        close = g[diff.abs() <= CLOSE_GAME_MARGIN]
-        if len(close):
-            cw = int((close["Result"] == "WIN").sum())
-            cl = int((close["Result"] == "LOSS").sum())
-            lines.append(f"  Close games (<= {CLOSE_GAME_MARGIN} pts): {cw}-{cl}")
+    lines.extend(close_games.summary_lines(close_games.analyze(g)))
 
     if "Playbook" in g.columns:
         lines.append("  Record by playbook:")

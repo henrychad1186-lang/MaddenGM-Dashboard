@@ -20,6 +20,7 @@ from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
 from src import chat_store
+from src import close_games
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
 from src import season as season_mod
@@ -756,6 +757,144 @@ def render_franchise_home() -> None:
         """, unsafe_allow_html=True)
 
 
+def _fmt_stat(label: str, value: float) -> str:
+    if "Yards" in label:
+        return f"{value:.0f}"
+    if label == "Turnover margin":
+        return f"{value:+.2f}"
+    return f"{value:.1f}"
+
+
+def render_close_games() -> None:
+    """Close-game record and what changes in one-score games.
+
+    Close-game performance is a standing metric for this franchise. The
+    comparison is against games decided by more than one score, from the
+    same filtered log as the KPI row, so the Dashboard Filters apply.
+    """
+    result = close_games.analyze(df)
+    st.markdown(f"#### ⏱️ Close Games — decided by {close_games.CLOSE_MARGIN} or fewer")
+    if result is None or not result["close"]["games"]:
+        st.caption("No one-score games in the current filter.")
+        return
+
+    c, d = result["close"], result["decided"]
+
+    def _record_card(label, rec, note):
+        pct = "—" if rec["win_pct"] is None else f"{rec['win_pct']:.0f}%"
+        return f"""
+        <div class="trade-card">
+            <div class="card-label">{label}</div>
+            <div style="font-size:1.8rem; font-weight:800; color:#f1f5f9; margin-top:4px;">{rec['record']}</div>
+            <div style="color:var(--text-muted); font-size:0.8rem; margin-top:6px;">{pct} win rate · {note}</div>
+        </div>"""
+
+    r1, r2, r3 = st.columns(3)
+    with r1:
+        st.markdown(_record_card("Close games", c, f"{c['games']} games"),
+                    unsafe_allow_html=True)
+    with r2:
+        st.markdown(_record_card(
+            f"Decided by {close_games.CLOSE_MARGIN + 1}+", d, f"{d['games']} games"),
+            unsafe_allow_html=True)
+    with r3:
+        fg, mid = result["fg"], result["one_score_4_8"]
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Close games by margin</div>
+            <div style="display:flex; justify-content:space-between; margin-top:8px;">
+                <span style="color:var(--text-dim);">≤ {close_games.FG_MARGIN} pts (field goal)</span>
+                <span style="color:#f1f5f9; font-weight:700;">{fg['record']}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-top:6px;">
+                <span style="color:var(--text-dim);">4–{close_games.CLOSE_MARGIN} pts</span>
+                <span style="color:#f1f5f9; font-weight:700;">{mid['record']}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    t_col, why_col = st.columns([3, 2], gap="large")
+    with t_col:
+        body = ""
+        for r in result["rows"]:
+            gap = r["close"] - r["decided"]
+            better = gap > 0 if r["higher_is_better"] else gap < 0
+            level = abs(gap) <= abs(r["decided"] or 1.0) * close_games.NEUTRAL_REL_GAP
+            color = ("var(--text-muted)" if level else
+                     "var(--status-good)" if better else "var(--status-bad)")
+            if level:
+                sign_gap = "≈"
+            else:
+                sign_gap = (("+" if gap > 0 else "−")
+                            + _fmt_stat(r["label"], abs(gap)).lstrip("+"))
+            body += (
+                f'<tr><td style="color:var(--text-dim); padding:4px 8px;">{r["label"]}</td>'
+                f'<td style="text-align:right; padding:4px 8px; color:#f1f5f9;">{_fmt_stat(r["label"], r["close"])}</td>'
+                f'<td style="text-align:right; padding:4px 8px; color:#f1f5f9;">{_fmt_stat(r["label"], r["decided"])}</td>'
+                f'<td style="text-align:right; padding:4px 8px; color:{color}; font-weight:700;">{sign_gap}</td></tr>')
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Per game — close vs decided</div>
+            <table style="width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:6px;">
+                <tr style="color:var(--text-muted); font-size:0.75rem;">
+                    <th style="text-align:left; padding:4px 8px;">Stat</th>
+                    <th style="text-align:right; padding:4px 8px;">Close</th>
+                    <th style="text-align:right; padding:4px 8px;">Decided</th>
+                    <th style="text-align:right; padding:4px 8px;">Gap</th>
+                </tr>
+                {body}
+            </table>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with why_col:
+        if result["drivers"]:
+            items = "".join(
+                f'<li style="margin-top:6px; color:var(--text-dim);">'
+                f'<b style="color:#f1f5f9;">{r["label"]}</b>: '
+                f'{_fmt_stat(r["label"], r["close"])} vs {_fmt_stat(r["label"], r["decided"])}'
+                f'</li>'
+                for r in result["drivers"][:4])
+            drivers_html = f'<ul style="margin:4px 0 0 1rem; padding:0;">{items}</ul>'
+        else:
+            drivers_html = ('<div style="color:var(--text-muted); margin-top:6px;">'
+                            'No stat is meaningfully worse in close games.</div>')
+        st.markdown(f"""
+        <div class="trade-card">
+            <div class="card-label">Worse in close games</div>
+            {drivers_html}
+            <div style="color:var(--text-muted); font-size:0.72rem; margin-top:10px;">
+                {c['games']} close games — small sample. Close games also skew toward
+                stronger opponents, so yards allowed is partly who you played.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    games = result["games"].tail(8).iloc[::-1]
+    rows_html = ""
+    for _, g in games.iterrows():
+        res = str(g.get("Result", ""))
+        color = ("var(--status-good)" if res == "WIN" else
+                 "var(--status-bad)" if res == "LOSS" else "var(--text-muted)")
+        wk = (f"S{int(g['Season'])} W{int(g['Week'])}"
+              if pd.notna(g.get("Season")) and pd.notna(g.get("Week"))
+              else f"G{g.get('GAME_ID', '')}")
+        pf, pa = g.get("Points_For"), g.get("Points_Against")
+        score = f"{int(pf)}-{int(pa)}" if pd.notna(pf) and pd.notna(pa) else ""
+        to = g.get("Turnovers")
+        to_txt = f"{int(to)} TO" if pd.notna(to) else ""
+        rows_html += (
+            f'<div style="display:flex; justify-content:space-between; margin-top:4px; font-size:0.85rem;">'
+            f'<span style="color:var(--text-muted); width:4.5rem;">{wk}</span>'
+            f'<span style="color:var(--text-dim); flex:1;">vs {g.get("Opponent", "?")}</span>'
+            f'<span style="color:{color}; font-weight:700; width:1.5rem;">{res[:1]}</span>'
+            f'<span style="color:#f1f5f9; width:3.5rem; text-align:right;">{score}</span>'
+            f'<span style="color:var(--text-muted); width:3.5rem; text-align:right;">{to_txt}</span>'
+            f'</div>')
+    with st.expander(f"Last {len(games)} close games", expanded=False):
+        st.markdown(rows_html, unsafe_allow_html=True)
+
+
 def render_game_log_form() -> None:
     """One-week game entry, appended to the game log CSV.
 
@@ -975,6 +1114,7 @@ with home_tab:
                       f"Record, cap exposure, needs and moves for {MY_TEAM}")
     render_game_log_form()
     render_franchise_home()
+    render_close_games()
 
 # ── TAB 1: Scheme Performance ──
 with tabs[0]:

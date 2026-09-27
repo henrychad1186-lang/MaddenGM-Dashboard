@@ -24,6 +24,7 @@ The app will open at `http://localhost:8501`
 
 | Tab | What It Does |
 |-----|-------------|
+| 🏠 **Home** | Record, cap exposure, top needs, actionable moves, and the **close-game panel**: record in games decided by ≤ 8 vs by more, split by ≤ 3 and 4–8, per-game stat comparison, and which stats get worse in close games |
 | 📊 **Scheme Performance** | Strategy map, scheme head-to-head breakdown, season momentum curve |
 | 💪 **Wear & Tear** | Turnovers, defensive performance, rush/pass balance tracking |
 | 🏈 **Trade Machine** | AI trade finder, player radar charts, deal evaluator |
