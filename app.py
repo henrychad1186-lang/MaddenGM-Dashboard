@@ -307,9 +307,14 @@ def render_tab_header(icon: str, title: str, subtitle: str = "") -> None:
         unsafe_allow_html=True)
 
 
-def _kpi_card_html(label: str, value: str, delta: str = "", delta_positive: bool = True) -> str:
+def _kpi_card_html(label: str, value: str, delta: str = "", delta_positive: bool = True,
+                   note: str = "") -> str:
     delta_html = ""
-    if delta:
+    if note:
+        # Context, not a direction — no arrow, no good/bad colour.
+        delta_html = (f'<div style="color:var(--text-muted); font-size:0.75rem; '
+                      f'margin-top:4px;">{note}</div>')
+    elif delta:
         cls = "kpi-delta-up" if delta_positive else "kpi-delta-down"
         arrow = "▲" if delta_positive else "▼"
         delta_html = f'<div class="{cls}">{arrow} {delta}</div>'
@@ -613,7 +618,7 @@ if df.empty or len(df) == 0:
 
 # --- 3. DASHBOARD VISUALS ---
 st.markdown("#### 📊 Franchise Key Performance Indicators")
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+kpi1, kpi2, kpi3, kpi4, kpi5, kpi6 = st.columns(6)
 
 avg_pts_for = df["Points_For"].mean() if "Points_For" in df.columns else 0
 avg_pts_against = (
@@ -643,6 +648,33 @@ with kpi3:
     st.markdown(_kpi_card_html("Win Rate", f"{win_rate:.1f}%"), unsafe_allow_html=True)
 with kpi4:
     st.markdown(_kpi_card_html("Games Tracked", str(len(df))), unsafe_allow_html=True)
+
+# Third-down rate and red zone TD% are this franchise's two strongest win
+# predictors. Shown over only the games that recorded attempts, and the
+# sample size is on the card, since older logs have none.
+_eff = game_log.efficiency_rates(df)
+
+
+def _games_note(n: int) -> str:
+    return f"{n} game{'' if n == 1 else 's'} tracked"
+
+
+with kpi5:
+    if _eff["third_down_pct"] is None:
+        st.markdown(_kpi_card_html("3rd Down Conv", "—", note="log 3rd down attempts"),
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(_kpi_card_html(
+            "3rd Down Conv", f"{_eff['third_down_pct']:.1f}%",
+            note=_games_note(_eff["third_down_games"])), unsafe_allow_html=True)
+with kpi6:
+    if _eff["rz_td_pct"] is None:
+        st.markdown(_kpi_card_html("Red Zone TD%", "—", note="log red zone trips"),
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(_kpi_card_html(
+            "Red Zone TD%", f"{_eff['rz_td_pct']:.1f}%",
+            note=_games_note(_eff["rz_games"])), unsafe_allow_html=True)
 
 st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
 
@@ -786,7 +818,7 @@ def render_game_log_form() -> None:
                 first_downs = st.number_input("First downs", min_value=0,
                                               max_value=60, value=0, step=1)
 
-            off5, off6, off7, _off8 = st.columns(4)
+            off5, off6, off7, off8 = st.columns(4)
             with off5:
                 turnovers = st.number_input("Turnovers lost", min_value=0,
                                             max_value=15, value=0, step=1)
@@ -796,6 +828,22 @@ def render_game_log_form() -> None:
             with off7:
                 top = st.text_input("Time of possession", value="30:00",
                                     help="MM:SS, e.g. 31:12")
+            with off8:
+                rz_att = st.number_input(
+                    "Red zone trips", min_value=0, max_value=15, value=0,
+                    step=1, help="Drives that reached the opponent's 20. "
+                                 "Needed for red zone TD%. Leave 0 if not tracked.")
+
+            eff1, eff2, _eff3, _eff4 = st.columns(4)
+            with eff1:
+                td_att = st.number_input(
+                    "3rd down attempts", min_value=0, max_value=30, value=0,
+                    step=1, help="From the post-game team stats. Leave 0 if "
+                                 "not tracked.")
+            with eff2:
+                td_conv = st.number_input(
+                    "3rd down conversions", min_value=0, max_value=30,
+                    value=0, step=1)
 
             st.markdown("**Your defense**")
             def1, def2, def3, def4 = st.columns(4)
@@ -843,6 +891,14 @@ def render_game_log_form() -> None:
             st.error(f"Time of possession '{top}' isn't MM:SS — "
                      "e.g. 31:12. Nothing was logged.")
             return
+        if td_conv > td_att:
+            st.error(f"3rd down conversions ({td_conv}) can't exceed attempts "
+                     f"({td_att}). Nothing was logged.")
+            return
+        if rz_att and rz_td > rz_att:
+            st.error(f"Red zone TDs ({rz_td}) can't exceed red zone trips "
+                     f"({rz_att}). Nothing was logged.")
+            return
         if game_log.duplicate_week(existing, season, week, MY_TEAM):
             st.error(f"Season {season}, Week {week} is already logged for "
                      f"{MY_TEAM}. Nothing was logged.")
@@ -859,6 +915,11 @@ def render_game_log_form() -> None:
             "Rush_Yards_Allowed": int(rush_allowed),
             "Sacks_For": int(sacks), "Takeaways": int(takeaways),
             "Playbook": playbook,
+            # 0 attempts means "not tracked this game", written blank so
+            # it's left out of the rates instead of counting as 0-for-0.
+            "Third_Down_Att": int(td_att) if td_att else "",
+            "Third_Down_Conv": int(td_conv) if td_att else "",
+            "RZ_Att": int(rz_att) if rz_att else "",
         }, MY_TEAM)
 
         if not ok:

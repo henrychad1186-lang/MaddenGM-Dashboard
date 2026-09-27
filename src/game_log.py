@@ -27,7 +27,14 @@ ENTRY_FIELDS = [
     "TOP", "RZ_TD_Made",
     "Pass_Yards_Allowed", "Rush_Yards_Allowed", "Sacks_For", "Takeaways",
     "Playbook",
+    "Third_Down_Att", "Third_Down_Conv", "RZ_Att",
 ]
+
+# Added after the first 28 games were logged, so older logs lack them.
+# Without attempts, third-down rate and red zone TD% — the two stats this
+# franchise's results track best — could not be computed at all:
+# RZ_TD_Made alone says how many, not out of how many.
+EFFICIENCY_FIELDS = ["Third_Down_Att", "Third_Down_Conv", "RZ_Att"]
 
 
 def derive_fields(entry: dict) -> dict:
@@ -235,6 +242,13 @@ def append_game(path: str, entry: dict, team: str) -> "tuple[bool, str]":
                        "nothing was written — overwriting it would lose "
                        "whatever is in it. Check data/game_logs.csv.")
     try:
+        if has_header:
+            new_cols = [c for c in EFFICIENCY_FIELDS
+                        if c not in existing.columns
+                        and entry.get(c) not in (None, "")]
+            if new_cols:
+                _extend_header(path, new_cols)
+                existing = read_log(path)
         added = row_to_log_schema(entry, existing, team)
         line = ",".join(
             _csv_cell(_format(added[column].iloc[0]))
@@ -258,6 +272,56 @@ def append_game(path: str, entry: dict, team: str) -> "tuple[bool, str]":
     # Read from the entry, not from `added`: a log of the user's own
     # making need not carry a GAME_ID column at all.
     return True, f"Logged game #{next_game_id(existing)}."
+
+
+def _extend_header(path: str, columns: "list[str]") -> None:
+    """Add columns to the end of the header line, leaving every row as is.
+
+    Older rows then have fewer cells than the header, which pandas (and
+    Sheets/Excel) read as blanks — "not recorded", which is the truth for
+    games logged before these stats existed. Only the header line is
+    rewritten; no existing game row is re-serialised.
+    """
+    with open(path, "r", newline="") as handle:
+        text = handle.read()
+    first_break = len(text)
+    for sep in ("\r\n", "\n"):
+        idx = text.find(sep)
+        if idx != -1:
+            first_break = min(first_break, idx)
+    header, rest = text[:first_break], text[first_break:]
+    header += "".join("," + _csv_cell(c) for c in columns)
+    with open(path, "w", newline="") as handle:
+        handle.write(header + rest)
+
+
+def _rate(df: pd.DataFrame, made: str, att: str) -> "tuple[float | None, int]":
+    """(made / att across games that recorded attempts, games counted)."""
+    if made not in df.columns or att not in df.columns:
+        return None, 0
+    m = pd.to_numeric(df[made], errors="coerce")
+    a = pd.to_numeric(df[att], errors="coerce")
+    ok = a.notna() & m.notna() & (a > 0)
+    if not ok.any():
+        return None, 0
+    return float(m[ok].sum() / a[ok].sum() * 100), int(ok.sum())
+
+
+def efficiency_rates(df: pd.DataFrame) -> dict:
+    """Third-down conversion % and red zone TD %, over games that have them.
+
+    Rates are totals over totals (conversions / attempts across games),
+    not an average of per-game percentages, which would weight a 1-for-1
+    game the same as a 9-for-16 one. Games without attempts recorded are
+    left out rather than counted as 0-for-0.
+    """
+    if df is None or df.empty:
+        return {"third_down_pct": None, "third_down_games": 0,
+                "rz_td_pct": None, "rz_games": 0}
+    td, td_n = _rate(df, "Third_Down_Conv", "Third_Down_Att")
+    rz, rz_n = _rate(df, "RZ_TD_Made", "RZ_Att")
+    return {"third_down_pct": td, "third_down_games": td_n,
+            "rz_td_pct": rz, "rz_games": rz_n}
 
 
 def _csv_cell(text: str) -> str:

@@ -362,3 +362,53 @@ class TestAgainstTheShippedLog:
     def test_the_shipped_log_carries_season_and_week(self):
         df = pd.read_csv("data/game_logs.csv")
         assert "Season" in df.columns and "Week" in df.columns
+
+
+class TestEfficiencyTracking:
+    """Third-down and red zone attempts, added after the log existed."""
+
+    OLD_HEADER = ("GAME_ID,Season,Week,Team,Opponent,Result,Points_For,"
+                  "Points_Against,RZ_TD_Made,Playbook\n")
+    OLD_ROW = "1,2026,1,GB,CHI,W,24,17,2,West Coast\n"
+
+    def _old_log(self, tmp_path):
+        path = tmp_path / "old.csv"
+        path.write_text(self.OLD_HEADER + self.OLD_ROW)
+        return str(path)
+
+    def test_header_extended_and_old_rows_untouched(self, tmp_path):
+        path = self._old_log(tmp_path)
+        entry = _entry(Third_Down_Att=12, Third_Down_Conv=5, RZ_Att=4, RZ_TD_Made=3)
+        ok, _ = game_log.append_game(path, entry, "GB")
+        assert ok
+        lines = open(path).read().splitlines()
+        assert lines[0].endswith(",Third_Down_Att,Third_Down_Conv,RZ_Att")
+        assert lines[1] == self.OLD_ROW.strip()  # byte-for-byte unchanged
+        df = pd.read_csv(path)
+        assert len(df) == 2
+        assert pd.isna(df.loc[0, "Third_Down_Att"])  # old game: not recorded
+        assert df.loc[1, "Third_Down_Att"] == 12
+        assert df.loc[1, "RZ_Att"] == 4
+
+    def test_no_header_change_when_stats_not_entered(self, tmp_path):
+        path = self._old_log(tmp_path)
+        game_log.append_game(path, _entry(), "GB")
+        assert open(path).readline() == self.OLD_HEADER
+
+    def test_rates_are_totals_over_totals_and_skip_unrecorded_games(self):
+        df = pd.DataFrame({
+            "Third_Down_Att": [1, 16, None, 0],
+            "Third_Down_Conv": [1, 9, None, 0],
+            "RZ_Att": [4, 2, None, None],
+            "RZ_TD_Made": [3, 0, 2, 1],
+        })
+        r = game_log.efficiency_rates(df)
+        assert r["third_down_pct"] == pytest.approx(10 / 17 * 100)
+        assert r["third_down_games"] == 2
+        assert r["rz_td_pct"] == pytest.approx(3 / 6 * 100)
+        assert r["rz_games"] == 2
+
+    def test_rates_absent_without_columns(self):
+        r = game_log.efficiency_rates(pd.DataFrame({"RZ_TD_Made": [2]}))
+        assert r["third_down_pct"] is None and r["rz_td_pct"] is None
+        assert game_log.efficiency_rates(pd.DataFrame())["rz_games"] == 0

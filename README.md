@@ -59,6 +59,16 @@ Three ways to get your franchise data into the app:
 | `Turnovers` | 1 | Optional |
 | `Takeaways` | 3 | Optional |
 | `Sacks_For` | 4 | Optional |
+| `RZ_TD_Made` | 3 | Optional |
+| `RZ_Att` | 4 | Optional — with `RZ_TD_Made`, gives Red Zone TD% |
+| `Third_Down_Att` | 13 | Optional |
+| `Third_Down_Conv` | 6 | Optional — with `Third_Down_Att`, gives 3rd Down Conv % |
+
+3rd Down Conv % and Red Zone TD% show in the KPI row and feed the GM Chat.
+Both are totals over totals across the games that recorded attempts; games
+logged without them are left out, not counted as 0-for-0. Logging a game with
+these stats through **➕ Log this week's game** adds the columns to an older
+CSV's header automatically; existing rows are not rewritten.
 
 ### Roster Data (packers_roster.csv)
 

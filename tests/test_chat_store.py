@@ -89,6 +89,7 @@ def test_game_log_summary_record_close_games_and_playbooks():
     assert "Close games (<= 8 pts): 1-1" in text
     assert "Spread: 1-0" in text and "West Coast: 1-1" in text
     assert "Red zone TDs/game: 2.3" in text
+    assert "Red zone TD%: not tracked" in text
     assert "vs MIN: WIN 38-10" in text
 
 
@@ -97,3 +98,20 @@ def test_game_log_summary_handles_empty_and_sparse_logs():
     assert "no games" in ai_gm.build_game_log_summary(pd.DataFrame())
     text = ai_gm.build_game_log_summary(pd.DataFrame({"Result": ["WIN", "TIE"]}))
     assert "record 1-0-1" in text
+
+
+def test_game_log_summary_reports_efficiency_rates_when_tracked():
+    df = pd.DataFrame({
+        "Result": ["WIN", "LOSS"], "Score_Diff": [7, -3],
+        "Third_Down_Att": [12, None], "Third_Down_Conv": [6, None],
+        "RZ_Att": [4, 2], "RZ_TD_Made": [3, 1],
+    })
+    text = ai_gm.build_game_log_summary(df)
+    assert "3rd down conversion: 50.0% (over 1 games" in text
+    assert "Red zone TD%: 66.7% (over 2 games" in text
+
+
+def test_game_log_summary_says_rates_are_untracked():
+    text = ai_gm.build_game_log_summary(pd.DataFrame({"Result": ["WIN"]}))
+    assert "3rd down conversion: not tracked" in text
+    assert "Red zone TD%: not tracked" in text

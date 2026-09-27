@@ -26,6 +26,7 @@ import pandas as pd
 from src import roster as roster_mod
 from src import roster_analyzer as roster_analyzer_mod
 from src import roster_csv
+from src.game_log import efficiency_rates
 from src.theme import NEED_COLORS
 from src.trade_engine import get_trade_value
 
@@ -437,9 +438,17 @@ def build_game_log_summary(game_df: "pd.DataFrame | None", recent: int = 5) -> s
             w = int((grp["Result"] == "WIN").sum())
             lines.append(f"    {pb}: {w}-{len(grp) - w} ({len(grp)} games)")
 
-    lines.append(
-        "  Not tracked in this log: third-down conversions, red zone "
-        "attempts (so no RZ TD%).")
+    eff = efficiency_rates(g)
+    if eff["third_down_pct"] is not None:
+        lines.append(f"  3rd down conversion: {eff['third_down_pct']:.1f}% "
+                     f"(over {eff['third_down_games']} games with attempts logged)")
+    else:
+        lines.append("  3rd down conversion: not tracked in this log.")
+    if eff["rz_td_pct"] is not None:
+        lines.append(f"  Red zone TD%: {eff['rz_td_pct']:.1f}% "
+                     f"(over {eff['rz_games']} games with trips logged)")
+    else:
+        lines.append("  Red zone TD%: not tracked (red zone trips not logged).")
 
     tail = g.tail(recent)
     if len(tail):

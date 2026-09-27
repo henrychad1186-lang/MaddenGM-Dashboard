@@ -1,4 +1,4 @@
-GAME_ID,Season,Week,Team,Opponent,Result,Points_For,Points_Against,Pass_Yards,Rush_Yards,Total_Yards,First_Downs,Turnovers,TOP,RZ_TD_Made,Pass_Yards_Allowed,Rush_Yards_Allowed,Total_Yards_Allowed,Sacks_For,Takeaways,Point_Differential,Playbook
+GAME_ID,Season,Week,Team,Opponent,Result,Points_For,Points_Against,Pass_Yards,Rush_Yards,Total_Yards,First_Downs,Turnovers,TOP,RZ_TD_Made,Pass_Yards_Allowed,Rush_Yards_Allowed,Total_Yards_Allowed,Sacks_For,Takeaways,Point_Differential,Playbook,Third_Down_Att,Third_Down_Conv,RZ_Att
 1,,,GB,IND,W,35,10,241,160,401,25,1,14:01,2,175,100,275,3,1,25,WestCoast Zone Run
 2,,,GB,LAR,W,24,12,259,124,383,23,0,15:01,2,175,75,250,2,1,12,WestCoast Zone Run
 3,,,GB,DET,L,20,34,201,29,230,19,2,16:01,1,230,120,350,0,1,-14,WestCoast Zone Run
