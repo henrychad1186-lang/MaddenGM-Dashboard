@@ -1,6 +1,6 @@
 ---
 name: run-maddengm-dashboard
-description: Build, run, and drive the MaddenGM Dashboard Streamlit app. Use when asked to start the dashboard, launch the app, take a screenshot of the UI, click through its tabs (Home, Schemes, Trades, Dynasty, Roster, Awards, Coach DNA, Progression, Raw Data, AI GM), or verify a change works in the running app.
+description: Build, run, and drive the MaddenGM Dashboard Streamlit app. Use when asked to start the dashboard, launch the app, take a screenshot of the UI, click through its tabs (Home, Schemes, Wear, Trades, Dynasty, Roster, Awards, Coach DNA, Progression, Raw Data, AI GM, Chat), or verify a change works in the running app.
 ---
 
 This is a Streamlit app (`app.py` at repo root) — a single-page dashboard
@@ -96,7 +96,7 @@ pip install pytest
 python -m pytest -q
 ```
 
-247 tests pass across 13 files in `tests/`.
+268 tests pass across 14 files in `tests/`.
 
 `tests/test_app_smoke.py` is the one that actually runs `app.py`, via
 Streamlit's `AppTest` — in-process, no browser, ~2s. CI otherwise only

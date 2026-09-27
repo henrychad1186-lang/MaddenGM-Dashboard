@@ -13,9 +13,10 @@ twelve tab bodies, not just the visible one.
 
 This is also the tripwire for dependency drift. `requirements.txt` has no
 upper bounds, so each Python version resolves a different stack — pandas
-2.3 on 3.9 against 3.0 on 3.11, anthropic 0.x against 1.x — and the app
-calls `use_container_width`, which Streamlit has already announced for
-removal. When the release that drops it lands, this is what says so.
+2.x against 3.x, anthropic 0.x against 1.x — and a Streamlit release that
+removes or renames a kwarg the app passes (as `use_container_width` was,
+in favour of `width=`) breaks at runtime, not at compile time. When that
+happens, this is what says so.
 
 ## What this deliberately does NOT assert
 
@@ -75,7 +76,7 @@ def test_every_tab_is_built(app):
     """Streamlit executes all tab bodies on every run, not just the open one.
 
     So this covers twelve tabs' worth of Streamlit calls — which is where
-    a removed kwarg like `use_container_width` would surface.
+    a removed or renamed kwarg would surface.
     """
     assert len(app.tabs) == EXPECTED_TABS
 

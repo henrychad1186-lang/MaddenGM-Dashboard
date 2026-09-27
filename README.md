@@ -6,7 +6,7 @@ AI-powered Madden franchise management dashboard. Track game performance, analyz
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.10 or higher (Streamlit 1.51+ needs it; CI runs 3.10 and 3.11)
 - pip (Python package manager)
 
 ### Installation & Launch
@@ -130,10 +130,10 @@ The **💬 Chat** tab is a dedicated chat with the AI GM, laid out like a chat a
 Every answer is grounded in a text snapshot of the same data the other tabs
 use: roster with cut/keep verdicts and trade values, position grades,
 positional needs, cap/dead-cap, and the game log (record, points, red zone
-TDs, turnovers, close-game record, record by playbook, last 5 games). The
-game-log part respects the sidebar **Dashboard Filters**. The log has no
-third-down or red-zone-attempt columns, and the model is told so rather than
-left to guess.
+TDs, turnovers, the close-game breakdown, record by playbook, last 5 games,
+and 3rd down / red zone TD% when those attempts are logged). The game-log part
+respects the sidebar **Dashboard Filters**. Any stat that isn't tracked is
+labelled as such, so the model says so rather than guessing.
 
 Requires `ANTHROPIC_API_KEY`. Conversations live in the browser session by
 default. Flip **💾 Save chats on this machine** (or set `GM_CHAT_SAVE=1`) to
@@ -142,7 +142,7 @@ Leave it off on a shared deployment: that file is shared by every visitor.
 
 ## GitHub Actions
 
-Automated Python linting on every push. Check the [Actions tab](https://github.com/henrychad1186-lang/MaddenGM-Dashboard/actions) for build status.
+flake8 (syntax errors and undefined names fail the build), a `py_compile` of `app.py`, and the full pytest suite, on Python 3.10 and 3.11, for every push to `main` and every pull request into it. Check the [Actions tab](https://github.com/henrychad1186-lang/MaddenGM-Dashboard/actions) for build status.
 
 ## Deploy
 

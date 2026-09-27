@@ -22,8 +22,8 @@ GAME_ID,Season,Week,Team,Opponent,Result,Points_For,Points_Against,Pass_Yards,Ru
 24,,,GB,PHI,W,38,28,253,119,372,20,0,18:16,4,205,48,364,2,2,10,Vertical Zone Run
 25,,,GB,NYG,W,29,3,264,161,425,25,0,18:00,2,118,35,160,1,1,26,Vertical Zone Run
 26,,,GB,CAR,W,24,21,264,87,357,,1,6:32,1,265,70,381,2,0,3,Vertical Zone Run
-27,,,GB,CHI,L,23,31,199,106,305,17,1,21:03,1,204,89,420,1,3,0,Vertical Zone Run
-29,,,GB,BAL,L,21,27,191,88,279,14,0,20:31,1,331,125,486,1,1,0,Vertical Zone Run
-30,,,GB,CIN,L,10,24,201,102,303,20,1,20:01,1,190,106,296,2,0,0,Vertical Zone Run
+27,,,GB,CHI,L,23,31,199,106,305,17,1,21:03,1,204,89,420,1,3,-8,Vertical Zone Run
+29,,,GB,BAL,L,21,27,191,88,279,14,0,20:31,1,331,125,486,1,1,-6,Vertical Zone Run
+30,,,GB,CIN,L,10,24,201,102,303,20,1,20:01,1,190,106,296,2,0,-14,Vertical Zone Run
 31,,,GB,MIN,W,45,35,303,145,448,23,1,0:31,3,335,102,397,0,3,10,WestCoast Zone Run
-32,,,GB,IND,L,6,31,109,91,202,11,1,20:30,2,268,67,,,,0,WestCoast Zone Run
+32,,,GB,IND,L,6,31,109,91,202,11,1,20:30,2,268,67,,,,-25,WestCoast Zone Run
