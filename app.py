@@ -19,6 +19,7 @@ from src.theme import RANK_COLORS, VERDICT_COLORS, rank_color
 from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
+from src import chat_store
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
 from src import season as season_mod
@@ -236,10 +237,18 @@ st.markdown("""
     background: linear-gradient(180deg, #0d0d22 0%, #1a1a3e 100%);
     border-right: 1px solid rgba(99, 102, 241, 0.2);
 }
-[data-testid="stTabs"] [data-baseweb="tab-list"] {
+/* Streamlit <1.6x renders tabs with baseweb; newer versions with
+   react-aria (role="tablist" / data-testid="stTab"). Match both. */
+[data-testid="stTabs"] [data-baseweb="tab-list"],
+[data-testid="stTabs"] [role="tablist"] {
     gap: 8px;
+    /* Twelve tabs don't fit one row at 1366px; wrapping to a second row
+       keeps every tab visible instead of hiding the tail behind a scroll
+       chevron. */
+    flex-wrap: wrap;
 }
-[data-testid="stTabs"] [data-baseweb="tab"] {
+[data-testid="stTabs"] [data-baseweb="tab"],
+[data-testid="stTabs"] [data-testid="stTab"] {
     background: rgba(20, 20, 50, 0.6);
     border-radius: 10px 10px 0 0;
     border: 1px solid rgba(99, 102, 241, 0.15);
@@ -895,6 +904,7 @@ _all_tabs = st.tabs([
     "📈 Progression",
     "🗂️ Raw Data",
     "🤖 AI GM",
+    "💬 Chat",
 ])
 home_tab, tabs = _all_tabs[0], _all_tabs[1:]
 
@@ -2274,69 +2284,193 @@ with tabs[9]:
                                         "Regeneration failed — keeping the previous version.")
                             st.rerun()
 
-    # ── Ask the AI GM — free-form chat grounded in real roster data ──
     st.markdown("---")
-    st.markdown("#### 💬 Ask the AI GM")
-    st.caption(
-        "Ask anything about your roster, cap situation, trade targets, or "
-        "needs — every answer is grounded in your actual data below, not "
-        "a generic guess.")
+    st.caption("💬 Free-form questions about this roster now live in the "
+               "**Chat** tab, with saved conversations.")
 
-    if "ai_gm_chat" not in st.session_state:
-        st.session_state.ai_gm_chat = []
-    # Stale chat referencing a different team's data would be misleading —
-    # reset on team switch rather than let old answers linger.
-    if st.session_state.get("ai_gm_chat_team") != MY_TEAM:
-        st.session_state.ai_gm_chat = []
-        st.session_state.ai_gm_chat_team = MY_TEAM
 
-    if not ai_client.is_available():
-        st.info(
-            "💬 Chat requires a live Claude connection — set `ANTHROPIC_API_KEY` "
-            "(env var locally, or Streamlit Cloud Settings → Secrets) to unlock it. "
-            "The scouting reports above still work either way.")
-    else:
-        for msg in st.session_state.ai_gm_chat:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+# ── TAB 11: GM Chat — dedicated chat with a conversation sidebar ──
+# Replaces the chat box that used to sit at the bottom of the AI GM tab,
+# where it was below a long form and the reply rendered off-screen.
+# Laid out like a chat app: conversation list on the left, a fixed-height
+# message pane with the input under it on the right.
+_CHAT_SUGGESTIONS = [
+    "What are my three biggest roster needs right now?",
+    "Which contracts should I cut or trade to free cap?",
+    "How are we doing in close games, and what's driving it?",
+    "Which playbook has worked best for us?",
+    "Who are my best trade chips that aren't core starters?",
+    "Grade my offensive line and name the weakest link.",
+]
 
-        if st.session_state.ai_gm_chat:
-            clear_col, regen_col = st.columns(2)
-            with clear_col:
-                if st.button("🗑️ Clear chat", key="ai_gm_chat_clear", width="stretch"):
-                    st.session_state.ai_gm_chat = []
-                    st.rerun()
-            with regen_col:
-                last_msg = st.session_state.ai_gm_chat[-1]
-                if last_msg["role"] == "assistant":
-                    if st.button("🔄 Regenerate last answer", key="ai_gm_chat_regen",
-                                width="stretch"):
-                        st.session_state.ai_gm_chat.pop()  # drop the stale answer
-                        last_question = st.session_state.ai_gm_chat[-1]["content"]
-                        history = st.session_state.ai_gm_chat[:-1][-12:]
-                        context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
-                        with st.spinner("Asking again..."):
-                            answer = ai_client.answer_gm_question(
-                                last_question, context_summary, history, MY_TEAM)
-                            if answer is None:
-                                answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
-                        st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
+
+def _chat_default_persist() -> bool:
+    """Saving is opt-in: on a shared deployment (Streamlit Cloud) the file
+    is shared by every visitor, so defaulting it on would leak one
+    person's chats to the next. Set GM_CHAT_SAVE=1 to default it on."""
+    val = os.environ.get("GM_CHAT_SAVE")
+    if val is None:
+        try:
+            val = st.secrets.get("GM_CHAT_SAVE")
+        except Exception:
+            val = None
+    return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _chat_persist_changed() -> None:
+    # Turning saving on pulls in whatever was saved before, without
+    # clobbering conversations already started this session.
+    if st.session_state.get("chat_persist"):
+        disk = chat_store.load()
+        store = st.session_state.chat_store
+        for team, convs in disk.items():
+            have = {c["id"] for c in store.get(team, [])}
+            store.setdefault(team, []).extend(c for c in convs if c.get("id") not in have)
+        chat_store.save(store)
+
+
+with tabs[10]:
+    render_tab_header("💬", "GM Chat",
+                      f"Ask the AI GM anything about {MY_TEAM} — answers are grounded "
+                      f"in your roster, cap sheet and game log")
+
+    if "chat_persist" not in st.session_state:
+        st.session_state.chat_persist = _chat_default_persist()
+    if "chat_store" not in st.session_state:
+        st.session_state.chat_store = (
+            chat_store.load() if st.session_state.chat_persist else {})
+    chat_db = st.session_state.chat_store
+    active_key = f"chat_active_{MY_TEAM}"
+    active_conv = chat_store.get(chat_db, MY_TEAM, st.session_state.get(active_key))
+    chat_live = ai_client.is_available()
+
+    def _save_chats() -> None:
+        if st.session_state.chat_persist:
+            chat_store.save(chat_db)
+
+    list_col, chat_col = st.columns([1, 3], gap="medium")
+
+    # ── LEFT — conversation list ──
+    with list_col:
+        if st.button("➕ New chat", key="chat_new", type="primary", width="stretch"):
+            st.session_state[active_key] = None
+            st.rerun()
+
+        convs = chat_store.list_conversations(chat_db, MY_TEAM)
+        if convs:
+            chat_filter = st.text_input(
+                "Search chats", key="chat_search", placeholder="🔎 Search chats",
+                label_visibility="collapsed")
+            if chat_filter:
+                q = chat_filter.lower()
+                convs = [c for c in convs
+                         if q in c["title"].lower()
+                         or any(q in m["content"].lower() for m in c["messages"])]
+        st.caption(f"{MY_TEAM} conversations")
+        with st.container(height=440, border=False):
+            if not convs:
+                st.caption("No conversations yet.")
+            for conv in convs:
+                is_active = active_conv is not None and conv["id"] == active_conv["id"]
+                sel_col, del_col = st.columns([4, 1], gap="small")
+                with sel_col:
+                    if st.button(conv["title"], key=f"chat_open_{conv['id']}",
+                                 type="secondary" if not is_active else "primary",
+                                 width="stretch"):
+                        st.session_state[active_key] = conv["id"]
+                        st.rerun()
+                with del_col:
+                    if st.button(":material/delete:", key=f"chat_del_{conv['id']}",
+                                 help="Delete chat", width="stretch"):
+                        chat_store.delete_conversation(chat_db, MY_TEAM, conv["id"])
+                        if is_active:
+                            st.session_state[active_key] = None
+                        _save_chats()
                         st.rerun()
 
-        if prompt := st.chat_input("e.g. Who should I trade for a pass rusher?"):
-            st.session_state.ai_gm_chat.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            with st.chat_message("assistant"):
-                with st.spinner("Consulting the AI GM..."):
-                    context_summary = ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
-                    # Exclude the prompt just appended — answer_gm_question
-                    # takes it separately — and cap history length so the
-                    # prompt doesn't grow unbounded over a long session.
-                    history = st.session_state.ai_gm_chat[:-1][-12:]
-                    answer = ai_client.answer_gm_question(
-                        prompt, context_summary, history, MY_TEAM)
-                    if answer is None:
-                        answer = "Sorry — I couldn't reach Claude just now. Please try again in a moment."
-                st.markdown(answer)
-            st.session_state.ai_gm_chat.append({"role": "assistant", "content": answer})
+        st.toggle("💾 Save chats on this machine", key="chat_persist",
+                  on_change=_chat_persist_changed,
+                  help="Writes conversations to data/chat_history.json so they survive "
+                       "a refresh or restart. Leave off on a shared deployment — the "
+                       "file is shared by everyone using the app.")
+
+    # ── RIGHT — active conversation ──
+    with chat_col:
+        if chat_live:
+            st.markdown('<span style="background:#00e67620; color:#00e676; '
+                        'padding:3px 10px; border-radius:20px; font-size:0.78rem; '
+                        'font-weight:700; border:1px solid #00e67650;">'
+                        '🟢 Live Claude · sees roster, cap, needs &amp; game log '
+                        '(game log respects Dashboard Filters)</span>',
+                        unsafe_allow_html=True)
+        else:
+            st.info(
+                "💬 Chat requires a live Claude connection — set `ANTHROPIC_API_KEY` "
+                "(env var locally, or Streamlit Cloud Settings → Secrets) to unlock it. "
+                "Saved conversations can still be read.")
+
+        pane = st.container(height=520)
+        clicked_suggestion = None
+        with pane:
+            if active_conv is None or not active_conv["messages"]:
+                st.markdown(f"##### What do you want to know about the {MY_TEAM}?")
+                sug_cols = st.columns(2)
+                for i, sug in enumerate(_CHAT_SUGGESTIONS):
+                    with sug_cols[i % 2]:
+                        if st.button(sug, key=f"chat_sug_{i}", width="stretch",
+                                     disabled=not chat_live):
+                            clicked_suggestion = sug
+            else:
+                for msg in active_conv["messages"]:
+                    with st.chat_message(msg["role"],
+                                         avatar="🧑‍💼" if msg["role"] == "user" else "🏈"):
+                        st.markdown(msg["content"])
+
+        typed = st.chat_input(
+            f"Message the AI GM about {MY_TEAM}…", key="chat_input",
+            disabled=not chat_live)
+
+        def _ask(question: str, conv: dict) -> None:
+            """Stream an answer to `question` into the pane and store it."""
+            history = conv["messages"][:-1][-12:]
+            context = (ai_gm.build_context_summary(MY_TEAM, AI_GM_EXTRA)
+                       + "\n\n" + ai_gm.build_game_log_summary(df))
+            with pane:
+                with st.chat_message("assistant", avatar="🏈"):
+                    answer = st.write_stream(
+                        ai_client.stream_gm_answer(question, context, history, MY_TEAM))
+            if not isinstance(answer, str):
+                answer = "".join(str(a) for a in answer)
+            chat_store.append_message(conv, "assistant",
+                                      answer or ai_client.CHAT_ERROR_MESSAGE)
+            _save_chats()
+
+        question = typed or clicked_suggestion
+        if question and chat_live:
+            if active_conv is None:
+                active_conv = chat_store.new_conversation(chat_db, MY_TEAM)
+                st.session_state[active_key] = active_conv["id"]
+            chat_store.append_message(active_conv, "user", question)
+            with pane:
+                with st.chat_message("user", avatar="🧑‍💼"):
+                    st.markdown(question)
+            _ask(question, active_conv)
+            # Rerun so the conversation list picks up the new title/order.
+            st.rerun()
+
+        if active_conv is not None and active_conv["messages"]:
+            act1, act2 = st.columns(2)
+            with act1:
+                last = active_conv["messages"][-1]
+                if chat_live and last["role"] == "assistant":
+                    if st.button("🔄 Regenerate last answer", key="chat_regen",
+                                 width="stretch"):
+                        active_conv["messages"].pop()
+                        _ask(active_conv["messages"][-1]["content"], active_conv)
+                        st.rerun()
+            with act2:
+                st.download_button(
+                    "⬇️ Export chat (.md)",
+                    chat_store.export_markdown(active_conv, MY_TEAM),
+                    file_name=f"gm_chat_{active_conv['id']}.md",
+                    mime="text/markdown", key="chat_export", width="stretch")

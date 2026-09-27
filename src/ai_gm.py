@@ -384,3 +384,71 @@ def build_context_summary(team: str, extra_players: "list[dict] | None" = None) 
             "are included in the roster above.")
 
     return "\n".join(lines)
+
+
+CLOSE_GAME_MARGIN = 8  # one-score game
+
+
+def build_game_log_summary(game_df: "pd.DataFrame | None", recent: int = 5) -> str:
+    """Text snapshot of the franchise's results for the chat prompt.
+
+    `build_context_summary` covers the roster only, so questions like "why
+    are we losing close games?" had nothing to ground on. This serializes
+    the same prepared game log the Schemes and Home tabs chart. Every
+    column beyond Result/Score_Diff is optional — the log comes from
+    user uploads — so a missing one just drops its line.
+    """
+    if game_df is None or game_df.empty or "Result" not in game_df.columns:
+        return "GAME LOG: no games on file."
+
+    g = game_df
+    wins = int((g["Result"] == "WIN").sum())
+    losses = int((g["Result"] == "LOSS").sum())
+    ties = int((g["Result"] == "TIE").sum())
+    record = f"{wins}-{losses}" + (f"-{ties}" if ties else "")
+    lines = [f"GAME LOG ({len(g)} games): record {record}"]
+
+    def avg(col):
+        return pd.to_numeric(g[col], errors="coerce").mean() if col in g.columns else None
+
+    pf, pa = avg("Points_For"), avg("Points_Against")
+    if pf is not None and pa is not None:
+        lines.append(f"  Points/game: {pf:.1f} for, {pa:.1f} against")
+    for col, label in (("RZ_TD_Made", "Red zone TDs/game"),
+                       ("Turnovers", "Turnovers/game"),
+                       ("Takeaways", "Takeaways/game"),
+                       ("Sacks_For", "Sacks/game"),
+                       ("TOP_Mins", "Time of possession (min)")):
+        v = avg(col)
+        if v is not None and pd.notna(v):
+            lines.append(f"  {label}: {v:.1f}")
+
+    if "Score_Diff" in g.columns:
+        diff = pd.to_numeric(g["Score_Diff"], errors="coerce")
+        close = g[diff.abs() <= CLOSE_GAME_MARGIN]
+        if len(close):
+            cw = int((close["Result"] == "WIN").sum())
+            cl = int((close["Result"] == "LOSS").sum())
+            lines.append(f"  Close games (<= {CLOSE_GAME_MARGIN} pts): {cw}-{cl}")
+
+    if "Playbook" in g.columns:
+        lines.append("  Record by playbook:")
+        for pb, grp in g.groupby("Playbook"):
+            w = int((grp["Result"] == "WIN").sum())
+            lines.append(f"    {pb}: {w}-{len(grp) - w} ({len(grp)} games)")
+
+    lines.append(
+        "  Not tracked in this log: third-down conversions, red zone "
+        "attempts (so no RZ TD%).")
+
+    tail = g.tail(recent)
+    if len(tail):
+        lines.append(f"  Last {len(tail)} games:")
+        for _, r in tail.iterrows():
+            opp = r.get("Opponent", "?")
+            score = ""
+            if pd.notna(r.get("Points_For")) and pd.notna(r.get("Points_Against")):
+                score = f" {int(r['Points_For'])}-{int(r['Points_Against'])}"
+            lines.append(f"    vs {opp}: {r['Result']}{score}")
+
+    return "\n".join(lines)

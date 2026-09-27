@@ -34,6 +34,7 @@ The app will open at `http://localhost:8501`
 | 📈 **Progression** | Snapshot roster OVRs over time, track player development |
 | 🗂️ **Raw Data** | Full game log table |
 | 🤖 **AI GM Assistant** | Plug in a new draft pick, UDFA, or trade target and get an instant AI scouting report + roster injection |
+| 💬 **GM Chat** | Dedicated chat with the AI GM — conversation list, search, streaming answers grounded in roster, cap and game log |
 
 ## Data Import
 
@@ -106,6 +107,27 @@ blurb automatically — the grade/verdict/trade-value logic is unaffected
 either way. The AI GM Assistant tab shows a badge (🟢 Live Claude
 scouting / ⚪ Heuristic scouting) so it's always clear which mode is active,
 and each report card is tagged ✨ Claude or ⚙️ Heuristic accordingly.
+
+## GM Chat
+
+The **💬 Chat** tab is a dedicated chat with the AI GM, laid out like a chat app:
+
+- **Left:** conversation list for the selected team — ➕ New chat, search, open, 🗑️ delete
+- **Right:** message pane with streaming answers, suggested starter questions,
+  🔄 regenerate last answer, ⬇️ export the conversation as Markdown
+
+Every answer is grounded in a text snapshot of the same data the other tabs
+use: roster with cut/keep verdicts and trade values, position grades,
+positional needs, cap/dead-cap, and the game log (record, points, red zone
+TDs, turnovers, close-game record, record by playbook, last 5 games). The
+game-log part respects the sidebar **Dashboard Filters**. The log has no
+third-down or red-zone-attempt columns, and the model is told so rather than
+left to guess.
+
+Requires `ANTHROPIC_API_KEY`. Conversations live in the browser session by
+default. Flip **💾 Save chats on this machine** (or set `GM_CHAT_SAVE=1`) to
+write them to `data/chat_history.json` (gitignored) so they survive restarts.
+Leave it off on a shared deployment: that file is shared by every visitor.
 
 ## GitHub Actions
 
