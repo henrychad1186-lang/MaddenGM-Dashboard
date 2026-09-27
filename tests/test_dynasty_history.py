@@ -35,7 +35,7 @@ def test_no_module_uses_pep604_outside_a_string():
             if path in seen:
                 continue
             seen.add(path)
-            tree = ast.parse(path.read_text())
+            tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 annotations = []
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
