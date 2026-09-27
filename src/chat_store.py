@@ -37,7 +37,48 @@ def load(path: str = DEFAULT_PATH) -> dict:
         return {}
     if not isinstance(data, dict):
         return {}
-    return {team: convs for team, convs in data.items() if isinstance(convs, list)}
+    store = {}
+    for team, convs in data.items():
+        if not isinstance(convs, list):
+            continue
+        clean = [c for c in (_clean_conversation(c) for c in convs) if c]
+        if clean:
+            store[str(team)] = clean
+    return store
+
+
+def _clean_conversation(conv) -> "dict | None":
+    """A well-formed copy of one saved conversation, or None to drop it.
+
+    The file is hand-editable and outlives app versions, so valid JSON is
+    not enough: a bare `1` in a team's list used to reach `conv.get()`
+    and take the tab down. Bad messages are dropped individually rather
+    than discarding the whole thread.
+    """
+    if not isinstance(conv, dict) or not isinstance(conv.get("id"), str):
+        return None
+    msgs = conv.get("messages")
+    if not isinstance(msgs, list):
+        return None
+    messages = [
+        {"role": m["role"], "content": m["content"]}
+        for m in msgs
+        if isinstance(m, dict) and m.get("role") in ("user", "assistant")
+        and isinstance(m.get("content"), str)
+    ]
+
+    def _num(key):
+        v = conv.get(key)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0
+
+    title = conv.get("title")
+    return {
+        "id": conv["id"],
+        "title": title if isinstance(title, str) and title else "New chat",
+        "created": _num("created"),
+        "updated": _num("updated"),
+        "messages": messages,
+    }
 
 
 def save(store: dict, path: str = DEFAULT_PATH) -> bool:

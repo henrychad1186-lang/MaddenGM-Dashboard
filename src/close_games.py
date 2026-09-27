@@ -51,7 +51,7 @@ def _margin(df: pd.DataFrame) -> "pd.Series | None":
     return None
 
 
-def _record(df: pd.DataFrame) -> dict:
+def record(df: pd.DataFrame) -> dict:
     wins = int((df["Result"] == "WIN").sum())
     losses = int((df["Result"] == "LOSS").sum())
     ties = int((df["Result"] == "TIE").sum())
@@ -72,7 +72,7 @@ def _avg(df: pd.DataFrame, col: str) -> "float | None":
 
 
 def _group_stats(df: pd.DataFrame) -> dict:
-    out = _record(df)
+    out = record(df)
     out["stats"] = {col: _avg(df, col) for col, _, _ in _STAT_ROWS}
     to, ta = out["stats"]["Turnovers"], out["stats"]["Takeaways"]
     out["turnover_margin"] = (ta - to) if to is not None and ta is not None else None
@@ -140,7 +140,7 @@ def analyze(df: "pd.DataFrame | None", margin: int = CLOSE_MARGIN) -> "dict | No
     return {
         "margin": margin,
         "close": c, "decided": d,
-        "fg": _record(fg), "one_score_4_8": _record(mid),
+        "fg": record(fg), "one_score_4_8": record(mid),
         "rows": rows, "drivers": drivers,
         "games": games,
     }

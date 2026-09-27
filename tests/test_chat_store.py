@@ -115,3 +115,33 @@ def test_game_log_summary_says_rates_are_untracked():
     text = ai_gm.build_game_log_summary(pd.DataFrame({"Result": ["WIN"]}))
     assert "3rd down conversion: not tracked" in text
     assert "Red zone TD%: not tracked" in text
+
+
+def test_load_drops_malformed_conversations_and_messages(tmp_path):
+    bad = tmp_path / "chats.json"
+    bad.write_text(json.dumps({
+        "GB": [1, "x", {"no": "id"}, {"id": "a", "messages": "nope"},
+               {"id": "ok", "title": 5, "updated": "soon",
+                "messages": [{"role": "user", "content": "hi"},
+                             {"role": "system", "content": "x"},
+                             {"role": "assistant", "content": 3}, 7]}],
+        "CHI": [2],
+        "NE": "not a list",
+    }))
+    store = chat_store.load(str(bad))
+    assert list(store) == ["GB"]
+    (conv,) = store["GB"]
+    assert conv["id"] == "ok" and conv["title"] == "New chat"
+    assert conv["updated"] == 0.0
+    assert conv["messages"] == [{"role": "user", "content": "hi"}]
+    # And the loaded store is usable end to end.
+    assert chat_store.get(store, "GB", "ok") is conv
+    assert chat_store.list_conversations(store, "GB") == [conv]
+
+
+def test_playbook_record_keeps_ties():
+    df = pd.DataFrame({"Result": ["TIE", "WIN", "LOSS"],
+                       "Playbook": ["West Coast", "Spread", "Spread"]})
+    text = ai_gm.build_game_log_summary(df)
+    assert "West Coast: 0-0-1 (1 games)" in text
+    assert "Spread: 1-1 (2 games)" in text

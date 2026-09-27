@@ -427,8 +427,10 @@ def build_game_log_summary(game_df: "pd.DataFrame | None", recent: int = 5) -> s
     if "Playbook" in g.columns:
         lines.append("  Record by playbook:")
         for pb, grp in g.groupby("Playbook"):
-            w = int((grp["Result"] == "WIN").sum())
-            lines.append(f"    {pb}: {w}-{len(grp) - w} ({len(grp)} games)")
+            # Same W-L-T formatting as the close-game lines; a tie was
+            # previously counted as a loss here.
+            lines.append(f"    {pb}: {close_games.record(grp)['record']} "
+                         f"({len(grp)} games)")
 
     eff = efficiency_rates(g)
     if eff["third_down_pct"] is not None:
