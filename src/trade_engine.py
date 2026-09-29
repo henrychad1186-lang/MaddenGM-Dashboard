@@ -116,14 +116,19 @@ DEV_MULTIPLIERS = {
     "Normal": 1.00,
 }
 
+# On the same scale as get_trade_value(), which tops out around 1,400 for
+# a 99 OVR Superstar X. These were 10x larger (a 1st = 8,500, six
+# Justin Jeffersons), so every real value gap was "bridged" by a 6th- or
+# 7th-round pick: Jacobs for Jefferson, a 627-point gap, came back as
+# "add a 6th-Round Pick". A 1st is now roughly a young 85+ OVR starter.
 DRAFT_PICK_VALUES = [
-    ("1st-Round Pick",  8500),
-    ("2nd-Round Pick",  5500),
-    ("3rd-Round Pick",  3500),
-    ("4th-Round Pick",  2000),
-    ("5th-Round Pick",  1200),
-    ("6th-Round Pick",   700),
-    ("7th-Round Pick",   350),
+    ("1st-Round Pick",  850),
+    ("2nd-Round Pick",  550),
+    ("3rd-Round Pick",  350),
+    ("4th-Round Pick",  200),
+    ("5th-Round Pick",  120),
+    ("6th-Round Pick",   70),
+    ("7th-Round Pick",   35),
 ]
 
 
