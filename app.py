@@ -1,5 +1,6 @@
 import io
 import os
+import urllib.request
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -340,8 +341,42 @@ _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _load_game_log_from_url(url: str) -> "tuple[pd.DataFrame, list[str]]":
-    return _prepare_game_log(pd.read_csv(url))
+def _load_game_log_from_url(url: str) -> "tuple[pd.DataFrame, list[str], bytes]":
+    """(prepared log, warnings, the sheet's CSV bytes exactly as served).
+
+    The raw bytes are returned so the offline copy can be the sheet itself
+    rather than the prepared frame, which carries derived columns and
+    pandas' float coercion (25 -> 25.0) into the file the entry form
+    appends to.
+    """
+    # urlopen (like the pd.read_csv(url) it replaces) also honours file://,
+    # which on a shared deployment would let a visitor read server files
+    # into the Raw Data tab.
+    if not url.lower().startswith(("https://", "http://")):
+        raise ValueError("Sheet URL must start with https://")
+    with urllib.request.urlopen(url, timeout=20) as resp:
+        payload = resp.read()
+    return (*_prepare_game_log(pd.read_csv(io.BytesIO(payload))), payload)
+
+
+def _cache_sheet_locally(payload: bytes) -> None:
+    """Write the synced sheet to the local log only when it changed.
+
+    This used to `df.to_csv` on every rerun — every widget click — which
+    rewrote the file, bumped its mtime and so invalidated the disk loader's
+    cache each time, even with the sheet unchanged.
+    """
+    try:
+        with open(_GAME_LOGS_CSV, "rb") as fh:
+            if fh.read() == payload:
+                return
+    except OSError:
+        pass
+    try:
+        with open(_GAME_LOGS_CSV, "wb") as fh:
+            fh.write(payload)
+    except OSError:
+        pass  # read-only filesystem (e.g. Streamlit Cloud)
 
 
 @st.cache_data(show_spinner=False)
@@ -357,6 +392,18 @@ def _load_game_log_from_upload(file_bytes: bytes, filename: str) -> "tuple[pd.Da
 @st.cache_data(show_spinner=False)
 def _load_game_log_from_disk(path: str, modified_at: float) -> "tuple[pd.DataFrame, list[str]]":
     return _prepare_game_log(pd.read_csv(path))
+
+
+def _result_from_margin(diff: pd.Series) -> pd.Series:
+    """WIN/LOSS/TIE from a score differential (blank where it is unknown).
+
+    Replaces `"WIN" if x > 0 else "LOSS"`, which recorded every tie — and
+    every game with no score — as a loss.
+    """
+    return pd.Series(
+        np.select([diff > 0, diff < 0, diff == 0], ["WIN", "LOSS", "TIE"],
+                  default=None),
+        index=diff.index, dtype="object")
 
 
 def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
@@ -378,9 +425,7 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
                 df["Score_Final"].str.split("-", expand=True).astype(int)
             )
             df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
-            df["Result"] = df["Score_Diff"].apply(
-                lambda x: "WIN" if x > 0 else "LOSS"
-            )
+            df["Result"] = _result_from_margin(df["Score_Diff"])
         except Exception:
             warnings.append("Could not parse Score_Final. Ensure format is '35-10'.")
     elif "Points_For" in df.columns and "Points_Against" in df.columns:
@@ -393,14 +438,16 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
             # 20-20 game is a real outcome, and the entry form can now
             # produce one. Every consumer tests for "WIN"/"LOSS"
             # explicitly, so a tie counts as neither.
-            df["Result"] = df["Result"].map(
-                {"W": "WIN", "L": "LOSS", "T": "TIE",
-                 "WIN": "WIN", "LOSS": "LOSS", "TIE": "TIE"}
-            ).fillna("LOSS")
+            # An unrecognised or blank Result falls back to the score
+            # rather than to "LOSS", which recorded a blank cell on a
+            # 31-10 win as a defeat.
+            df["Result"] = (
+                df["Result"].astype(str).str.strip().str.upper().map(
+                    {"W": "WIN", "L": "LOSS", "T": "TIE",
+                     "WIN": "WIN", "LOSS": "LOSS", "TIE": "TIE"})
+                .fillna(_result_from_margin(df["Score_Diff"])))
         else:
-            df["Result"] = df["Score_Diff"].apply(
-                lambda x: "WIN" if x > 0 else "LOSS"
-            )
+            df["Result"] = _result_from_margin(df["Score_Diff"])
 
     if "TOP" in df.columns:
         def parse_top(x):
@@ -447,12 +494,9 @@ with st.sidebar.expander("📡 Data Import", expanded=True):
 
     if sheet_url and sheet_url.strip():
         try:
-            df, prep_warnings = _load_game_log_from_url(sheet_url.strip())
+            df, prep_warnings, _sheet_bytes = _load_game_log_from_url(sheet_url.strip())
             # Cache locally so it works offline next time
-            try:
-                df.to_csv(_GAME_LOGS_CSV, index=False)
-            except OSError:
-                pass  # read-only filesystem (e.g. Streamlit Cloud)
+            _cache_sheet_locally(_sheet_bytes)
             st.success(f"📡 Live Sheet Synced — {len(df)} games!")
         except Exception as e:
             st.warning(f"Sheet sync failed: {e}")
@@ -463,8 +507,10 @@ with st.sidebar.expander("📡 Data Import", expanded=True):
             df, prep_warnings = _load_game_log_from_upload(uploaded_file.getvalue(), uploaded_file.name)
             st.success("Custom Data Loaded!")
         except Exception as e:
-            st.error(f"Error loading file: {e}")
-            st.stop()
+            # Fall through to the local log. st.stop() here halted the
+            # whole script, blanking every tab — including the ones that
+            # only need the roster — over one unreadable upload.
+            st.error(f"Error loading file: {e}. Falling back to local data.")
 
     if df is None and os.path.exists(_GAME_LOGS_CSV):
         df, prep_warnings = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
@@ -558,6 +604,27 @@ if AI_GM_EXTRA:
         [TRADE_ROSTERS, _ai_gm_trade_df], ignore_index=True)
 else:
     EFFECTIVE_TRADE_ROSTERS = TRADE_ROSTERS
+
+# --- ROSTER ANALYTICS, MEMOIZED ACROSS RERUNS ---
+# Streamlit reruns the whole script on every widget interaction, and these
+# were each recomputed per rerun — several of them two to four times, from
+# different tabs — though the roster only changes when a player is added.
+# Cached on (team, session additions): the base roster is loaded once per
+# process at import, so those two arguments determine the result.
+# st.cache_data hands back a copy, so callers may mutate what they get.
+_ROSTER_VIEWS = {
+    "cap": get_cap_summary,
+    "needs": ai_gm.positional_needs,
+    "verdicts": analyze_roster,
+    "grades": get_position_grades,
+    "summary": get_team_summary,
+}
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def roster_view(view: str, team: str, extra_players: "list[dict]"):
+    return _ROSTER_VIEWS[view](team, extra_players)
+
 
 # --- 2. WIN RATE IN COMPARABLE GAMES ---
 # This used to read `1 / (1 + exp(-(0.1*top - 0.05*fatigue)))` — a closed
@@ -688,11 +755,11 @@ def render_franchise_home() -> None:
     """Record, cap exposure, top needs and actionable moves for MY_TEAM."""
     wins = int((df["Result"] == "WIN").sum()) if "Result" in df.columns else 0
     losses = int((df["Result"] == "LOSS").sum()) if "Result" in df.columns else 0
-    cap = get_cap_summary(MY_TEAM, AI_GM_EXTRA)
-    needs = [n for n in ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA)
+    cap = roster_view("cap", MY_TEAM, AI_GM_EXTRA)
+    needs = [n for n in roster_view("needs", MY_TEAM, AI_GM_EXTRA)
              if n["level"] != "Set"]
     needs.sort(key=lambda n: (n["level"] != "Critical", n["avg_ovr"]))
-    verdicts = [v for v in analyze_roster(MY_TEAM, AI_GM_EXTRA)
+    verdicts = [v for v in roster_view("verdicts", MY_TEAM, AI_GM_EXTRA)
                 if v["Verdict"] != "KEEP"]
 
     col1, col2, col3 = st.columns(3)
@@ -1168,13 +1235,13 @@ with tabs[0]:
         scheme_stats = {}
         for scheme in schemes:
             s_df = df[df["Playbook"] == scheme]
-            wins = (s_df["Result"] == "WIN").sum(
-            ) if "Result" in s_df.columns else 0
-            losses = len(s_df) - wins
+            # close_games.record, so a tie is a tie (it was counted as a
+            # loss here) and Win% matches the Home tab and GM Chat.
+            rec = close_games.record(s_df)
             scheme_stats[scheme] = {
                 "Games": len(s_df),
-                "Record": f"{wins}-{losses}",
-                "Win%": round(wins / max(len(s_df), 1) * 100, 1),
+                "Record": rec["record"],
+                "Win%": round(rec["win_pct"] or 0.0, 1),
                 "PPG": round(s_df["Points_For"].mean(), 1) if "Points_For" in s_df.columns else 0,
                 "Opp PPG": round(s_df["Points_Against"].mean(), 1) if "Points_Against" in s_df.columns else 0,
                 "Pass YPG": round(s_df["Pass_Yards"].mean(), 1) if "Pass_Yards" in s_df.columns else 0,
@@ -1292,7 +1359,8 @@ with tabs[0]:
                 line=dict(width=1, color="white"),
             ),
             hovertemplate="Game %{x}: %{y:.1f}% win rate<br>vs %{customdata}",
-            customdata=momentum_df["Opponent"],
+            customdata=momentum_df.get(
+                "Opponent", pd.Series(["?"] * len(momentum_df))),
         ))
         # Rolling margin line (secondary y-axis)
         if "Rolling_Margin" in momentum_df.columns:
@@ -1348,6 +1416,10 @@ with tabs[1]:
         )
         st.plotly_chart(fig_fatigue, width="stretch")
 
+    # Uploaded logs need not carry an Opponent column; naming it in
+    # hover_data unconditionally raised and took the tab down.
+    _opponent_hover = ["Opponent"] if "Opponent" in df.columns else None
+
     # Turnovers impact
     if "Turnovers" in df.columns and "Points_For" in df.columns:
         wt1, wt2 = st.columns(2)
@@ -1357,7 +1429,7 @@ with tabs[1]:
                 color="Result" if "Result" in df.columns else None,
                 color_discrete_map={"WIN": "#00e676", "LOSS": "#ff5252"},
                 size="Total_Yards" if "Total_Yards" in df.columns else None,
-                hover_data=["Opponent"],
+                hover_data=_opponent_hover,
                 title="Turnovers vs Points Scored",
                 template="plotly_dark",
             )
@@ -1368,7 +1440,7 @@ with tabs[1]:
                     df, x="Total_Yards_Allowed", y="Takeaways",
                     color="Result" if "Result" in df.columns else None,
                     color_discrete_map={"WIN": "#00e676", "LOSS": "#ff5252"},
-                    hover_data=["Opponent"],
+                    hover_data=_opponent_hover,
                     title="Yards Allowed vs Takeaways",
                     template="plotly_dark",
                 )
@@ -1376,10 +1448,16 @@ with tabs[1]:
 
     # Rush vs Pass balance
     if "Pass_Yards" in df.columns and "Rush_Yards" in df.columns:
-        balance_df = df[["Opponent", "Pass_Yards",
-                         "Rush_Yards", "Result"]].dropna()
+        # One bar per game. Keyed on Opponent alone, plotly summed repeat
+        # opponents into one bar — 28 games drew as 19, with two games'
+        # yardage stacked under a single "CHI".
+        balance_df = df.dropna(subset=["Pass_Yards", "Rush_Yards"]).copy()
+        balance_df["Game"] = [
+            f"G{i} {opp}" for i, opp in enumerate(
+                balance_df.get("Opponent", pd.Series(
+                    [""] * len(balance_df), index=balance_df.index)), start=1)]
         fig_bal = px.bar(
-            balance_df, x="Opponent", y=["Pass_Yards", "Rush_Yards"],
+            balance_df, x="Game", y=["Pass_Yards", "Rush_Yards"],
             color_discrete_map={
                 "Pass_Yards": "#6366f1", "Rush_Yards": "#10b981"},
             title="Pass vs Rush Yardage by Game",
@@ -1387,11 +1465,14 @@ with tabs[1]:
         )
         fig_bal.update_layout(legend_title="Yard Type",
                               yaxis_title="Yards",
-                              xaxis_title="Opponent")
+                              xaxis_title="Game")
         st.plotly_chart(fig_bal, width="stretch")
 
 # ── TAB 3: Trade Machine ──
-with tabs[2]:
+# A function so the empty-roster guard can `return`. It used st.stop(),
+# which halts the whole script, not the tab: every tab after this one
+# (Dynasty through Chat) rendered blank whenever the roster was unreadable.
+def render_trade_machine() -> None:
     render_tab_header("🏈", "War Room 2.0",
                       "Find trade partners · Evaluate deals · AI counter-offers")
 
@@ -1412,7 +1493,7 @@ with tabs[2]:
                 f"No {MY_TEAM} players available to shop. This usually means "
                 f"the roster CSV could not be read — see the Roster tab for "
                 f"the reason.")
-            st.stop()
+            return
 
         selected_player_name = st.selectbox(
             "Select a player to shop:", player_names, key="trade_player_select"
@@ -1653,6 +1734,10 @@ with tabs[2]:
                     </div>
                     """, unsafe_allow_html=True)
 
+
+with tabs[2]:
+    render_trade_machine()
+
 # ── TAB 4: Dynasty ──
 with tabs[3]:
     render_tab_header("🏛️", "Dynasty — Franchise Legacy",
@@ -1820,7 +1905,7 @@ with tabs[4]:
         selected_group = st.selectbox(
             "Position Group:", POSITION_GROUPS, key="roster_group_select")
 
-        summary = get_team_summary(selected_team, AI_GM_EXTRA)
+        summary = roster_view("summary", selected_team, AI_GM_EXTRA)
         st.markdown("---")
         st.metric("Players", summary["count"])
         st.metric("Avg OVR", summary["avg_ovr"])
@@ -1914,7 +1999,7 @@ with tabs[4]:
     # ── Position Group Grades ──
     st.markdown("---")
     st.markdown("#### 📊 Position Group Grades")
-    grades = get_position_grades(selected_team, AI_GM_EXTRA)
+    grades = roster_view("grades", selected_team, AI_GM_EXTRA)
     if grades:
         grade_cols = st.columns(4)
         for i, g in enumerate(grades):
@@ -1939,7 +2024,7 @@ with tabs[4]:
     # ── Cap Overview Widget ──
     st.markdown("---")
     st.markdown("#### 💰 Cap Overview")
-    cap = get_cap_summary(selected_team, AI_GM_EXTRA)
+    cap = roster_view("cap", selected_team, AI_GM_EXTRA)
     if cap["players"]:
         cap_c1, cap_c2, cap_c3 = st.columns(3)
         with cap_c1:
@@ -1970,7 +2055,7 @@ with tabs[4]:
     # ── Cut or Keep Analyzer ──
     st.markdown("---")
     st.markdown("#### ✂️ Cut or Keep Analyzer")
-    verdicts = analyze_roster(selected_team, AI_GM_EXTRA)
+    verdicts = roster_view("verdicts", selected_team, AI_GM_EXTRA)
     if verdicts:
         # Summary counts
         n_keep = sum(1 for v in verdicts if v["Verdict"] == "KEEP")
@@ -2062,7 +2147,8 @@ with tabs[5]:
     render_tab_header("🏆", "Season Awards",
                       "Auto-generated awards based on your current roster data")
 
-    roster_full = get_roster(MY_TEAM, "All")
+    # Includes session-added players, like every other roster view.
+    roster_full = get_roster(MY_TEAM, "All", AI_GM_EXTRA)
     if not roster_full.empty:
         # Compute trade values for all players
         award_data = []
@@ -2416,7 +2502,7 @@ with tabs[9]:
         st.markdown("---")
         st.markdown("#### 🧭 Positional Needs Board")
         st.caption("AI-computed depth + quality grade per position — use this to decide who to scout next.")
-        needs = ai_gm.positional_needs(MY_TEAM, AI_GM_EXTRA)
+        needs = roster_view("needs", MY_TEAM, AI_GM_EXTRA)
         need_cols = st.columns(4)
         for i, n in enumerate(needs):
             with need_cols[i % 4]:

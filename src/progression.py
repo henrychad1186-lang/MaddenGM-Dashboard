@@ -41,9 +41,9 @@ def snapshot_roster(team: str, season: int, week: int):
         })
 
     new_df = pd.DataFrame(new_rows)
+    existing = _read_log()
     # Append to existing log
-    if os.path.exists(_PROG_CSV):
-        existing = pd.read_csv(_PROG_CSV)
+    if not existing.empty:
         # Remove duplicate entries for same season/week/team
         existing = existing[
             ~((existing["Season"] == season) &
@@ -61,12 +61,29 @@ def snapshot_roster(team: str, season: int, week: int):
     return len(new_rows)
 
 
+_LOG_COLUMNS = ["Name", "Pos", "Team", "Season", "Week", "OVR"]
+
+
+def _read_log() -> pd.DataFrame:
+    """The log, or an empty frame if it is missing, unreadable or not a log.
+
+    An unguarded read_csv here raised on an empty or hand-mangled file,
+    which took down the Progression tab and the game-log form's snapshot.
+    """
+    if not os.path.exists(_PROG_CSV):
+        return pd.DataFrame(columns=_LOG_COLUMNS)
+    try:
+        log = pd.read_csv(_PROG_CSV)
+    except Exception:
+        return pd.DataFrame(columns=_LOG_COLUMNS)
+    if not set(_LOG_COLUMNS) <= set(log.columns):
+        return pd.DataFrame(columns=_LOG_COLUMNS)
+    return log
+
+
 def get_progression(team: str) -> pd.DataFrame:
     """Return the progression log for a team with computed deltas."""
-    _ensure_log()
-    if not os.path.exists(_PROG_CSV):
-        return pd.DataFrame()
-    log = pd.read_csv(_PROG_CSV)
+    log = _read_log()
     log = log[log["Team"] == team]
     return log.sort_values(["Name", "Season", "Week"])
 
@@ -82,11 +99,14 @@ def get_movers(team: str) -> dict:
     last = log.drop_duplicates("Name", keep="last").set_index("Name")["OVR"]
     common = first.index.intersection(last.index)
 
+    # One lookup table instead of a boolean scan of the log per player.
+    first_pos = log.drop_duplicates("Name", keep="first").set_index("Name")["Pos"]
+
     deltas = []
     for name in common:
         d = int(last[name]) - int(first[name])
         if d != 0:
-            pos = log[log["Name"] == name].iloc[0]["Pos"]
+            pos = first_pos[name]
             deltas.append({
                 "Name": name, "Pos": pos,
                 "Start_OVR": int(first[name]),

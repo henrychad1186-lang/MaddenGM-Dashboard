@@ -103,6 +103,12 @@ def archive_season(season_data: dict,
     """
     history = existing_history if existing_history is not None else load_history()
 
+    # The file is hand-editable, so an entry may lack "season" (or not be
+    # a dict at all). Indexing s["season"] raised KeyError and took the
+    # archive form down; such entries are dropped rather than crashing.
+    history = [s for s in history
+               if isinstance(s, dict) and isinstance(s.get("season"), int)]
+
     # Prevent duplicate season numbers
     if any(s["season"] == season_data.get("season") for s in history):
         # Update in place
@@ -114,10 +120,13 @@ def archive_season(season_data: dict,
     # Sort by season
     history.sort(key=lambda s: s["season"])
 
-    # Persist
+    # Persist atomically: a crash mid-write used to leave truncated JSON,
+    # which load_history reads as "no history" — every archived season gone.
+    tmp = f"{_HISTORY_FILE}.tmp"
     try:
-        with open(_HISTORY_FILE, "w") as f:
+        with open(tmp, "w") as f:
             json.dump(history, f, indent=2)
+        os.replace(tmp, _HISTORY_FILE)
     except Exception:
         pass  # If write fails, data is still in memory
 

@@ -58,14 +58,7 @@ def _normalize_pos(pos: str) -> str:
     nan, and `nan.upper()` raised AttributeError during module import,
     which killed the app before any error could be displayed.
     """
-    pos_upper = str(pos).upper().strip()
-    if pos_upper in ("REDG", "LEDG"):
-        return "EDGE"
-    if pos_upper in ("LOLB", "ROLB", "SAM", "WILL"):
-        return "OLB"
-    if pos_upper == "MIKE":
-        return "MLB"
-    return pos_upper
+    return roster_csv.normalize_position(pos)
 
 
 # ──────────────────────────────────────────────
@@ -397,19 +390,21 @@ def get_position_grades(team: str, extra_players: "list[dict] | None" = None) ->
     df = df[df["Team"] == team]
     if df.empty:
         return []
+    # One pass over the roster instead of a boolean mask per position.
+    ovrs_by_pos = df.groupby("Pos")["OVR"].apply(
+        lambda s: s.astype(int).tolist()).to_dict()
     grades = []
     for pos in _POS_ORDER:
-        pos_df = df[df["Pos"] == pos]
-        if pos_df.empty:
+        ovrs = ovrs_by_pos.get(pos)
+        if not ovrs:
             continue
-        ovrs = pos_df["OVR"].astype(int).tolist()
         weighted_ovr = round(_calculate_position_rating(pos, ovrs), 1)
-        raw_avg = round(float(pos_df["OVR"].mean()), 1)
+        raw_avg = round(sum(ovrs) / len(ovrs), 1)
         starter_ovr = int(max(ovrs))
         grade = _letter_grade(weighted_ovr)
         grades.append({
             "pos": pos,
-            "count": len(pos_df),
+            "count": len(ovrs),
             "avg_ovr": weighted_ovr,
             "raw_avg_ovr": raw_avg,
             "starter_ovr": starter_ovr,
@@ -433,7 +428,7 @@ def get_cap_summary(team: str, extra_players: "list[dict] | None" = None) -> dic
     players = []
     total_sav = 0.0
     total_pen = 0.0
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         sav = _parse_sal(row.get("Savings"))
         pen = _parse_sal(row.get("Penalty"))
         total_sav += sav

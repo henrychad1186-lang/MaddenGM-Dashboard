@@ -41,6 +41,26 @@ DEV_ALIASES = {
 # Columns the rest of the app requires to exist after loading.
 REQUIRED_COLUMNS = ["Name", "Pos", "Age", "OVR"]
 
+# Madden's side-specific labels -> the positions the app grades and
+# weights. Lives here rather than in roster.py so trade_engine can share
+# it without a circular import: trade_engine used to map only REDG/LEDG,
+# so GB's SAM/WILL linebackers matched no CPU "OLB" and every partner
+# reported "No SAM on roster — fills critical need".
+POSITION_ALIASES = {
+    "REDG": "EDGE", "LEDG": "EDGE",
+    "LOLB": "OLB", "ROLB": "OLB", "SAM": "OLB", "WILL": "OLB",
+    "MIKE": "MLB",
+}
+
+
+def normalize_position(pos) -> str:
+    """Upper-cased position with Madden's side labels folded in.
+
+    Takes str() defensively: a blank CSV cell arrives as float nan.
+    """
+    pos_upper = str(pos).upper().strip()
+    return POSITION_ALIASES.get(pos_upper, pos_upper)
+
 
 def normalize_roster_df(df: pd.DataFrame) -> pd.DataFrame:
     """Rename exported columns to canonical ones and normalise Dev values.
@@ -134,11 +154,12 @@ def rows_to_source_schema(players: "list[dict]", raw: pd.DataFrame) -> pd.DataFr
             if alias in existing
         }
 
+    to_canonical = {v: k for k, v in reverse_names.items()}
     rows = []
     for player in players:
         row = {}
         for column in raw.columns:
-            canonical = {v: k for k, v in reverse_names.items()}.get(column, column)
+            canonical = to_canonical.get(column, column)
             value = player.get(canonical, player.get(column, ""))
             if column == dev_column:
                 value = reverse_dev.get(value, value)

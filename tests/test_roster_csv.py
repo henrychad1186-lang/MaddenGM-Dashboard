@@ -197,3 +197,11 @@ class TestRealRosterFile:
         df = roster_csv.load_roster_csv(_ROSTER_CSV)
         unknown = set(df["Dev"].dropna().unique()) - set(DEV_MULTIPLIERS)
         assert not unknown, f"unmapped dev traits fall back to 1.00: {unknown}"
+
+
+def test_normalize_position_folds_side_labels():
+    assert roster_csv.normalize_position("redg") == "EDGE"
+    assert roster_csv.normalize_position(" SAM ") == "OLB"
+    assert roster_csv.normalize_position("MIKE") == "MLB"
+    assert roster_csv.normalize_position(float("nan")) == "NAN"
+    assert roster_csv.normalize_position("QB") == "QB"
