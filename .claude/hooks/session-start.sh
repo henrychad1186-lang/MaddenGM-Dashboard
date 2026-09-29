@@ -35,3 +35,13 @@ python3 -m pip install pytest flake8
 # to already be provided by the environment (PLAYWRIGHT_BROWSERS_PATH);
 # this only installs the Python package itself.
 python3 -m pip install playwright
+
+# Start the dashboard so it's already serving when the session opens. One
+# server only, on the port the run-maddengm-dashboard skill expects; skipped
+# if something is already listening there. setsid detaches it from this
+# async hook so it outlives the script.
+if ! curl -sf http://localhost:8501 >/dev/null 2>&1; then
+  setsid nohup python3 -m streamlit run app.py \
+    --server.headless true --server.port 8501 \
+    > /tmp/streamlit.log 2>&1 < /dev/null &
+fi
