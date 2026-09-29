@@ -22,6 +22,7 @@ from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
 from src import chat_store
+from src import chat_tools
 from src import close_games
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
@@ -2590,6 +2591,8 @@ _CHAT_SUGGESTIONS = [
     "Which playbook has worked best for us?",
     "Who are my best trade chips that aren't core starters?",
     "Grade my offensive line and name the weakest link.",
+    "What would it take to get the best EDGE on the market?",
+    "Who would give the most for A. Robinson?",
 ]
 
 
@@ -2773,7 +2776,7 @@ with tabs[10]:
             st.markdown('<span style="background:#00e67620; color:#00e676; '
                         'padding:3px 10px; border-radius:20px; font-size:0.78rem; '
                         'font-weight:700; border:1px solid #00e67650;">'
-                        '🟢 Live Claude · sees roster, cap, needs &amp; game log '
+                        '🟢 Live Claude · sees roster, cap, needs &amp; game log · runs the trade engine '
                         '(game log respects Dashboard Filters)</span>',
                         unsafe_allow_html=True)
         else:
@@ -2811,7 +2814,11 @@ with tabs[10]:
             with pane:
                 with st.chat_message("assistant", avatar="🏈"):
                     answer = st.write_stream(
-                        ai_client.stream_gm_answer(question, context, history, MY_TEAM))
+                        ai_client.stream_gm_answer(
+                            question, context, history, MY_TEAM,
+                            tool_ctx=chat_tools.ToolContext(
+                                team=MY_TEAM, rosters=TRADE_ROSTERS,
+                                extra_players=list(AI_GM_EXTRA))))
             if not isinstance(answer, str):
                 answer = "".join(str(a) for a in answer)
             chat_store.append_message(conv, "assistant",

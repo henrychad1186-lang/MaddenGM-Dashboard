@@ -135,6 +135,19 @@ and 3rd down / red zone TD% when those attempts are logged). The game-log part
 respects the sidebar **Dashboard Filters**. Any stat that isn't tracked is
 labelled as such, so the model says so rather than guessing.
 
+For anything that needs an exact number, the chat calls the dashboard's own
+trade engine instead of estimating (`src/chat_tools.py`, all read-only):
+
+| Tool | Answers |
+|---|---|
+| `lookup_player` | Ratings, trade value, and for your players the cut/keep verdict and cap hit if moved |
+| `list_trade_targets` | Players at a position on other teams, by trade value, with OVR/age filters |
+| `evaluate_trade` | Verdict for a proposed swap, both sides' value, and a draft-pick sweetener |
+| `find_trade_partners` | Which teams want one of your players, and why |
+
+Each lookup shows in the answer as a 🔎 line. Only DET, CHI and MIN are modeled
+as trade partners.
+
 Requires `ANTHROPIC_API_KEY`.
 
 ### Where chats are saved

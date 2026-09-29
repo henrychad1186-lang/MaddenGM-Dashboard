@@ -19,6 +19,7 @@ invalid key) — the app must never break because of this being
 unavailable.
 """
 
+import json
 import os
 import re
 
@@ -203,36 +204,103 @@ CHAT_ERROR_MESSAGE = ("Sorry — I couldn't reach Claude just now. "
                       "Please try again in a moment.")
 
 
+# A question can take several lookups ("compare these three EDGEs, then
+# price the best one"), but a runaway loop spends tokens and makes the
+# user wait. Past this, the model is told to answer with what it has.
+_MAX_TOOL_ROUNDS = 6
+
+_TOOLS_PROMPT = """
+
+You also have tools that call this dashboard's own trade engine: player \
+lookup (ratings, trade value, verdict, cap hit), trade targets by position, \
+trade evaluation with a draft-pick counter-offer, and trade-partner search. \
+Use them whenever an answer depends on a trade value, a trade verdict, a \
+player on another team, or a cap figure for a specific player — don't \
+estimate those from the snapshot. Only DET, CHI and MIN are modeled as \
+trade partners; say so if the user asks about another team."""
+
+
 def stream_gm_answer(question: str, context_summary: str,
-                     history: "list[dict]", team: str):
+                     history: "list[dict]", team: str, tool_ctx=None):
     """Streaming version of `answer_gm_question`, for `st.write_stream`.
 
-    Yields text chunks as Claude produces them. Never raises: a missing
-    client or a failure before any text arrived yields
-    `CHAT_ERROR_MESSAGE`; a failure mid-answer appends a short note so a
-    half answer isn't mistaken for a complete one.
+    Yields text chunks as Claude produces them. With `tool_ctx` (a
+    `src.chat_tools.ToolContext`), Claude may call the trade-engine tools
+    mid-answer; each call is announced with a short italic line so the
+    user can see what was looked up, and the loop continues until Claude
+    answers or `_MAX_TOOL_ROUNDS` is reached.
+
+    Never raises: a missing client or a failure before any text arrived
+    yields `CHAT_ERROR_MESSAGE`; a failure mid-answer appends a short
+    note so a half answer isn't mistaken for a complete one.
     """
     client = _get_client()
     if client is None:
         yield CHAT_ERROR_MESSAGE
         return
 
+    from src import chat_tools  # local: keeps this module importable alone
+
+    system = _CHAT_SYSTEM_PROMPT.format(team=team, context_summary=context_summary)
+    tool_kwargs = {}
+    if tool_ctx is not None:
+        system += _TOOLS_PROMPT
+        tool_kwargs = {"tools": chat_tools.TOOL_DEFINITIONS}
+
     messages = list(history) + [{"role": "user", "content": question}]
     produced = False
+    rounds = 0
     try:
-        with client.messages.stream(
-            model=_MODEL,
-            max_tokens=_CHAT_MAX_TOKENS,
-            **_effort_kwargs(),
-            system=_CHAT_SYSTEM_PROMPT.format(team=team, context_summary=context_summary),
-            messages=messages,
-        ) as stream:
-            for chunk in stream.text_stream:
-                if chunk:
-                    produced = True
-                    yield chunk
-            if stream.get_final_message().stop_reason == "max_tokens":
+        while True:
+            with client.messages.stream(
+                model=_MODEL,
+                max_tokens=_CHAT_MAX_TOKENS,
+                **_effort_kwargs(),
+                system=system,
+                messages=messages,
+                **tool_kwargs,
+            ) as stream:
+                for chunk in stream.text_stream:
+                    if chunk:
+                        produced = True
+                        yield chunk
+                final = stream.get_final_message()
+
+            if final.stop_reason == "refusal":
+                yield ("\n\n_(Claude declined to answer this one — try "
+                       "rephrasing the question.)_")
+                return
+            tool_uses = [b for b in final.content if getattr(b, "type", "") == "tool_use"]
+            if final.stop_reason == "max_tokens":
+                # A tool_use cut off here parses as a plausible partial
+                # input, so never run it.
                 yield "\n\n_(answer truncated — ask me to continue)_"
+                return
+            if final.stop_reason != "tool_use" or not tool_uses:
+                break
+
+            rounds += 1
+            # Append the whole assistant turn unchanged (thinking blocks
+            # included) so the history stays append-only.
+            messages.append({"role": "assistant", "content": final.content})
+            results = []
+            for block in tool_uses:
+                label = chat_tools.describe(block.name, block.input)
+                yield f"\n\n_🔎 {label[:1].upper() + label[1:]}…_\n\n"
+                produced = True
+                if rounds > _MAX_TOOL_ROUNDS:
+                    out = {"error": "Tool budget for this answer is used up. "
+                                    "Answer with what you have."}
+                else:
+                    out = chat_tools.run(tool_ctx, block.name, block.input)
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(out),
+                    **({"is_error": True} if "error" in out else {}),
+                })
+            # All results for this turn go back in one user message.
+            messages.append({"role": "user", "content": results})
     except Exception:
         yield ("\n\n_(connection lost — answer incomplete)_"
                if produced else CHAT_ERROR_MESSAGE)
