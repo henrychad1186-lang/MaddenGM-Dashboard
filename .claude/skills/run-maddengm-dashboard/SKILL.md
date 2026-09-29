@@ -1,10 +1,10 @@
 ---
 name: run-maddengm-dashboard
-description: Build, run, and drive the MaddenGM Dashboard Streamlit app. Use when asked to start the dashboard, launch the app, take a screenshot of the UI, click through its tabs (Home, Schemes, Wear, Trades, Dynasty, Roster, Awards, Coach DNA, Progression, Raw Data, AI GM, Chat), or verify a change works in the running app.
+description: Build, run, and drive the MaddenGM Dashboard Streamlit app. Use when asked to start the dashboard, launch the app, take a screenshot of the UI, click through its tabs (Home, Schemes, Wear, Trades, Dynasty, Roster, Awards, Coach DNA, Progression, Raw Data, AI GM, Chat, Draft), or verify a change works in the running app.
 ---
 
 This is a Streamlit app (`app.py` at repo root) — a single-page dashboard
-with a twelve-tab strip. Drive it by starting the Streamlit server, then
+with a thirteen-tab strip. Drive it by starting the Streamlit server, then
 running the headless-Chromium driver at
 `.claude/skills/run-maddengm-dashboard/driver.py` against it. No `chromium-cli`
 in this container — the driver is a small Playwright script instead.

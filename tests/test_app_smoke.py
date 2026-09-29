@@ -9,7 +9,7 @@ of view.
 
 `AppTest` executes the whole script in-process, no browser. Streamlit
 reruns the entire script on every interaction, so one `run()` covers all
-twelve tab bodies, not just the visible one.
+tab bodies, not just the visible one.
 
 This is also the tripwire for dependency drift. `requirements.txt` has no
 upper bounds, so each Python version resolves a different stack — pandas
@@ -51,7 +51,7 @@ _APP = str(pathlib.Path(__file__).resolve().parent.parent / "app.py")
 # ~2s, so this is slack for a cold CI runner, not an expected duration.
 _TIMEOUT = 120
 
-EXPECTED_TABS = 12
+EXPECTED_TABS = 13
 
 
 @pytest.fixture(scope="module")
@@ -75,7 +75,7 @@ def test_the_app_starts_without_raising(app):
 def test_every_tab_is_built(app):
     """Streamlit executes all tab bodies on every run, not just the open one.
 
-    So this covers twelve tabs' worth of Streamlit calls — which is where
+    So this covers every tab's worth of Streamlit calls — which is where
     a removed or renamed kwarg would surface.
     """
     assert len(app.tabs) == EXPECTED_TABS
