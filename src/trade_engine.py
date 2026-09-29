@@ -92,8 +92,8 @@ def _load_trade_rosters() -> pd.DataFrame:
 
         if "Scheme" not in gb_df.columns:
             gb_df["Scheme"] = "WestCoast"
-        # Normalize REDG/LEDG → EDGE
-        gb_df["Pos"] = gb_df["Pos"].replace({"REDG": "EDGE", "LEDG": "EDGE"})
+        # Same normalisation roster.py applies (REDG → EDGE, SAM → OLB...)
+        gb_df["Pos"] = gb_df["Pos"].apply(roster_csv.normalize_position)
         return pd.concat([gb_df, cpu_df], ignore_index=True)
     except Exception:                              # noqa: BLE001 — see docstring
         return cpu_df

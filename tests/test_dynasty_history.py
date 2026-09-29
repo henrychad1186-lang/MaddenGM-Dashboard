@@ -160,3 +160,15 @@ class TestGetEras:
             _season(season=2029, era="A"),
         ])
         assert eras == ["A", "B"]
+
+
+class TestArchiveSeasonRobustness:
+    def test_hand_edited_entry_without_season_does_not_crash(self, history_file):
+        broken = [{"era": "no season key"}, "not a dict", _season(season=2026)]
+        out = dynasty.archive_season(_season(season=2027), broken)
+        assert [s["season"] for s in out] == [2026, 2027]
+        assert [s["season"] for s in dynasty.load_history()] == [2026, 2027]
+
+    def test_write_leaves_no_temp_file(self, history_file):
+        dynasty.archive_season(_season(), [])
+        assert not (history_file.parent / (history_file.name + ".tmp")).exists()

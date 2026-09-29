@@ -169,3 +169,14 @@ class TestEvaluateTrade:
         if 0.80 <= ratio < 0.92:
             assert "LEAN ACCEPT" in result["verdict"]
             assert result["counter_offer"] != ""
+
+
+class TestPositionNormalisation:
+    """The trade roster must use the same positions as the Roster tab."""
+
+    def test_gb_linebackers_are_graded_as_olb(self):
+        from src import trade_engine
+        gb = trade_engine.DEMO_ROSTERS[trade_engine.DEMO_ROSTERS["Team"] == "GB"]
+        if gb.empty:
+            return  # roster CSV unavailable; nothing to normalise
+        assert not set(gb["Pos"]) & {"SAM", "WILL", "MIKE", "REDG", "LEDG"}

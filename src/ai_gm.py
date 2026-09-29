@@ -202,11 +202,12 @@ def persist_roster(team: str, extra_players: "list[dict] | None" = None) -> bool
 def positional_needs(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Grade every starting position by depth + average OVR for a team."""
     df = roster_mod.get_roster(team, "All", extra_players)
+    # One groupby instead of a boolean mask over the roster per position.
+    by_pos = df.groupby("Pos")["OVR"].agg(["count", "mean"])
     needs = []
     for pos in SCOUTABLE_POSITIONS:
-        pos_df = df[df["Pos"] == pos]
-        count = len(pos_df)
-        avg_ovr = round(pos_df["OVR"].mean(), 1) if count else 0.0
+        count = int(by_pos.at[pos, "count"]) if pos in by_pos.index else 0
+        avg_ovr = round(float(by_pos.at[pos, "mean"]), 1) if count else 0.0
 
         # Semantic scale: a need level is a call to action, so it shares
         # hues with the KEEP/TRADE/CUT verdicts and nothing else.

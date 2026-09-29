@@ -22,13 +22,27 @@ unavailable.
 import os
 import re
 
-_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
-# The prompt asks for 3-4 sentences covering grade, strengths, weaknesses,
-# and a verdict endorsement — that routinely runs past 300 tokens and gets
-# cut off mid-sentence (confirmed against a live call: stop_reason was
-# "max_tokens" at 300). 500 gives real headroom; _trim_to_last_sentence()
-# below is the backstop for whatever still gets cut.
-_MAX_TOKENS = 500
+# Current-generation Sonnet (same per-token price as claude-sonnet-5).
+_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+# Sonnet 5.x runs adaptive thinking by default, and thinking tokens count
+# against max_tokens. The old 500 budget (sized for ~4 sentences of visible
+# text) could be spent before any text arrived. Low effort keeps thinking
+# short for these grounded, short-form answers; the larger ceilings are
+# headroom, not a target. _trim_to_last_sentence() stays the backstop.
+_OUTPUT_CONFIG = {"effort": "low"}
+
+
+def _effort_kwargs() -> dict:
+    """`output_config` for models that accept `effort`, else nothing.
+
+    Haiku 4.5 and pre-4.6 Sonnets 400 on `effort`, and every failure here
+    is swallowed into "Claude unavailable" — so an ANTHROPIC_MODEL
+    override to one of them would silently disable the AI features.
+    """
+    if "haiku" in _MODEL or re.search(r"-(3|4-[015])(-|$)", _MODEL):
+        return {}
+    return {"output_config": _OUTPUT_CONFIG}
+_MAX_TOKENS = 2000
 
 _client = None
 _client_checked = False
@@ -117,6 +131,7 @@ def generate_scouting_narrative(player: dict, report: dict, team: str) -> "str |
         resp = client.messages.create(
             model=_MODEL,
             max_tokens=_MAX_TOKENS,
+            **_effort_kwargs(),
             messages=[{"role": "user", "content": _build_prompt(player, report, team)}],
         )
         text = "".join(
@@ -133,8 +148,9 @@ def generate_scouting_narrative(player: dict, report: dict, team: str) -> "str |
 
 # The dedicated chat tab invites longer comparative questions ("rank my
 # three worst contracts and who replaces each") than the old inline box
-# did; 600 cut those off. Streaming makes the longer wait invisible.
-_CHAT_MAX_TOKENS = 1000
+# did; 600 cut those off. Streaming makes the longer wait invisible, and
+# the budget is shared with thinking (see _MAX_TOKENS).
+_CHAT_MAX_TOKENS = 4000
 _CHAT_SYSTEM_PROMPT = """You are the AI GM Assistant for a Madden 27 franchise \
 dashboard, answering the user's questions about their team, {team}. Base every \
 answer strictly on the data below — never invent a player, stat, contract, or \
@@ -167,6 +183,7 @@ def answer_gm_question(question: str, context_summary: str,
         resp = client.messages.create(
             model=_MODEL,
             max_tokens=_CHAT_MAX_TOKENS,
+            **_effort_kwargs(),
             system=_CHAT_SYSTEM_PROMPT.format(team=team, context_summary=context_summary),
             messages=messages,
         )
@@ -206,6 +223,7 @@ def stream_gm_answer(question: str, context_summary: str,
         with client.messages.stream(
             model=_MODEL,
             max_tokens=_CHAT_MAX_TOKENS,
+            **_effort_kwargs(),
             system=_CHAT_SYSTEM_PROMPT.format(team=team, context_summary=context_summary),
             messages=messages,
         ) as stream:
