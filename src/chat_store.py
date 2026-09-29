@@ -13,6 +13,7 @@ unreadable or corrupt file just starts an empty store instead of raising,
 because losing chat history must never take the dashboard down with it.
 """
 
+import hashlib
 import json
 import os
 import time
@@ -21,6 +22,7 @@ import uuid
 DEFAULT_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "data", "chat_history.json")
+USER_DIR = os.path.join(os.path.dirname(DEFAULT_PATH), "chat_history")
 
 _TITLE_MAX = 40
 # A long-running store would otherwise grow without bound; the oldest
@@ -81,13 +83,17 @@ def _clean_conversation(conv) -> "dict | None":
     }
 
 
-def save(store: dict, path: str = DEFAULT_PATH) -> bool:
-    """Write the store to disk atomically. Returns False if it couldn't."""
-    trimmed = {
+def _trim(store: dict) -> dict:
+    return {
         team: sorted(convs, key=lambda c: c.get("updated", 0),
                      reverse=True)[:MAX_CONVERSATIONS_PER_TEAM]
         for team, convs in store.items()
     }
+
+
+def save(store: dict, path: str = DEFAULT_PATH) -> bool:
+    """Write the store to disk atomically. Returns False if it couldn't."""
+    trimmed = _trim(store)
     tmp = f"{path}.tmp"
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -152,3 +158,157 @@ def export_markdown(conv: dict, team: str) -> str:
         who = "**You:**" if m["role"] == "user" else "**AI GM:**"
         lines += [who, "", m["content"], ""]
     return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────
+# PER-USER STORAGE
+# ──────────────────────────────────────────────
+# A backend has load() -> dict | None and save(store) -> bool. load()
+# returns None when it could not tell what is stored (network error,
+# permission error): the caller must then not save, or it would replace
+# the user's real history with this session's. An empty dict means
+# "nothing saved yet".
+
+def user_key(identity: str) -> str:
+    """Stable, non-reversible storage key for a signed-in user.
+
+    Emails never appear in file or tab names; the same address in any
+    case maps to the same key.
+    """
+    return hashlib.sha256(identity.strip().lower().encode("utf-8")).hexdigest()[:16]
+
+
+class FileBackend:
+    """JSON file on the app's disk. Survives restarts locally; on
+    Streamlit Community Cloud the disk is wiped on redeploy."""
+
+    def __init__(self, path: str, label: str):
+        self.path, self.label = path, label
+
+    def load(self) -> "dict | None":
+        if os.path.exists(self.path) and not os.access(self.path, os.R_OK):
+            return None
+        return load(self.path)
+
+    def save(self, store: dict) -> bool:
+        return save(store, self.path)
+
+
+# Google Sheets caps a cell at 50,000 characters.
+_CELL_MAX = 49_000
+SHEET_HEADER = ["team", "conv_id", "title", "created", "updated", "idx", "role", "content"]
+
+
+def store_to_rows(store: dict) -> "list[list]":
+    """One row per message, newest conversations first."""
+    rows = []
+    for team, convs in _trim(store).items():
+        for conv in convs:
+            for i, m in enumerate(conv["messages"]):
+                content = m["content"]
+                if len(content) > _CELL_MAX:
+                    content = content[:_CELL_MAX] + " …[truncated]"
+                rows.append([team, conv["id"], conv["title"], conv.get("created", 0.0),
+                             conv.get("updated", 0.0), i, m["role"], content])
+    return rows
+
+
+def rows_to_store(rows: "list[list]") -> dict:
+    """Inverse of store_to_rows. Tolerates a missing header, short rows,
+    stringified numbers (Sheets returns every cell as text) and rows
+    edited by hand; anything unusable is dropped via _clean_conversation."""
+    if rows and [str(c).strip().lower() for c in rows[0][:len(SHEET_HEADER)]] == SHEET_HEADER:
+        rows = rows[1:]
+
+    def _f(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    convs = {}
+    for r in rows:
+        r = list(r) + [""] * (len(SHEET_HEADER) - len(r))
+        team, cid, title, created, updated, idx, role, content = r[:len(SHEET_HEADER)]
+        if not team or not cid:
+            continue
+        conv = convs.setdefault((str(team), str(cid)), {
+            "id": str(cid), "title": str(title), "created": _f(created),
+            "updated": _f(updated), "messages": []})
+        conv["messages"].append((_f(idx), {"role": str(role), "content": str(content)}))
+    store = {}
+    for (team, _), conv in convs.items():
+        conv["messages"] = [m for _, m in sorted(conv["messages"], key=lambda t: t[0])]
+        clean = _clean_conversation(conv)
+        if clean and clean["messages"]:
+            store.setdefault(team, []).append(clean)
+    return store
+
+
+class SheetsBackend:
+    """One worksheet per user in a Google Sheet the app owner controls.
+
+    A tab per user (named by user_key, never the email) keeps users from
+    overwriting each other: each save rewrites only that user's tab.
+    `spreadsheet` is a gspread Spreadsheet (or anything with the same
+    worksheet / add_worksheet methods).
+    """
+
+    def __init__(self, spreadsheet, key: str, label: str):
+        self.ss, self.title, self.label = spreadsheet, f"chats_{key}", label
+
+    def _worksheet(self, create: bool):
+        try:
+            return self.ss.worksheet(self.title)
+        except Exception as exc:  # noqa: BLE001 - gspread is an optional import
+            if type(exc).__name__ != "WorksheetNotFound":
+                raise
+        if not create:
+            return None
+        return self.ss.add_worksheet(title=self.title, rows=200, cols=len(SHEET_HEADER))
+
+    def load(self) -> "dict | None":
+        try:
+            ws = self._worksheet(create=False)
+            return {} if ws is None else rows_to_store(ws.get_all_values())
+        except Exception:  # noqa: BLE001 - unknown state: caller must not save
+            return None
+
+    def save(self, store: dict) -> bool:
+        try:
+            ws = self._worksheet(create=True)
+            ws.clear()
+            ws.update(values=[SHEET_HEADER] + store_to_rows(store), range_name="A1")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+
+def resolve_backend(identity: "str | None", open_spreadsheet=None,
+                    shared_file_ok: bool = False):
+    """Pick where this viewer's chats live. Returns (backend | None, note).
+
+    - Signed in + a Sheet configured: that user's tab in the Sheet.
+    - Signed in, no Sheet: a per-user file (survives refreshes, not a
+      Streamlit Cloud redeploy).
+    - Not signed in: the single shared file only when the owner opted in
+      on a machine only they use (shared_file_ok); otherwise nothing is
+      saved, because on a shared deployment one file would hand every
+      visitor everyone else's chats.
+
+    `open_spreadsheet` is a zero-argument callable returning a gspread
+    Spreadsheet, or None when no Sheet is configured.
+    """
+    if identity:
+        key = user_key(identity)
+        if open_spreadsheet is not None:
+            try:
+                return SheetsBackend(open_spreadsheet(), key, "your Google Sheet tab"), ""
+            except Exception as exc:  # noqa: BLE001
+                return None, (f"Couldn't open the chat Google Sheet ({type(exc).__name__}); "
+                              "chats won't be saved this session.")
+        return FileBackend(os.path.join(USER_DIR, f"{key}.json"),
+                           "this server's disk (cleared on redeploy)"), ""
+    if shared_file_ok:
+        return FileBackend(DEFAULT_PATH, "data/chat_history.json on this machine"), ""
+    return None, ""
