@@ -4,3 +4,11 @@ plotly>=5.18
 numpy>=1.24
 openpyxl>=3.1
 anthropic>=0.40
+# Per-user GM Chat storage (optional at runtime: only used once sign-in /
+# a chat Sheet are configured in secrets). Authlib < 1.7 because 1.7+ pulls
+# cryptography >= 45, which pip can't install over a distro-managed
+# cryptography (e.g. the Claude Code web container); 1.6.x is still
+# patched and meets Streamlit's Authlib >= 1.3.2.
+Authlib>=1.3.2,<1.7
+httpx>=0.24.1
+gspread>=6,<7

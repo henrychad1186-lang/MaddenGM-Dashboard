@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import urllib.request
 import streamlit as st
@@ -2608,16 +2609,84 @@ def _chat_default_persist() -> bool:
     return str(val).strip().lower() in ("1", "true", "yes", "on")
 
 
-def _chat_persist_changed() -> None:
-    # Turning saving on pulls in whatever was saved before, without
-    # clobbering conversations already started this session.
-    if st.session_state.get("chat_persist"):
-        disk = chat_store.load()
-        store = st.session_state.chat_store
-        for team, convs in disk.items():
-            have = {c["id"] for c in store.get(team, [])}
-            store.setdefault(team, []).extend(c for c in convs if c.get("id") not in have)
-        chat_store.save(store)
+def _secret(name):
+    try:
+        return st.secrets.get(name)
+    except Exception:
+        return None
+
+
+def _chat_identity() -> "str | None":
+    """Signed-in viewer's email: from st.login, or Streamlit Cloud's own
+    viewer auth on a private app. None when nobody is signed in."""
+    try:
+        user = st.user
+        if getattr(user, "is_logged_in", False) and user.get("email"):
+            return str(user.get("email"))
+    except Exception:
+        pass
+    return None
+
+
+def _chat_login_provider() -> "tuple[bool, str | None]":
+    """(login configured, provider name). st.login needs an [auth] section
+    in secrets; with named providers ([auth.google]) it needs the name."""
+    auth = _secret("auth")
+    if not auth:
+        return False, None
+    named = [k for k, v in dict(auth).items() if hasattr(v, "keys")]
+    return True, (named[0] if named and "client_id" not in auth else None)
+
+
+@st.cache_resource(show_spinner=False)
+def _open_chat_sheet(spreadsheet_key: str, service_account_json: str):
+    import gspread  # optional dependency: only needed with a Sheet configured
+    client = gspread.service_account_from_dict(json.loads(service_account_json))
+    return client.open_by_key(spreadsheet_key)
+
+
+def _chat_sheet_opener():
+    """Callable that opens the configured chat Sheet, or None.
+
+    Secrets: [gm_chat_sheets] spreadsheet_key = "..." plus a
+    [gm_chat_sheets.service_account] table (the service-account JSON
+    key's fields). Share the Sheet with the service account's email.
+    """
+    cfg = _secret("gm_chat_sheets")
+    if not cfg or not cfg.get("spreadsheet_key") or not cfg.get("service_account"):
+        return None
+    key = str(cfg["spreadsheet_key"])
+    sa = json.dumps(dict(cfg["service_account"]), sort_keys=True)
+    return lambda: _open_chat_sheet(key, sa)
+
+
+def _chat_bind_storage() -> None:
+    """Load this viewer's chats once per identity, and remember where to
+    save them. Re-runs when the viewer signs in or out."""
+    identity = _chat_identity()
+    owner = identity or ("__local__" if st.session_state.get("chat_persist") else "__session__")
+    if st.session_state.get("chat_owner") == owner:
+        return
+    backend, note = chat_store.resolve_backend(
+        identity, _chat_sheet_opener() if identity else None,
+        shared_file_ok=bool(st.session_state.get("chat_persist")))
+    loaded = backend.load() if backend else {}
+    if loaded is None:
+        # Unknown state: never save over what might be there.
+        note = (f"Couldn't read your saved chats from {backend.label}; this "
+                "session won't be saved so nothing gets overwritten.")
+        backend, loaded = None, {}
+    # Keep what this session already started (e.g. chatted, then signed in).
+    current = st.session_state.get("chat_store") or {}
+    for team, convs in current.items():
+        have = {c["id"] for c in loaded.get(team, [])}
+        loaded.setdefault(team, []).extend(c for c in convs if c["id"] not in have)
+    st.session_state.chat_store = loaded
+    st.session_state.chat_backend = backend
+    st.session_state.chat_storage_note = note
+    st.session_state.chat_owner = owner
+    if backend and current:
+        backend.save(loaded)
 
 
 with tabs[10]:
@@ -2627,17 +2696,18 @@ with tabs[10]:
 
     if "chat_persist" not in st.session_state:
         st.session_state.chat_persist = _chat_default_persist()
-    if "chat_store" not in st.session_state:
-        st.session_state.chat_store = (
-            chat_store.load() if st.session_state.chat_persist else {})
+    _chat_bind_storage()
     chat_db = st.session_state.chat_store
     active_key = f"chat_active_{MY_TEAM}"
     active_conv = chat_store.get(chat_db, MY_TEAM, st.session_state.get(active_key))
     chat_live = ai_client.is_available()
 
     def _save_chats() -> None:
-        if st.session_state.chat_persist:
-            chat_store.save(chat_db)
+        backend = st.session_state.get("chat_backend")
+        if backend and not backend.save(chat_db):
+            st.session_state.chat_storage_note = (
+                f"Last save to {backend.label} failed; the chat is still here "
+                "for this session.")
 
     list_col, chat_col = st.columns([1, 3], gap="medium")
 
@@ -2679,11 +2749,26 @@ with tabs[10]:
                         _save_chats()
                         st.rerun()
 
-        st.toggle("💾 Save chats on this machine", key="chat_persist",
-                  on_change=_chat_persist_changed,
-                  help="Writes conversations to data/chat_history.json so they survive "
-                       "a refresh or restart. Leave off on a shared deployment — the "
-                       "file is shared by everyone using the app.")
+        identity = _chat_identity()
+        login_ok, provider = _chat_login_provider()
+        backend = st.session_state.get("chat_backend")
+        if identity:
+            st.caption(f"💾 Saved to {backend.label} for {identity}" if backend
+                       else f"Signed in as {identity}")
+            if login_ok and st.button("Sign out", key="chat_logout", width="stretch"):
+                st.logout()
+        elif login_ok:
+            st.caption("Chats last for this session only.")
+            if st.button("🔐 Sign in to save chats", key="chat_login", width="stretch"):
+                st.login(provider) if provider else st.login()
+        else:
+            st.toggle("💾 Save chats on this machine", key="chat_persist",
+                      help="Writes conversations to data/chat_history.json so they "
+                           "survive a refresh or restart. Leave off on a shared "
+                           "deployment — the file is shared by everyone using the app. "
+                           "For per-user saving, configure sign-in (see README).")
+        if st.session_state.get("chat_storage_note"):
+            st.warning(st.session_state.chat_storage_note)
 
     # ── RIGHT — active conversation ──
     with chat_col:

@@ -148,10 +148,60 @@ trade engine instead of estimating (`src/chat_tools.py`, all read-only):
 Each lookup shows in the answer as a 🔎 line. Only DET, CHI and MIN are modeled
 as trade partners.
 
-Requires `ANTHROPIC_API_KEY`. Conversations live in the browser session by
-default. Flip **💾 Save chats on this machine** (or set `GM_CHAT_SAVE=1`) to
-write them to `data/chat_history.json` (gitignored) so they survive restarts.
-Leave it off on a shared deployment: that file is shared by every visitor.
+Requires `ANTHROPIC_API_KEY`.
+
+### Where chats are saved
+
+| Viewer | Saved to |
+|---|---|
+| Signed in, chat Sheet configured | Their own tab in your Google Sheet (survives redeploys) |
+| Signed in, no Sheet | A per-user file under `data/chat_history/` (survives refreshes, not a Streamlit Cloud redeploy) |
+| Not signed in, sign-in configured | Nothing: the session only, with a **🔐 Sign in to save chats** button |
+| No sign-in configured (local use) | Nothing, unless you flip **💾 Save chats on this machine** (or set `GM_CHAT_SAVE=1`), which writes `data/chat_history.json` |
+
+Users are keyed by a hash of their email, so emails never appear in file or tab
+names. If saved chats can't be read (network, permissions), that session is
+not saved at all rather than risk overwriting them.
+
+**1. Sign-in** (Streamlit's built-in `st.login`). Create an OAuth client in
+Google Cloud Console (Web application; redirect URI
+`https://<your-app>.streamlit.app/oauth2callback`), then add to Secrets:
+
+```toml
+[auth]
+redirect_uri = "https://<your-app>.streamlit.app/oauth2callback"
+cookie_secret = "<long random string>"
+
+[auth.google]
+client_id = "<client id>"
+client_secret = "<client secret>"
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+```
+
+A private Streamlit Cloud app whose viewers already sign in also works: the
+app picks up their email from `st.user` with no `[auth]` section.
+
+**2. Chat Sheet** (optional, for storage that survives redeploys). Create a
+Google Cloud service account with the Sheets API enabled, download its JSON
+key, create an empty Google Sheet, and share it with the service account's
+`client_email` as Editor. Then add:
+
+```toml
+[gm_chat_sheets]
+spreadsheet_key = "<the id in the Sheet's URL>"
+
+[gm_chat_sheets.service_account]
+type = "service_account"
+project_id = "..."
+private_key_id = "..."
+private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+client_email = "...@....iam.gserviceaccount.com"
+client_id = "..."
+token_uri = "https://oauth2.googleapis.com/token"
+```
+
+Each user gets a `chats_<hash>` tab with one row per message: team,
+conversation id, title, timestamps, order, role, content.
 
 ## GitHub Actions
 
