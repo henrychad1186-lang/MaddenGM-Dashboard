@@ -24,6 +24,7 @@ from src import ai_client
 from src import chat_store
 from src import chat_tools
 from src import close_games
+from src import data_checks
 from src import draft_scout
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
@@ -1015,8 +1016,11 @@ def render_game_log_form() -> None:
                 points_for = st.number_input("Points scored", min_value=0,
                                              max_value=99, value=0, step=1)
             with off2:
-                pass_yards = st.number_input("Pass yards", min_value=0,
-                                             max_value=999, value=0, step=1)
+                pass_yards = st.number_input(
+                    "Pass yards", min_value=0, max_value=999, value=0, step=1,
+                    help="Madden's Off Pass Yards row (net of sacks). Total "
+                         "yards is pass + rush; don't use 'Total Yards "
+                         "Gained', which adds return yards.")
             with off3:
                 rush_yards = st.number_input("Rush yards", min_value=0,
                                              max_value=999, value=0, step=1)
@@ -1060,7 +1064,9 @@ def render_game_log_form() -> None:
             with def2:
                 pass_allowed = st.number_input(
                     "Pass yards allowed", min_value=0, max_value=999,
-                    value=0, step=1)
+                    value=0, step=1,
+                    help="The opponent's Off Pass Yards row, not their "
+                         "'Total Yards Gained' (which adds return yards).")
             with def3:
                 rush_allowed = st.number_input(
                     "Rush yards allowed", min_value=0, max_value=999,
@@ -2384,6 +2390,21 @@ with tabs[7]:
 # ── TAB 9: Raw Data ──
 with tabs[8]:
     render_tab_header("🗂️", "Raw Data", "Full historical game log table")
+    _issues = data_checks.check_log(df)
+    if _issues:
+        _counts = data_checks.summary(_issues)
+        with st.expander(
+                f"⚠️ Data checks: {len(_issues)} item(s) to verify against "
+                "the box score", expanded=False):
+            st.caption(" · ".join(f"{k}: {v}" for k, v in _counts.items())
+                       + ". Nothing is changed automatically; the box score "
+                       "decides which number is wrong.")
+            st.dataframe(pd.DataFrame(_issues).rename(columns={
+                "game": "Game", "opponent": "Opp", "check": "Check",
+                "detail": "Detail"}), hide_index=True, width="stretch")
+    else:
+        st.caption("✅ Data checks: yards, scores and time of possession "
+                   "are consistent.")
     st.dataframe(df)
 
 # ── TAB 10: AI GM Assistant — plug in new players dynamically ──
