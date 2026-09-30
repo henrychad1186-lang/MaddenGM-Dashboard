@@ -97,7 +97,7 @@ jobs:
         body="The scheduled dependency canary failed: $RUN_URL
 
         Check which job failed (newest or lowest) and the resolved versions it printed."
-        num=$(gh issue list --label dependency-canary --state open --json number --jq '.[0].number')
+        num=$(gh issue list --label dependency-canary --state open --json number --jq '.[0].number // empty')
         if [ -n "$num" ]; then
           gh issue comment "$num" --body "$body"
         else
