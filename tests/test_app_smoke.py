@@ -34,6 +34,7 @@ too: `test_roster_loading.py` reloads that module against a temp CSV, so
 what its globals hold depends on test ordering.
 """
 
+import logging
 import pathlib
 
 import pytest
@@ -54,11 +55,32 @@ _TIMEOUT = 120
 EXPECTED_TABS = 13
 
 
+class _Collect(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.messages = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+
 @pytest.fixture(scope="module")
 def app():
-    """Run app.py once and share the result across the assertions below."""
-    at = AppTest.from_file(_APP, default_timeout=_TIMEOUT)
-    at.run()
+    """Run app.py once and share the result across the assertions below.
+
+    Also records Streamlit's deprecation notices. Streamlit logs them
+    (never raises, and only renders them when error details are on), to
+    a logger that doesn't propagate, so pytest's caplog can't see them.
+    """
+    dep_logger = logging.getLogger("streamlit.deprecation_util")
+    collect = _Collect()
+    dep_logger.addHandler(collect)
+    try:
+        at = AppTest.from_file(_APP, default_timeout=_TIMEOUT)
+        at.run()
+    finally:
+        dep_logger.removeHandler(collect)
+    at.deprecations = collect.messages
     return at
 
 
@@ -85,3 +107,15 @@ def test_the_page_rendered_content(app):
     """A script that no-ops early would still pass the assertions above."""
     assert len(app.metric) > 0, "no metrics rendered"
     assert any(str(m.value).strip() for m in app.metric), "all metrics empty"
+
+
+def test_no_streamlit_deprecations(app):
+    """A deprecated kwarg works until the release that removes it.
+
+    `use_container_width` was deprecated for months before removal; the
+    only signal was a log line nobody reads. Failing here turns that
+    notice into a CI failure while the old call still works, instead of
+    a crash on the release that drops it. The scheduled newest-deps
+    workflow runs this against each new Streamlit as it ships.
+    """
+    assert not app.deprecations, "\n\n".join(app.deprecations)

@@ -236,6 +236,21 @@ extrapolation, or an assumed slope.
 
 flake8 (syntax errors and undefined names fail the build), a `py_compile` of `app.py`, and the full pytest suite, on Python 3.10 and 3.11, for every push to `main` and every pull request into it. Check the [Actions tab](https://github.com/henrychad1186-lang/MaddenGM-Dashboard/actions) for build status.
 
+**Dependency canary** (`.github/workflows/dependency-canary.yml`) runs every
+Monday, on demand from the Actions tab, and on PRs that change
+`requirements.txt`:
+
+- **newest**: every dependency upgraded to its latest release, on the newest
+  Python. Catches a breaking Streamlit / pandas / anthropic release without
+  waiting for someone to push.
+- **lowest**: every `>=` floor in `requirements.txt` installed exactly, on
+  Python 3.10, so the declared minimums stay true.
+
+The smoke test also fails on any Streamlit deprecation notice, so an API
+Streamlit is about to remove shows up while the old call still works. A
+scheduled failure opens (or comments on) an issue labelled
+`dependency-canary`.
+
 ## Deploy
 
 Deploy for free on [Streamlit Community Cloud](https://share.streamlit.io):
