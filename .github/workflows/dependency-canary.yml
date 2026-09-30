@@ -1,0 +1,105 @@
+name: Dependency canary
+
+# The main workflow installs requirements.txt fresh on each push, so it
+# only sees a new Streamlit / pandas / anthropic release when someone
+# happens to push. This one runs on a schedule to catch a breaking
+# release on its own, and tests both ends of the version ranges:
+#
+#   newest - every dependency upgraded, on the newest Python. The smoke
+#            test also fails on any Streamlit deprecation notice, so a
+#            removal is flagged while the old call still works.
+#   lowest - every ">=" floor in requirements.txt installed exactly, on
+#            the oldest supported Python, so the floors stay true.
+#
+# A scheduled failure opens (or comments on) a "dependency-canary" issue.
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"   # Mondays 09:17 UTC
+  workflow_dispatch:
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - requirements.txt
+      - .github/workflows/dependency-canary.yml
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: newest
+            python-version: "3.x"
+          - name: lowest
+            python-version: "3.10"
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install newest dependencies
+      if: matrix.name == 'newest'
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install --upgrade --upgrade-strategy eager -r requirements.txt pytest
+
+    - name: Install lowest declared dependencies
+      if: matrix.name == 'lowest'
+      run: |
+        python -m pip install --upgrade pip
+        # Pin every ">=X" floor to "==X"; upper bounds are left to pip.
+        python - > lowest-constraints.txt <<'EOF'
+        import re
+        for line in open("requirements.txt"):
+            line = line.split("#")[0].strip()
+            m = re.match(r"([A-Za-z0-9_.\-]+)\s*>=\s*([^,;\s]+)", line)
+            if m:
+                print(f"{m.group(1)}=={m.group(2)}")
+        EOF
+        cat lowest-constraints.txt
+        python -m pip install -r requirements.txt -c lowest-constraints.txt pytest
+
+    - name: Show resolved versions
+      run: |
+        python --version
+        python -m pip list --format=freeze | grep -iE '^(streamlit|pandas|numpy|plotly|anthropic|authlib|httpx|gspread|openpyxl)=='
+
+    - name: Syntax check
+      run: python -m py_compile app.py
+
+    - name: Run tests
+      run: python -m pytest tests/ -v
+
+  report:
+    needs: canary
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+    - name: Open or update the canary issue
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        gh label create dependency-canary --color D93F0B \
+          --description "Scheduled dependency check failed" 2>/dev/null || true
+        body="The scheduled dependency canary failed: $RUN_URL
+
+        Check which job failed (newest or lowest) and the resolved versions it printed."
+        num=$(gh issue list --label dependency-canary --state open --json number --jq '.[0].number')
+        if [ -n "$num" ]; then
+          gh issue comment "$num" --body "$body"
+        else
+          gh issue create --title "Dependency canary failed" --label dependency-canary --body "$body"
+        fi
