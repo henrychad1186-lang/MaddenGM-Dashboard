@@ -35,7 +35,9 @@ what its globals hold depends on test ordering.
 """
 
 import logging
+import os
 import pathlib
+import warnings
 
 import pytest
 
@@ -113,9 +115,25 @@ def test_no_streamlit_deprecations(app):
     """A deprecated kwarg works until the release that removes it.
 
     `use_container_width` was deprecated for months before removal; the
-    only signal was a log line nobody reads. Failing here turns that
-    notice into a CI failure while the old call still works, instead of
-    a crash on the release that drops it. The scheduled newest-deps
-    workflow runs this against each new Streamlit as it ships.
+    only signal was a log line nobody reads. This surfaces that notice
+    while the old call still works, instead of a crash on the release
+    that drops it.
+
+    Warn-only by default: regular CI installs the latest Streamlit, so a
+    new deprecation would otherwise turn every unrelated PR red. The
+    dependency canary's newest job sets STRICT_DEPRECATIONS=1, which
+    fails the run and opens the canary issue.
     """
-    assert not app.deprecations, "\n\n".join(app.deprecations)
+    if not app.deprecations:
+        return
+    notices = "\n\n".join(app.deprecations)
+    if os.environ.get("STRICT_DEPRECATIONS") == "1":
+        pytest.fail(f"Streamlit deprecation notice(s):\n\n{notices}")
+    warnings.warn(f"Streamlit deprecation notice(s):\n\n{notices}", UserWarning)
+    # Not captured by pytest, so it shows on the Actions run page.
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write("### ⚠️ Streamlit deprecation notices\n\n"
+                     + "".join(f"- {m.splitlines()[0]}\n" for m in app.deprecations)
+                     + "\nWarning only here; the dependency canary fails on these.\n")

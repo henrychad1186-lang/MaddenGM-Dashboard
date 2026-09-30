@@ -246,9 +246,11 @@ Monday, on demand from the Actions tab, and on PRs that change
 - **lowest**: every `>=` floor in `requirements.txt` installed exactly, on
   Python 3.10, so the declared minimums stay true.
 
-The smoke test also fails on any Streamlit deprecation notice, so an API
-Streamlit is about to remove shows up while the old call still works. A
-scheduled failure opens (or comments on) an issue labelled
+The smoke test also checks for Streamlit deprecation notices, so an API
+Streamlit is about to remove shows up while the old call still works. In
+regular CI and local runs that is a warning (listed on the Actions run
+page); the canary's **newest** job sets `STRICT_DEPRECATIONS=1` and fails
+on it. A scheduled failure opens (or comments on) an issue labelled
 `dependency-canary`.
 
 ## Deploy

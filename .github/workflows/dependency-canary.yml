@@ -6,7 +6,8 @@ name: Dependency canary
 # release on its own, and tests both ends of the version ranges:
 #
 #   newest - every dependency upgraded, on the newest Python. The smoke
-#            test also fails on any Streamlit deprecation notice, so a
+#            test fails on any Streamlit deprecation notice here
+#            (STRICT_DEPRECATIONS=1; elsewhere it only warns), so a
 #            removal is flagged while the old call still works.
 #   lowest - every ">=" floor in requirements.txt installed exactly, on
 #            the oldest supported Python, so the floors stay true.
@@ -77,6 +78,10 @@ jobs:
       run: python -m py_compile app.py
 
     - name: Run tests
+      # Deprecation notices only warn in regular CI; the newest job
+      # fails on them so an upcoming removal opens the canary issue.
+      env:
+        STRICT_DEPRECATIONS: ${{ matrix.name == 'newest' && '1' || '' }}
       run: python -m pytest tests/ -v
 
   report:
