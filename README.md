@@ -36,6 +36,7 @@ The app will open at `http://localhost:8501`
 | 🗂️ **Raw Data** | Full game log table |
 | 🤖 **AI GM Assistant** | Plug in a new draft pick, UDFA, or trade target and get an instant AI scouting report + roster injection |
 | 💬 **GM Chat** | Dedicated chat with the AI GM — conversation list, search, streaming answers grounded in roster, cap and game log |
+| 🔎 **Draft Scouting** | Combine / pro day numbers and revealed letter grades → rating estimates, core-attribute fit and scouting priority, with post-draft calibration |
 
 ## Data Import
 
@@ -202,6 +203,34 @@ token_uri = "https://oauth2.googleapis.com/token"
 
 Each user gets a `chats_<hash>` tab with one row per message: team,
 conversation id, title, timestamps, order, role, content.
+
+## Draft Scouting
+
+Enter each prospect's 40, bench reps, arm length, 3-cone and shuttle, plus
+revealed grades in one cell (`MCV:A-; PRS:A to C`: a range while scouting
+narrows it). Import/export the board as CSV; **Save board** writes
+`data/draft_prospects.csv`.
+
+| Input | Estimate | Default rule (Madden 21–26 research) |
+|-------|----------|--------------------------------------|
+| 40 time | Speed | Chart 4.24 = 99 … 4.49 = 90, ±2 noise. ≤ 4.43 = 90+ safe; 4.44–4.49 = coin flip. By time, not class percentile |
+| 3-cone | Agility | 6.60–6.83 → 99–90. Also carries Acceleration; does **not** measure COD |
+| Shuttle | COD | 4.17 ≈ 178 AGI+COD points; COD = total − 3-cone AGI (even split without a 3-cone). Slope assumed |
+| Bench + arm | Strength | Reps scaled by arm length; 38 reps / 32" = 97. Slope assumed |
+| Letter grade | Rating range | Same range for every attribute. Only A- = 82–85 is confirmed; the rest continue its 4-point width |
+
+**Priority:** *Scout now* = a core attribute for the position already
+revealed at A-tier (floor ≥ 82); *Narrow grades* = a core range that still
+includes A-tier; *Unscouted* = no core grades yet. Core attributes per
+position are scheme-dependent and editable.
+
+None of this is confirmed for Madden 27. Every value is editable under
+**Scouting rules** (saved to `data/draft_rules.json`, downloadable). After
+the draft, enter drafted players' real ratings in the `Actual_` columns:
+the **Calibration** table shows each rule's mean error and average miss,
+which is how the defaults get replaced with Madden 27 numbers. Each
+estimate's *Basis* says whether it came from the researched range, an
+extrapolation, or an assumed slope.
 
 ## GitHub Actions
 

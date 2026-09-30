@@ -24,6 +24,7 @@ from src import ai_client
 from src import chat_store
 from src import chat_tools
 from src import close_games
+from src import draft_scout
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
 from src import season as season_mod
@@ -1157,7 +1158,7 @@ def render_game_log_form() -> None:
 # ──────────────────────────────────────────────────────
 # Home is prepended and then sliced off, so the ten original tab bodies
 # below keep their existing tabs[0]..tabs[9] indices unchanged; Chat was
-# appended after them as tabs[10].
+# appended after them as tabs[10] and Draft Scouting as tabs[11].
 # Labels are short on purpose. The full names ("Scheme Performance",
 # "AI GM Assistant", ...) overflowed the strip into a scroll chevron even
 # at 1366px, hiding the last tabs entirely; adding Home made that worse.
@@ -1175,6 +1176,7 @@ _all_tabs = st.tabs([
     "🗂️ Raw Data",
     "🤖 AI GM",
     "💬 Chat",
+    "🔎 Draft",
 ])
 home_tab, tabs = _all_tabs[0], _all_tabs[1:]
 
@@ -2854,3 +2856,218 @@ with tabs[10]:
                     chat_store.export_markdown(active_conv, MY_TEAM),
                     file_name=f"gm_chat_{active_conv['id']}.md",
                     mime="text/markdown", key="chat_export", width="stretch")
+
+
+# ── TAB 12: Draft Scouting ──
+def _draft_state():
+    """Board and rules live in session state, seeded from disk once."""
+    if "draft_board" not in st.session_state:
+        st.session_state.draft_board = draft_scout.load_board()
+    if "draft_rules" not in st.session_state:
+        st.session_state.draft_rules = draft_scout.load_rules()
+    st.session_state.setdefault("draft_ver", 0)
+    st.session_state.setdefault("draft_seen_uploads", set())
+
+
+def _draft_bump():
+    # Editors are keyed by version: replacing their input data under the
+    # same key would re-apply the old edits on top of the new rows.
+    st.session_state.draft_ver += 1
+
+
+def _draft_new_upload(f) -> bool:
+    """file_uploader hands back the same file on every rerun; act once."""
+    if f is None or f.file_id in st.session_state.draft_seen_uploads:
+        return False
+    st.session_state.draft_seen_uploads.add(f.file_id)
+    return True
+
+
+def _clamp_input(v, lo, hi) -> float:
+    # A hand-edited rules file can hold values outside the widget's
+    # bounds, and st.number_input raises on those instead of clamping.
+    return float(min(max(float(v), lo), hi))
+
+
+def render_draft_rules(rules: dict, ver: int) -> None:
+    with st.expander("⚙️ Scouting rules (Madden 21-26 research — edit as Madden 27 data comes in)"):
+        st.caption(
+            "Firm: the 40 → Speed chart (±2), 3-cone 6.60–6.83 → 90–99 AGI, "
+            "shuttle 4.17 ≈ 178 AGI+COD points, 38 reps / 32\" arms → 97 STR, "
+            "A- = 82–85. Everything else is a default to be calibrated below.")
+        with st.form(f"draft_rules_form_{ver}"):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown("**40 → Speed**")
+                chart = st.data_editor(
+                    pd.DataFrame(rules["speed_chart"], columns=["Forty", "SPD"]),
+                    num_rows="dynamic", hide_index=True, key=f"dr_chart_{ver}")
+                band = st.number_input("Speed noise (±)", 0.0, 10.0, _clamp_input(rules["speed_band"], 0.0, 10.0), 0.5)
+                safe = st.number_input("90+ safe at or under", 4.0, 5.5, _clamp_input(rules["speed_safe_max"], 4.0, 5.5), 0.01, format="%.2f")
+                flip = st.number_input("90 coin flip up to", 4.0, 5.5, _clamp_input(rules["speed_coinflip_max"], 4.0, 5.5), 0.01, format="%.2f")
+            with c2:
+                st.markdown("**3-cone → Agility**")
+                tc = rules["three_cone"]
+                tc_fast = st.number_input("Fast time", 5.5, 8.5, _clamp_input(tc["fast"], 5.5, 8.5), 0.01, format="%.2f")
+                tc_fast_agi = st.number_input("AGI at fast time", 0.0, 99.0, _clamp_input(tc["fast_agi"], 0.0, 99.0), 1.0)
+                tc_slow = st.number_input("Slow time", 5.5, 8.5, _clamp_input(tc["slow"], 5.5, 8.5), 0.01, format="%.2f")
+                tc_slow_agi = st.number_input("AGI at slow time", 0.0, 99.0, _clamp_input(tc["slow_agi"], 0.0, 99.0), 1.0)
+                st.markdown("**Shuttle → AGI + COD**")
+                sh = rules["shuttle"]
+                sh_t = st.number_input("Anchor time", 3.5, 5.5, _clamp_input(sh["anchor_time"], 3.5, 5.5), 0.01, format="%.2f")
+                sh_tot = st.number_input("AGI+COD points at anchor", 0.0, 198.0, _clamp_input(sh["anchor_total"], 0.0, 198.0), 1.0)
+                sh_pps = st.number_input("Points per second (assumed)", 0.0, 500.0, _clamp_input(sh["points_per_sec"], 0.0, 500.0), 5.0)
+            with c3:
+                st.markdown("**Bench → Strength**")
+                bn = rules["bench"]
+                bn_reps = st.number_input("Anchor reps", 0.0, 60.0, _clamp_input(bn["anchor_reps"], 0.0, 60.0), 1.0)
+                bn_arm = st.number_input("Anchor arm (in)", 25.0, 40.0, _clamp_input(bn["anchor_arm"], 25.0, 40.0), 0.125)
+                bn_str = st.number_input("Anchor STR", 0.0, 99.0, _clamp_input(bn["anchor_str"], 0.0, 99.0), 1.0)
+                bn_ref = st.number_input("Reference arm (in)", 25.0, 40.0, _clamp_input(bn["ref_arm"], 25.0, 40.0), 0.125)
+                bn_slope = st.number_input("STR per arm-adjusted rep (assumed)", 0.0, 5.0, _clamp_input(bn["str_per_rep"], 0.0, 5.0), 0.1)
+                floor = st.number_input("A-tier floor", 0.0, 99.0, _clamp_input(rules["a_tier_floor"], 0.0, 99.0), 1.0)
+            g1, g2 = st.columns([1, 1])
+            with g1:
+                st.markdown("**Letter grade → rating**")
+                grades = st.data_editor(pd.DataFrame(rules["grades"]), num_rows="dynamic",
+                                        hide_index=True, key=f"dr_grades_{ver}")
+            with g2:
+                st.markdown("**Core attributes by position** (one line each, `POS: A, B, C`)")
+                core_text = st.text_area(
+                    "Core attributes", label_visibility="collapsed", height=420,
+                    value="\n".join(f"{p}: {', '.join(a)}" for p, a in rules["core_attrs"].items()))
+            applied = st.form_submit_button("Apply rules", type="primary")
+        if applied:
+            core = {}
+            for line in core_text.splitlines():
+                if ":" in line:
+                    pos, attrs = line.split(":", 1)
+                    core[pos.strip()] = [a for a in attrs.replace(";", ",").split(",")]
+            raw = {
+                "speed_chart": chart.dropna().values.tolist(),
+                "speed_band": band, "speed_safe_max": safe, "speed_coinflip_max": flip,
+                "three_cone": {"fast": tc_fast, "fast_agi": tc_fast_agi,
+                               "slow": tc_slow, "slow_agi": tc_slow_agi},
+                "shuttle": {"anchor_time": sh_t, "anchor_total": sh_tot, "points_per_sec": sh_pps},
+                "bench": {"anchor_reps": bn_reps, "anchor_arm": bn_arm, "anchor_str": bn_str,
+                          "ref_arm": bn_ref, "str_per_rep": bn_slope},
+                "grades": grades.to_dict("records"),
+                "a_tier_floor": floor,
+                "core_attrs": core,
+            }
+            st.session_state.draft_rules = draft_scout.clean_rules(raw)
+            saved = draft_scout.save_rules(st.session_state.draft_rules)
+            _draft_bump()
+            st.toast("Rules applied" + ("" if saved else " (this session only: disk is read-only)"))
+            st.rerun()
+
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            if st.button("↩️ Reset to defaults", key="draft_rules_reset", width="stretch"):
+                st.session_state.draft_rules = draft_scout.default_rules()
+                draft_scout.save_rules(st.session_state.draft_rules)
+                _draft_bump()
+                st.rerun()
+        with r2:
+            st.download_button("⬇️ Rules (.json)", json.dumps(rules, indent=1),
+                               file_name="draft_rules.json", mime="application/json",
+                               key="draft_rules_dl", width="stretch")
+        with r3:
+            up = st.file_uploader("Load rules (.json)", type=["json"], key="draft_rules_up",
+                                  label_visibility="collapsed")
+            if _draft_new_upload(up):
+                try:
+                    st.session_state.draft_rules = draft_scout.clean_rules(json.loads(up.getvalue()))
+                    _draft_bump()
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(f"Not a rules file: {exc}")
+
+
+def render_draft_scouting() -> None:
+    _draft_state()
+    rules, ver = st.session_state.draft_rules, st.session_state.draft_ver
+
+    st.caption(
+        "Enter combine / pro day numbers and revealed grades. Grades go in one cell as "
+        "`MCV:A-; PRS:A to C` (a range while scouting narrows it). After the draft, fill "
+        "the Actual_ columns with the real ratings to check the rules below.")
+
+    u1, u2, u3 = st.columns([2, 1, 1])
+    with u1:
+        up = st.file_uploader("Import prospects (.csv)", type=["csv"], key="draft_board_up")
+        if _draft_new_upload(up):
+            try:
+                st.session_state.draft_board = draft_scout.clean_board(pd.read_csv(up))
+                _draft_bump()
+                st.rerun()
+            except (ValueError, pd.errors.EmptyDataError) as exc:
+                st.error(f"Couldn't read that CSV: {exc}")
+
+    board = st.data_editor(
+        st.session_state.draft_board, num_rows="dynamic", hide_index=True,
+        width="stretch", key=f"draft_board_editor_{ver}",
+        column_config={
+            "Forty": st.column_config.NumberColumn("40", format="%.2f", min_value=3.8, max_value=6.5),
+            "Bench": st.column_config.NumberColumn("Bench", min_value=0, max_value=60, step=1),
+            "Arm_In": st.column_config.NumberColumn("Arm (in)", format="%.3f", min_value=25, max_value=40),
+            "Three_Cone": st.column_config.NumberColumn("3-cone", format="%.2f", min_value=5.5, max_value=9),
+            "Shuttle": st.column_config.NumberColumn("Shuttle", format="%.2f", min_value=3.5, max_value=6),
+            "Grades": st.column_config.TextColumn("Grades", width="large"),
+        })
+    board = draft_scout.clean_board(board)
+
+    with u2:
+        if st.button("💾 Save board", key="draft_board_save", width="stretch", type="primary"):
+            st.session_state.draft_board = board
+            ok = draft_scout.save_board(board)
+            _draft_bump()
+            st.toast("Board saved" if ok else "Disk is read-only; download the CSV to keep it")
+            st.rerun()
+    with u3:
+        st.download_button("⬇️ Board (.csv)", board.to_csv(index=False),
+                           file_name="draft_prospects.csv", mime="text/csv",
+                           key="draft_board_dl", width="stretch")
+
+    results = draft_scout.evaluate_board(board, rules)
+    if results.empty:
+        st.info("Add prospects above, or import a CSV with columns: "
+                + ", ".join(draft_scout.PROSPECT_COLUMNS) + ".")
+    else:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Prospects", len(results))
+        m2.metric("Scout now", int((results["Priority"] == "Scout now").sum()),
+                  help="A core attribute already revealed at A-tier")
+        m3.metric("Narrow grades", int((results["Priority"] == "Narrow grades").sum()),
+                  help="A core grade range that still includes A-tier")
+        m4.metric("90+ speed (safe)", int((results["Speed_Tier"] == "90+ safe").sum()))
+        positions = sorted(p for p in results["Pos"].unique() if p)
+        pick = st.multiselect("Positions", positions, key="draft_pos_filter")
+        shown = results[results["Pos"].isin(pick)] if pick else results
+        st.dataframe(shown, hide_index=True, width="stretch", column_config={
+            "Core_Fit": st.column_config.NumberColumn(
+                "Core fit", help="Average of the position's core attributes: grade "
+                "midpoints plus combine estimates"),
+            "Basis": st.column_config.TextColumn(
+                help="chart/anchor = inside the researched range; extrapolated = "
+                "outside it; assumed = the slope is a default, not research"),
+        })
+
+    st.markdown("##### 🎯 Calibration")
+    cal = draft_scout.calibrate(board, rules)
+    if cal.empty:
+        st.caption("No actual ratings entered yet. After the draft, fill Actual_SPD / "
+                   "Actual_AGI / Actual_COD / Actual_STR for drafted players; this table "
+                   "then shows how far off each rule is for Madden 27.")
+    else:
+        st.dataframe(cal, hide_index=True, width="stretch")
+        st.caption("Mean error > 0: the rule reads low; shift it up by about that much. "
+                   "A large Avg miss with small Mean error means the rule is noisy, not biased.")
+
+    render_draft_rules(rules, ver)
+
+
+with tabs[11]:
+    render_tab_header("🔎", "Draft Scouting",
+                      "Combine numbers and revealed grades → rating estimates and scouting priority")
+    render_draft_scouting()
