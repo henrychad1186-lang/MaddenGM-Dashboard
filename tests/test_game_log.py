@@ -452,3 +452,15 @@ def test_playbook_filter_is_a_no_op_without_playbooks():
     assert game_log.filter_by_playbook(df, [], []).equals(df)
     no_col = pd.DataFrame({"GAME_ID": [1]})
     assert game_log.filter_by_playbook(no_col, ["X"], ["X"]).equals(no_col)
+
+
+def test_shipped_log_yards_allowed_total_is_pass_plus_rush():
+    """Total yards allowed is offensive yards: pass + rush, the same
+    definition the entry form uses. Madden's "Total Yards Gained" row
+    also counts return yards; copying it in inflated 15 games by up to
+    127 yards before this was corrected."""
+    df = pd.read_csv("data/game_logs.csv")
+    both = df[["Pass_Yards_Allowed", "Rush_Yards_Allowed", "Total_Yards_Allowed"]].dropna()
+    off = both[both.Total_Yards_Allowed != both.Pass_Yards_Allowed + both.Rush_Yards_Allowed]
+    assert off.empty, df.loc[off.index, ["GAME_ID", "Pass_Yards_Allowed",
+                                         "Rush_Yards_Allowed", "Total_Yards_Allowed"]]
