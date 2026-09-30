@@ -570,11 +570,8 @@ with st.sidebar.expander("🎚️ Dashboard Filters", expanded=False):
             filtered_df[filtered_df["Result"].isin(selected_results)]
             if selected_results else filtered_df.iloc[0:0]
         )
-    if "Playbook" in filtered_df.columns and playbook_options:
-        filtered_df = (
-            filtered_df[filtered_df["Playbook"].isin(selected_playbooks)]
-            if selected_playbooks else filtered_df.iloc[0:0]
-        )
+    filtered_df = game_log.filter_by_playbook(
+        filtered_df, selected_playbooks, playbook_options)
     if games_window != "All Games" and not filtered_df.empty:
         recent_games = int(games_window.split(" ")[1])
         filtered_df = filtered_df.tail(recent_games)

@@ -324,6 +324,26 @@ def efficiency_rates(df: pd.DataFrame) -> dict:
             "rz_td_pct": rz, "rz_games": rz_n}
 
 
+def filter_by_playbook(df: pd.DataFrame, selected: "list[str]",
+                       options: "list[str]") -> pd.DataFrame:
+    """Rows whose Playbook is in `selected`.
+
+    A game with no playbook recorded is kept while every playbook is
+    selected (the default), and dropped once the user narrows the
+    selection. A plain isin() dropped those games from every tab even
+    with nothing filtered, because a blank is never in the list.
+    """
+    if "Playbook" not in df.columns or not options:
+        return df
+    if not selected:
+        return df.iloc[0:0]
+    keep = df["Playbook"].isin(selected)
+    if set(selected) >= set(options):
+        blank = df["Playbook"].isna() | (df["Playbook"].astype(str).str.strip() == "")
+        keep |= blank
+    return df[keep]
+
+
 def _csv_cell(text: str) -> str:
     """Quote a cell if it carries a comma, quote or newline."""
     text = str(text)

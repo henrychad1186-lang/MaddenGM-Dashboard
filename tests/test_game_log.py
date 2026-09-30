@@ -329,13 +329,14 @@ class TestAgainstTheShippedLog:
         assert cells[1] == "2" and cells[2] == "11"
 
     def test_the_appended_row_reads_back_correctly(self, real_log_copy):
+        before = len(pd.read_csv(real_log_copy))
         game_log.append_game(real_log_copy, _entry(), "GB")
         out = pd.read_csv(real_log_copy)
         row = out.iloc[-1]
         assert row["Opponent"] == "CHI"
         assert row["Total_Yards"] == 370
         assert row["Result"] == "W"
-        assert len(out) == 29
+        assert len(out) == before + 1
 
     def test_a_comma_in_a_field_does_not_shift_the_columns(
             self, real_log_copy):
@@ -347,10 +348,11 @@ class TestAgainstTheShippedLog:
 
     def test_a_file_with_no_trailing_newline_does_not_join_rows(
             self, real_log_copy):
+        before = len(pd.read_csv(real_log_copy))
         raw = open(real_log_copy).read().rstrip("\n")
         open(real_log_copy, "w").write(raw)
         game_log.append_game(real_log_copy, _entry(), "GB")
-        assert len(pd.read_csv(real_log_copy)) == 29
+        assert len(pd.read_csv(real_log_copy)) == before + 1
 
     def test_every_entry_field_exists_in_the_real_file(self):
         # If the shipped log loses a column the form writes to, the value
@@ -420,3 +422,33 @@ class TestEfficiencyTracking:
         r = game_log.efficiency_rates(pd.DataFrame({"RZ_TD_Made": [2]}))
         assert r["third_down_pct"] is None and r["rz_td_pct"] is None
         assert game_log.efficiency_rates(pd.DataFrame())["rz_games"] == 0
+
+
+# ── Playbook filter ──
+
+def _pb_df():
+    return pd.DataFrame({"GAME_ID": [1, 2, 3, 4],
+                         "Playbook": ["WestCoast", "Vertical", None, "  "]})
+
+
+def test_playbook_filter_keeps_unrecorded_games_when_all_selected():
+    df = _pb_df()
+    out = game_log.filter_by_playbook(df, ["Vertical", "WestCoast"], ["Vertical", "WestCoast"])
+    assert out["GAME_ID"].tolist() == [1, 2, 3, 4]
+
+
+def test_playbook_filter_drops_unrecorded_games_once_narrowed():
+    df = _pb_df()
+    out = game_log.filter_by_playbook(df, ["WestCoast"], ["Vertical", "WestCoast"])
+    assert out["GAME_ID"].tolist() == [1]
+
+
+def test_playbook_filter_with_nothing_selected_is_empty():
+    assert game_log.filter_by_playbook(_pb_df(), [], ["Vertical", "WestCoast"]).empty
+
+
+def test_playbook_filter_is_a_no_op_without_playbooks():
+    df = pd.DataFrame({"GAME_ID": [1], "Playbook": [None]})
+    assert game_log.filter_by_playbook(df, [], []).equals(df)
+    no_col = pd.DataFrame({"GAME_ID": [1]})
+    assert game_log.filter_by_playbook(no_col, ["X"], ["X"]).equals(no_col)

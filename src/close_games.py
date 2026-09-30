@@ -3,7 +3,7 @@ Close-game analysis: how the franchise plays in one-score games versus
 games decided by more.
 
 Close-game record is a standing metric for this franchise, and on the
-shipped log the split is stark (4-8 in one-score games against 12-4
+shipped log the split is stark (4-9 in one-score games against 13-4
 otherwise). This module answers "what's different in those games" from
 the same prepared game log every other tab reads, so the Home panel and
 the GM Chat quote identical numbers.
