@@ -433,9 +433,10 @@ class TestEfficiencyTracking:
         assert r["third_down_pct"] == pytest.approx(50.0)
         assert r["third_down_conv_per_game"] == pytest.approx(4.0)
 
-    def test_shipped_log_third_down_fallback(self):
+    def test_shipped_log_third_down_rates(self):
         r = game_log.efficiency_rates(pd.read_csv("data/game_logs.csv"))
-        assert r["third_down_pct"] is None
+        assert r["third_down_pct"] == pytest.approx(8 / 22 * 100)
+        assert r["third_down_games"] == 2
         assert (r["third_down_conv_per_game"], r["third_down_conv_games"]) == (4.0, 2)
 
     def test_rates_absent_without_columns(self):
