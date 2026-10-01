@@ -342,6 +342,10 @@ st.markdown('<div class="hero-title">🏈 Madden NFL 27: Franchise Strategy Audi
 # --- 1. DATA ENGINE ---
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
+# Offline copy of the synced Google Sheet. Kept apart from game_logs.csv:
+# writing the sheet over that file erased any game logged through the
+# entry form that wasn't in the sheet yet.
+_SHEET_CACHE_CSV = os.path.join(_DATA_DIR, "game_logs_sheet_cache.csv")
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -364,20 +368,22 @@ def _load_game_log_from_url(url: str) -> "tuple[pd.DataFrame, list[str], bytes]"
 
 
 def _cache_sheet_locally(payload: bytes) -> None:
-    """Write the synced sheet to the local log only when it changed.
+    """Keep an offline copy of the synced sheet, only rewriting on change.
 
     This used to `df.to_csv` on every rerun — every widget click — which
     rewrote the file, bumped its mtime and so invalidated the disk loader's
-    cache each time, even with the sheet unchanged.
+    cache each time, even with the sheet unchanged. It also used to write
+    over game_logs.csv itself, silently deleting games logged through the
+    entry form; the copy now has its own file.
     """
     try:
-        with open(_GAME_LOGS_CSV, "rb") as fh:
+        with open(_SHEET_CACHE_CSV, "rb") as fh:
             if fh.read() == payload:
                 return
     except OSError:
         pass
     try:
-        with open(_GAME_LOGS_CSV, "wb") as fh:
+        with open(_SHEET_CACHE_CSV, "wb") as fh:
             fh.write(payload)
     except OSError:
         pass  # read-only filesystem (e.g. Streamlit Cloud)
@@ -493,6 +499,10 @@ with st.sidebar.expander("📡 Data Import", expanded=True):
     )
 
     df = None  # will be set by one of the branches
+    # Which source the dashboard is showing. The entry form only appends
+    # to the local file, so it is only offered when that file is what's
+    # on screen.
+    _LOG_SOURCE = "demo"
 
     prep_warnings: list[str] = []
 
@@ -501,14 +511,25 @@ with st.sidebar.expander("📡 Data Import", expanded=True):
             df, prep_warnings, _sheet_bytes = _load_game_log_from_url(sheet_url.strip())
             # Cache locally so it works offline next time
             _cache_sheet_locally(_sheet_bytes)
+            _LOG_SOURCE = "sheet"
             st.success(f"📡 Live Sheet Synced — {len(df)} games!")
         except Exception as e:
             st.warning(f"Sheet sync failed: {e}")
-            st.info("Falling back to local data.")
+            if os.path.exists(_SHEET_CACHE_CSV):
+                try:
+                    df, prep_warnings = _load_game_log_from_disk(
+                        _SHEET_CACHE_CSV, os.path.getmtime(_SHEET_CACHE_CSV))
+                    _LOG_SOURCE = "sheet"
+                    st.info("Showing the last synced copy of the sheet.")
+                except Exception:
+                    df = None
+            if df is None:
+                st.info("Falling back to local data.")
 
     if df is None and uploaded_file:
         try:
             df, prep_warnings = _load_game_log_from_upload(uploaded_file.getvalue(), uploaded_file.name)
+            _LOG_SOURCE = "upload"
             st.success("Custom Data Loaded!")
         except Exception as e:
             # Fall through to the local log. st.stop() here halted the
@@ -518,6 +539,7 @@ with st.sidebar.expander("📡 Data Import", expanded=True):
 
     if df is None and os.path.exists(_GAME_LOGS_CSV):
         df, prep_warnings = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
+        _LOG_SOURCE = "local"
         st.success("📊 Local Franchise Data Loaded!")
 
     if df is None:
@@ -996,6 +1018,20 @@ def render_game_log_form() -> None:
         if "Playbook" in existing.columns else [])
 
     with st.expander("➕ Log this week's game", expanded=False):
+        if _LOG_SOURCE == "sheet":
+            st.info("The dashboard is showing your Google Sheet, so add "
+                    "this game there. Logging here would write to the "
+                    "local file, which the dashboard isn't showing.")
+            return
+        if _LOG_SOURCE == "upload":
+            st.info("The dashboard is showing an uploaded file. Add the "
+                    "game to that file and upload it again, or remove the "
+                    "upload to log games here.")
+            return
+        st.caption("Saves to `data/game_logs.csv` on this server. On "
+                   "Streamlit Cloud that file resets when the app "
+                   "redeploys, so download it from **Raw Data** after "
+                   "logging, or keep the log in a Google Sheet.")
         with st.form("log_game_form"):
             when1, when2, when3 = st.columns(3)
             with when1:
@@ -2417,6 +2453,14 @@ with tabs[8]:
         st.caption("✅ Data checks: yards, scores and time of possession "
                    "are consistent.")
     st.dataframe(df)
+    if os.path.exists(_GAME_LOGS_CSV) and _LOG_SOURCE == "local":
+        with open(_GAME_LOGS_CSV, "rb") as _fh:
+            st.download_button(
+                "⬇️ Download game log (.csv)", _fh.read(),
+                file_name="game_logs.csv", mime="text/csv",
+                key="game_log_dl",
+                help="The file the entry form writes to. Keep a copy: on "
+                     "Streamlit Cloud it resets when the app redeploys.")
 
 # ── TAB 10: AI GM Assistant — plug in new players dynamically ──
 with tabs[9]:
