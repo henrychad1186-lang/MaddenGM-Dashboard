@@ -113,7 +113,10 @@ def check_log(df: "pd.DataFrame | None",
                         f"{df.at[i, 'Result']} recorded, score {pf[i]:.0f}-{pa[i]:.0f}")
 
     if "TOP" in df.columns:
-        mins = df["TOP"].apply(top_minutes)
+        # A list, not a Series: Series.apply turns the None for a blank
+        # or unparseable cell into NaN, which passes `is not None` and
+        # fails every range comparison, flagging blanks as implausible.
+        mins = [top_minutes(v) for v in df["TOP"]]
         lo, hi = game_minutes * _TOP_LOW_SHARE, game_minutes * _TOP_HIGH_SHARE
         for i in df.index:
             m = mins[i]
