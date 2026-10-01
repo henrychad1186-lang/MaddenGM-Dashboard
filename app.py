@@ -729,7 +729,14 @@ def _games_note(n: int) -> str:
 
 
 with kpi5:
-    if _eff["third_down_pct"] is None:
+    if _eff["third_down_pct"] is None and _eff["third_down_conv_per_game"] is not None:
+        # Conversions without attempts: Madden's box score shows only
+        # conversions, so a per-game count is the best the log supports.
+        st.markdown(_kpi_card_html(
+            "3rd Down Conv", f"{_eff['third_down_conv_per_game']:.1f}/g",
+            note=f"conversions, {_games_note(_eff['third_down_conv_games'])}"),
+            unsafe_allow_html=True)
+    elif _eff["third_down_pct"] is None:
         st.markdown(_kpi_card_html("3rd Down Conv", "—", note="log 3rd down attempts"),
                     unsafe_allow_html=True)
     else:
@@ -1048,12 +1055,14 @@ def render_game_log_form() -> None:
             with eff1:
                 td_att = st.number_input(
                     "3rd down attempts", min_value=0, max_value=30, value=0,
-                    step=1, help="From the post-game team stats. Leave 0 if "
-                                 "not tracked.")
+                    step=1, help="Leave 0 if not shown; Madden's post-game "
+                                 "box score lists conversions only.")
             with eff2:
                 td_conv = st.number_input(
                     "3rd down conversions", min_value=0, max_value=30,
-                    value=0, step=1)
+                    value=0, step=1,
+                    help="From the box score. With attempts at 0 this is "
+                         "tracked as conversions per game.")
 
             st.markdown("**Your defense**")
             def1, def2, def3, def4 = st.columns(4)
@@ -1103,7 +1112,7 @@ def render_game_log_form() -> None:
             st.error(f"Time of possession '{top}' isn't MM:SS — "
                      "e.g. 31:12. Nothing was logged.")
             return
-        if td_conv > td_att:
+        if td_att and td_conv > td_att:
             st.error(f"3rd down conversions ({td_conv}) can't exceed attempts "
                      f"({td_att}). Nothing was logged.")
             return
@@ -1130,7 +1139,9 @@ def render_game_log_form() -> None:
             # 0 attempts means "not tracked this game", written blank so
             # it's left out of the rates instead of counting as 0-for-0.
             "Third_Down_Att": int(td_att) if td_att else "",
-            "Third_Down_Conv": int(td_conv) if td_att else "",
+            # Conversions alone are kept (box scores omit attempts); both
+            # at 0 means untracked, not a 0-for-0 game.
+            "Third_Down_Conv": int(td_conv) if (td_att or td_conv) else "",
             "RZ_Att": int(rz_att) if rz_att else "",
         }, MY_TEAM)
 

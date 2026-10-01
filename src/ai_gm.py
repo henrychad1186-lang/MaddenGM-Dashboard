@@ -437,6 +437,10 @@ def build_game_log_summary(game_df: "pd.DataFrame | None", recent: int = 5) -> s
     if eff["third_down_pct"] is not None:
         lines.append(f"  3rd down conversion: {eff['third_down_pct']:.1f}% "
                      f"(over {eff['third_down_games']} games with attempts logged)")
+    elif eff["third_down_conv_per_game"] is not None:
+        lines.append(f"  3rd down conversions: {eff['third_down_conv_per_game']:.1f} per game "
+                     f"(over {eff['third_down_conv_games']} games; attempts not logged, "
+                     f"so no conversion rate)")
     else:
         lines.append("  3rd down conversion: not tracked in this log.")
     if eff["rz_td_pct"] is not None:

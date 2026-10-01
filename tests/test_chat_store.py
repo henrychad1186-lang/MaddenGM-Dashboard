@@ -111,6 +111,13 @@ def test_game_log_summary_reports_efficiency_rates_when_tracked():
     assert "Red zone TD%: 66.7% (over 2 games" in text
 
 
+def test_game_log_summary_falls_back_to_conversions_per_game():
+    df = pd.DataFrame({"Result": ["WIN", "LOSS"], "Score_Diff": [14, -7],
+                       "Third_Down_Conv": [6, 2]})
+    text = ai_gm.build_game_log_summary(df)
+    assert "3rd down conversions: 4.0 per game (over 2 games; attempts not logged" in text
+
+
 def test_game_log_summary_says_rates_are_untracked():
     text = ai_gm.build_game_log_summary(pd.DataFrame({"Result": ["WIN"]}))
     assert "3rd down conversion: not tracked" in text

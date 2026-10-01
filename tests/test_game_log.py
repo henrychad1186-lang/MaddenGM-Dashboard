@@ -418,9 +418,30 @@ class TestEfficiencyTracking:
         assert r["rz_td_pct"] == pytest.approx(3 / 6 * 100)
         assert r["rz_games"] == 2
 
+    def test_conversions_per_game_without_attempts(self):
+        # Madden's box score: conversions only. Blank rows are untracked.
+        r = game_log.efficiency_rates(pd.DataFrame({
+            "Third_Down_Att": [None, None, None],
+            "Third_Down_Conv": [2, 6, None]}))
+        assert r["third_down_pct"] is None and r["third_down_games"] == 0
+        assert r["third_down_conv_per_game"] == pytest.approx(4.0)
+        assert r["third_down_conv_games"] == 2
+
+    def test_conversions_per_game_counts_games_with_attempts_too(self):
+        r = game_log.efficiency_rates(pd.DataFrame({
+            "Third_Down_Att": [12, None], "Third_Down_Conv": [6, 2]}))
+        assert r["third_down_pct"] == pytest.approx(50.0)
+        assert r["third_down_conv_per_game"] == pytest.approx(4.0)
+
+    def test_shipped_log_third_down_fallback(self):
+        r = game_log.efficiency_rates(pd.read_csv("data/game_logs.csv"))
+        assert r["third_down_pct"] is None
+        assert (r["third_down_conv_per_game"], r["third_down_conv_games"]) == (4.0, 2)
+
     def test_rates_absent_without_columns(self):
         r = game_log.efficiency_rates(pd.DataFrame({"RZ_TD_Made": [2]}))
         assert r["third_down_pct"] is None and r["rz_td_pct"] is None
+        assert r["third_down_conv_per_game"] is None
         assert game_log.efficiency_rates(pd.DataFrame())["rz_games"] == 0
 
 
