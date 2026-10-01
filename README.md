@@ -33,7 +33,7 @@ The app will open at `http://localhost:8501`
 | 🏆 **Season Awards** | Auto-generated MVP, DPOY, ROY, Iron Man, Best Contract |
 | 🎯 **Coach DNA** | Coaching archetype radar chart computed from your play style |
 | 📈 **Progression** | Snapshot roster OVRs over time, track player development |
-| 🗂️ **Raw Data** | Full game log table |
+| 🗂️ **Raw Data** | Full game log table, plus a **⚠️ Data checks** panel listing rows to verify against the box score: yard totals that don't add up, point differentials or results that don't match the score, and implausible or template-looking time of possession |
 | 🤖 **AI GM Assistant** | Plug in a new draft pick, UDFA, or trade target and get an instant AI scouting report + roster injection |
 | 💬 **GM Chat** | Dedicated chat with the AI GM — conversation list, search, streaming answers grounded in roster, cap and game log |
 | 🔎 **Draft Scouting** | Combine / pro day numbers and revealed letter grades → rating estimates, core-attribute fit and scouting priority, with post-draft calibration |
@@ -54,21 +54,26 @@ Three ways to get your franchise data into the app:
 | `Points_For` | 35 | Yes |
 | `Points_Against` | 10 | Yes |
 | `Result` | W or WIN | Yes |
-| `TOP` | 27:45 | Optional |
+| `TOP` | 27:45 | Optional — leave blank if unknown rather than estimating |
 | `Playbook` | WestCoast Zone Run | Optional |
 | `Pass_Yards` | 285 | Optional |
 | `Rush_Yards` | 142 | Optional |
+| `Total_Yards` | 427 | Optional — pass + rush. Use Madden's **Off Yards Gained** row, not "Total Yards Gained", which adds return yards |
+| `Pass_Yards_Allowed` / `Rush_Yards_Allowed` / `Total_Yards_Allowed` | 210 / 95 / 305 | Optional — the opponent's offense rows; same rule for the total |
 | `Turnovers` | 1 | Optional |
 | `Takeaways` | 3 | Optional |
 | `Sacks_For` | 4 | Optional |
 | `RZ_TD_Made` | 3 | Optional |
 | `RZ_Att` | 4 | Optional — with `RZ_TD_Made`, gives Red Zone TD% |
 | `Third_Down_Att` | 13 | Optional |
-| `Third_Down_Conv` | 6 | Optional — with `Third_Down_Att`, gives 3rd Down Conv % |
+| `Third_Down_Conv` | 6 | Optional — with `Third_Down_Att`, gives 3rd Down Conv %; on its own, conversions per game |
 
 3rd Down Conv % and Red Zone TD% show in the KPI row and feed the GM Chat.
 Both are totals over totals across the games that recorded attempts; games
-logged without them are left out, not counted as 0-for-0. Logging a game with
+logged without them are left out, not counted as 0-for-0. Madden's post-game
+box score lists 3rd-down conversions but not attempts, so when no game has
+attempts the card shows conversions per game instead (a weaker signal: it
+rises with how often you face 3rd down, not only how well you convert). Logging a game with
 these stats through **➕ Log this week's game** adds the columns to an older
 CSV's header automatically; existing rows are not rewritten.
 
@@ -132,7 +137,8 @@ Every answer is grounded in a text snapshot of the same data the other tabs
 use: roster with cut/keep verdicts and trade values, position grades,
 positional needs, cap/dead-cap, and the game log (record, points, red zone
 TDs, turnovers, the close-game breakdown, record by playbook, last 5 games,
-and 3rd down / red zone TD% when those attempts are logged). The game-log part
+3rd down conversion % (or conversions per game when only conversions are
+logged), and red zone TD% when trips are logged). The game-log part
 respects the sidebar **Dashboard Filters**. Any stat that isn't tracked is
 labelled as such, so the model says so rather than guessing.
 
