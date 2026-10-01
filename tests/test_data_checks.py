@@ -72,6 +72,19 @@ def test_implausible_time_of_possession(top, flagged):
     assert (("1", "Time of possession implausible") in got) == flagged
 
 
+def test_blank_time_of_possession_is_not_flagged():
+    rows = [_row(GAME_ID=1, TOP=None), _row(GAME_ID=2, TOP=""), _row(GAME_ID=3)]
+    assert _checks(rows) == []
+    # Blank cells read back from a CSV arrive as NaN.
+    assert dc.check_log(pd.DataFrame({"TOP": [float("nan"), "21:00"]})) == []
+
+
+def test_blank_breaks_a_placeholder_run():
+    rows = [_row(GAME_ID=i, TOP=t) for i, t in
+            enumerate(["14:01", "15:01", None, "16:01", "17:01"], start=1)]
+    assert _checks(rows) == []
+
+
 def test_game_length_is_configurable():
     assert _checks([_row(TOP="8:15")], game_minutes=32) == []
 
@@ -109,6 +122,4 @@ def test_shipped_log_findings():
     """Pins what the checks find in the shipped log, so a data fix or a
     check change shows up here on purpose."""
     s = dc.summary(dc.check_log(pd.read_csv("data/game_logs.csv")))
-    assert s == {"Offense yards don't add up": 3,
-                 "Time of possession implausible": 4,
-                 "Time of possession looks like a placeholder": 9}
+    assert s == {"Offense yards don't add up": 3}
