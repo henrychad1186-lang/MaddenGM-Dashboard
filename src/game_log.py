@@ -314,14 +314,27 @@ def efficiency_rates(df: pd.DataFrame) -> dict:
     not an average of per-game percentages, which would weight a 1-for-1
     game the same as a 9-for-16 one. Games without attempts recorded are
     left out rather than counted as 0-for-0.
+
+    Madden's post-game box score shows 3rd-down conversions but not
+    attempts, so conversions are also averaged per game over every game
+    that recorded them ("third_down_conv_per_game"): a weaker number than
+    the rate, but a real one, for logs that can't supply attempts.
     """
+    empty = {"third_down_pct": None, "third_down_games": 0,
+             "third_down_conv_per_game": None, "third_down_conv_games": 0,
+             "rz_td_pct": None, "rz_games": 0}
     if df is None or df.empty:
-        return {"third_down_pct": None, "third_down_games": 0,
-                "rz_td_pct": None, "rz_games": 0}
+        return empty
     td, td_n = _rate(df, "Third_Down_Conv", "Third_Down_Att")
     rz, rz_n = _rate(df, "RZ_TD_Made", "RZ_Att")
-    return {"third_down_pct": td, "third_down_games": td_n,
-            "rz_td_pct": rz, "rz_games": rz_n}
+    out = {**empty, "third_down_pct": td, "third_down_games": td_n,
+           "rz_td_pct": rz, "rz_games": rz_n}
+    if "Third_Down_Conv" in df.columns:
+        conv = pd.to_numeric(df["Third_Down_Conv"], errors="coerce").dropna()
+        if len(conv):
+            out["third_down_conv_per_game"] = float(conv.mean())
+            out["third_down_conv_games"] = int(len(conv))
+    return out
 
 
 def filter_by_playbook(df: pd.DataFrame, selected: "list[str]",
