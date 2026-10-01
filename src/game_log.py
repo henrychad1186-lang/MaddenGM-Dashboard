@@ -330,7 +330,10 @@ def efficiency_rates(df: pd.DataFrame) -> dict:
     out = {**empty, "third_down_pct": td, "third_down_games": td_n,
            "rz_td_pct": rz, "rz_games": rz_n}
     if "Third_Down_Conv" in df.columns:
-        conv = pd.to_numeric(df["Third_Down_Conv"], errors="coerce").dropna()
+        conv = pd.to_numeric(df["Third_Down_Conv"], errors="coerce")
+        att = pd.to_numeric(df.get("Third_Down_Att"), errors="coerce")
+        sentinel = (conv == 0) & (att == 0)  # "0/0" means not tracked, not a 0-conv game
+        conv = conv[conv.notna() & ~sentinel]
         if len(conv):
             out["third_down_conv_per_game"] = float(conv.mean())
             out["third_down_conv_games"] = int(len(conv))

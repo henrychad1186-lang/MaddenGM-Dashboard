@@ -75,7 +75,7 @@ class TestNothingDeclaresItsOwnRange:
 
     def _season_week_widgets(self):
         """Every st.number_input in app.py labelled Season or Week."""
-        tree = ast.parse(pathlib.Path("app.py").read_text())
+        tree = ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue

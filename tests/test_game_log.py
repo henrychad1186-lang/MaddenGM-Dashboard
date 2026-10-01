@@ -427,15 +427,24 @@ class TestEfficiencyTracking:
         assert r["third_down_conv_per_game"] == pytest.approx(4.0)
         assert r["third_down_conv_games"] == 2
 
+    def test_conversions_per_game_excludes_untracked_sentinel(self):
+        # A 0/0 row means 3rd downs weren't tracked, not a 0-conversion game.
+        r = game_log.efficiency_rates(pd.DataFrame({
+            "Third_Down_Att": [1, 16, None, 0],
+            "Third_Down_Conv": [1, 9, None, 0]}))
+        assert r["third_down_conv_per_game"] == pytest.approx(5.0)  # (1 + 9) / 2
+        assert r["third_down_conv_games"] == 2
+
     def test_conversions_per_game_counts_games_with_attempts_too(self):
         r = game_log.efficiency_rates(pd.DataFrame({
             "Third_Down_Att": [12, None], "Third_Down_Conv": [6, 2]}))
         assert r["third_down_pct"] == pytest.approx(50.0)
         assert r["third_down_conv_per_game"] == pytest.approx(4.0)
 
-    def test_shipped_log_third_down_fallback(self):
+    def test_shipped_log_third_down_rates(self):
         r = game_log.efficiency_rates(pd.read_csv("data/game_logs.csv"))
-        assert r["third_down_pct"] is None
+        assert r["third_down_pct"] == pytest.approx(8 / 22 * 100)
+        assert r["third_down_games"] == 2
         assert (r["third_down_conv_per_game"], r["third_down_conv_games"]) == (4.0, 2)
 
     def test_rates_absent_without_columns(self):
