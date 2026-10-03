@@ -123,3 +123,24 @@ def test_shipped_log_findings():
     check change shows up here on purpose."""
     s = dc.summary(dc.check_log(pd.read_csv("data/game_logs.csv")))
     assert s == {"Offense yards don't add up": 3}
+
+
+def test_data_checks_ignore_the_sidebar_filters():
+    """Checks run on the whole log: the TOP placeholder check compares
+    neighbouring games, which a filtered view would put side by side,
+    and the item count shouldn't change with the sidebar."""
+    testing = pytest.importorskip("streamlit.testing.v1")
+    import pathlib
+    app = str(pathlib.Path(__file__).resolve().parent.parent / "app.py")
+    at = testing.AppTest.from_file(app, default_timeout=120).run()
+    full = dc.summary(dc.check_log(pd.read_csv("data/game_logs.csv")))
+    want = f"Data checks: {sum(full.values())} item(s)"
+
+    def label():
+        return [e.label for e in at.expander if "Data checks" in str(e.label)]
+
+    assert any(want in lbl for lbl in label()), label()
+    results = [m for m in at.multiselect if m.label == "Results"][0]
+    results.set_value(["WIN"]).run()
+    assert not at.exception, at.exception
+    assert any(want in lbl for lbl in label()), label()
