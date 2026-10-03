@@ -42,4 +42,4 @@ desktop.ini
 # Secrets
 .env
 data/draft_rules.json.tmp
-data/game_logs_sheet_cache.csv
+data/game_logs_sheet_cache*.csv
