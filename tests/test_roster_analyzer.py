@@ -50,7 +50,12 @@ class TestDevTraitMatching:
     """
 
     def _analyze_single_player(self, monkeypatch, player: dict) -> dict:
-        roster_df = pd.DataFrame([player])
+        # A backup at the same position, so the "only player at his
+        # position" KEEP reason doesn't pre-empt the dev-trait branch
+        # these tests exist for.
+        backup = {"Name": "Backup", "Pos": player["Pos"], "OVR": 60,
+                  "Age": 30, "Dev": "Normal"}
+        roster_df = pd.DataFrame([player, backup])
         monkeypatch.setattr(
             roster_analyzer, "get_roster",
             lambda team, group, extra_players=None: roster_df)
@@ -59,7 +64,8 @@ class TestDevTraitMatching:
             lambda team, extra_players=None: {"players": []})
         monkeypatch.setattr(
             roster_analyzer, "get_trade_value", lambda p: 50.0)
-        verdicts = roster_analyzer.analyze_roster("GB")
+        verdicts = [v for v in roster_analyzer.analyze_roster("GB")
+                    if v["Name"] == player["Name"]]
         assert len(verdicts) == 1
         return verdicts[0]
 
@@ -103,3 +109,116 @@ class TestAnalyzeRosterIntegration:
                 f"Sort order violated: {v['Verdict']} after previous order {prev}"
             )
             prev = curr
+
+
+class TestSinglePassAnalysis:
+    """Cover the single-pass rewrite recovered from `perf/roster-analyzer-single-pass`.
+
+    Positional depth was `len(roster[roster["Pos"] == row["Pos"]])` inside
+    the per-player loop: a full boolean mask over the roster to answer a
+    question one pass already answers, so n scans for n players. On the
+    real 37-man roster the rewrite measured 28.1ms -> 4.6ms, and the gap
+    widens with size (15x at 1000) because it removes an O(n^2) term.
+
+    That matters more than the numbers suggest: `analyze_roster` is not
+    cached, and two of its three call sites sit in tab bodies, which
+    Streamlit re-executes on every interaction.
+    """
+
+    def test_depth_matches_counting_the_roster_directly(self):
+        """The precomputed counts must equal the per-row filtering they replaced."""
+        from src.roster import get_roster
+        roster = get_roster("GB", "All")
+        for v in analyze_roster("GB"):
+            expected = len(roster[roster["Pos"] == v["Pos"]])
+            assert v["Depth"] == expected, (
+                f"{v['Name']} at {v['Pos']}: {v['Depth']} != {expected}")
+
+    def test_every_player_is_still_returned(self):
+        from src.roster import get_roster
+        assert len(analyze_roster("GB")) == len(get_roster("GB", "All"))
+
+    def test_an_empty_roster_returns_no_verdicts(self):
+        """Short-circuit added by the rewrite; must not raise on the way out."""
+        assert analyze_roster("NOPE") == []
+
+    def test_duplicate_names_each_get_their_own_cap_entry(self):
+        """`to_dict("records")` must preserve row order.
+
+        The cap lookup is a per-name queue that pops as it iterates, so a
+        reordering would silently pair duplicates with the wrong entry.
+        AI GM explicitly allows duplicate names.
+        """
+        extras = [
+            _make_player(name="Clone", pos="WR", ovr=70 + i, age=24,
+                         savings="$2M", penalty="$1M")
+            for i in range(3)
+        ]
+        for i, extra in enumerate(extras):
+            extra["_id"] = f"clone{i}"
+            extra["Team"] = "GB"
+
+        clones = [v for v in analyze_roster("GB", extras)
+                  if v["Name"] == "Clone"]
+        assert len(clones) == 3
+        assert sorted(c["OVR"] for c in clones) == [70, 71, 72]
+
+    def test_extra_players_count_toward_positional_depth(self):
+        """Depth is computed from the roster including session additions."""
+        base = {v["Pos"]: v["Depth"] for v in analyze_roster("GB")}
+        extra = _make_player(name="Depth Adder", pos="WR", ovr=70)
+        extra.update({"_id": "d1", "Team": "GB", "Age": 24})
+        after = {v["Pos"]: v["Depth"] for v in analyze_roster("GB", [extra])}
+        assert after["WR"] == base["WR"] + 1
+
+
+class TestTradeLogic:
+    """Trade and release both charge the remaining bonus as dead cap in
+    Madden franchise mode, so a big penalty is never a reason to trade."""
+
+    def _run(self, monkeypatch, players, cap):
+        monkeypatch.setattr(roster_analyzer, "get_roster",
+                            lambda team, group, extra_players=None: pd.DataFrame(players))
+        monkeypatch.setattr(roster_analyzer, "get_cap_summary",
+                            lambda team, extra_players=None: {"players": cap})
+        return {v["Name"]: v for v in roster_analyzer.analyze_roster("GB")}
+
+    def test_prime_age_star_with_big_dead_cap_is_kept(self, monkeypatch):
+        star = {"Name": "Star", "Pos": "EDGE", "OVR": 98, "Age": 27, "Dev": "Superstar X"}
+        backup = {"Name": "B", "Pos": "EDGE", "OVR": 70, "Age": 25, "Dev": "Normal"}
+        cap = [{"Name": "Star", "Pos": "EDGE", "OVR": 98, "Savings": 0.75, "Penalty": 105.0}]
+        v = self._run(monkeypatch, [star, backup], cap)["Star"]
+        assert v["Verdict"] == "KEEP"
+        assert "cornerstone" in v["Reason"]
+
+    def test_only_qb_is_never_traded(self, monkeypatch):
+        qb = {"Name": "QB1", "Pos": "QB", "OVR": 80, "Age": 34, "Dev": "Normal"}
+        cap = [{"Name": "QB1", "Pos": "QB", "OVR": 80, "Savings": 20.0, "Penalty": 0.0}]
+        assert self._run(monkeypatch, [qb], cap)["QB1"]["Verdict"] == "KEEP"
+
+    def test_past_peak_vet_with_net_savings_is_traded(self, monkeypatch):
+        vet = {"Name": "Vet", "Pos": "DT", "OVR": 77, "Age": 31, "Dev": "Normal"}
+        backup = {"Name": "B", "Pos": "DT", "OVR": 70, "Age": 25, "Dev": "Normal"}
+        cap = [{"Name": "Vet", "Pos": "DT", "OVR": 77, "Savings": 5.0, "Penalty": 0.0}]
+        v = self._run(monkeypatch, [vet, backup], cap)["Vet"]
+        assert v["Verdict"] == "TRADE"
+        assert "frees $5.0M" in v["Reason"]
+
+    def test_past_peak_vet_with_net_dead_cap_is_kept(self, monkeypatch):
+        vet = {"Name": "Vet", "Pos": "DT", "OVR": 80, "Age": 33, "Dev": "Normal"}
+        backup = {"Name": "B", "Pos": "DT", "OVR": 70, "Age": 25, "Dev": "Normal"}
+        cap = [{"Name": "Vet", "Pos": "DT", "OVR": 80, "Savings": 1.6, "Penalty": 15.3}]
+        v = self._run(monkeypatch, [vet, backup], cap)["Vet"]
+        assert v["Verdict"] == "KEEP"
+        assert "ride out" in v["Reason"]
+
+    def test_below_replacement_cut_needs_non_negative_cap(self, monkeypatch):
+        scrub = {"Name": "Scrub", "Pos": "WR", "OVR": 60, "Age": 26, "Dev": "Normal"}
+        backup = {"Name": "B", "Pos": "WR", "OVR": 70, "Age": 25, "Dev": "Normal"}
+        cap = [{"Name": "Scrub", "Pos": "WR", "OVR": 60, "Savings": 0.5, "Penalty": 4.0}]
+        assert self._run(monkeypatch, [scrub, backup], cap)["Scrub"]["Verdict"] == "KEEP"
+
+    def test_real_roster_keeps_its_cornerstones(self):
+        verdicts = {v["Name"]: v["Verdict"] for v in analyze_roster("GB")}
+        assert verdicts["M. Parsons"] == "KEEP"
+        assert verdicts["J. Love"] == "KEEP"

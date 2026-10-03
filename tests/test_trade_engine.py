@@ -169,3 +169,30 @@ class TestEvaluateTrade:
         if 0.80 <= ratio < 0.92:
             assert "LEAN ACCEPT" in result["verdict"]
             assert result["counter_offer"] != ""
+
+
+class TestPositionNormalisation:
+    """The trade roster must use the same positions as the Roster tab."""
+
+    def test_gb_linebackers_are_graded_as_olb(self):
+        from src import trade_engine
+        gb = trade_engine.DEMO_ROSTERS[trade_engine.DEMO_ROSTERS["Team"] == "GB"]
+        if gb.empty:
+            return  # roster CSV unavailable; nothing to normalise
+        assert not set(gb["Pos"]) & {"SAM", "WILL", "MIKE", "REDG", "LEDG"}
+
+
+class TestPickScale:
+    """Pick values must be on the player trade-value scale."""
+
+    def test_real_star_gap_needs_an_early_pick(self):
+        # Jacobs (774) for Jefferson (1401): a 627-point gap once came back
+        # as "add a 6th-Round Pick" because picks were priced 10x players.
+        msg = generate_counter_offer(target_value=1401.5, current_value=774.4)
+        assert any(r in msg for r in ("1st-Round", "2nd-Round", "3rd-Round")), msg
+
+    def test_a_first_is_worth_less_than_a_superstar(self):
+        from src.trade_engine import DRAFT_PICK_VALUES
+        first = dict(DRAFT_PICK_VALUES)["1st-Round Pick"]
+        superstar = get_trade_value(_player(OVR=99, Dev="Superstar X", Age=26))
+        assert first < superstar

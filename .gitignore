@@ -9,6 +9,10 @@ build/
 
 # Data files (user-specific)
 data/progression_log.csv
+data/chat_history.json
+data/chat_history/
+data/chat_history.json.tmp
+dynasty_history.json
 
 # Virtual environments
 venv/
@@ -37,3 +41,5 @@ desktop.ini
 
 # Secrets
 .env
+data/draft_rules.json.tmp
+data/game_logs_sheet_cache.csv

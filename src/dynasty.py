@@ -13,10 +13,18 @@ _HISTORY_FILE = os.path.join(os.path.dirname(
     os.path.dirname(__file__)), "dynasty_history.json")
 
 # ──────────────────────────────────────────────
-# DEMO HISTORY DATA (3 mock seasons)
+# SAMPLE HISTORY — never returned as the user's own
 # ──────────────────────────────────────────────
+# `load_history` used to fall back to this whenever no history file
+# existed, so a new franchise opened the Dynasty tab to three seasons it
+# had not played: a 2025 Super Bowl win, Jordan Love as MVP, a career
+# leaderboard built from all of it. Presented in exactly the styling
+# real archived seasons use, with nothing marking it as a sample.
+#
+# Kept as an illustration of the shape `archive_season` expects. Nothing
+# in the app reads it.
 
-DEMO_HISTORY = [
+SAMPLE_HISTORY = [
     {
         "season": 2024,
         "era": "The Jordan Love Era",
@@ -70,14 +78,23 @@ DEMO_HISTORY = [
 # ──────────────────────────────────────────────
 
 def load_history() -> list[dict]:
-    """Load dynasty history from file, falling back to demo data."""
-    if os.path.exists(_HISTORY_FILE):
-        try:
-            with open(_HISTORY_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return DEMO_HISTORY.copy()
+    """Load dynasty history from file.
+
+    Returns an empty list when there is nothing archived yet. It must not
+    fall back to `SAMPLE_HISTORY`: a franchise with no seasons on record
+    has no history, and inventing one puts three seasons the user never
+    played into their timeline, their chronicles and their career
+    leaderboard.
+    """
+    if not os.path.exists(_HISTORY_FILE):
+        return []
+    try:
+        with open(_HISTORY_FILE, "r") as f:
+            loaded = json.load(f)
+    except Exception:
+        return []
+    # A file holding anything but a list of seasons is not history.
+    return loaded if isinstance(loaded, list) else []
 
 
 def archive_season(
@@ -88,6 +105,12 @@ def archive_season(
     Returns the updated history list.
     """
     history = existing_history if existing_history is not None else load_history()
+
+    # The file is hand-editable, so an entry may lack "season" (or not be
+    # a dict at all). Indexing s["season"] raised KeyError and took the
+    # archive form down; such entries are dropped rather than crashing.
+    history = [s for s in history
+               if isinstance(s, dict) and isinstance(s.get("season"), int)]
 
     # Prevent duplicate season numbers
     if any(s["season"] == season_data.get("season") for s in history):
@@ -100,10 +123,13 @@ def archive_season(
     # Sort by season
     history.sort(key=lambda s: s["season"])
 
-    # Persist
+    # Persist atomically: a crash mid-write used to leave truncated JSON,
+    # which load_history reads as "no history" — every archived season gone.
+    tmp = f"{_HISTORY_FILE}.tmp"
     try:
-        with open(_HISTORY_FILE, "w") as f:
+        with open(tmp, "w") as f:
             json.dump(history, f, indent=2)
+        os.replace(tmp, _HISTORY_FILE)
     except Exception:
         pass  # If write fails, data is still in memory
 
@@ -116,6 +142,13 @@ def get_career_leaders(history: list[dict]) -> pd.DataFrame:
     Returns a DataFrame with player name, category, and total.
     """
     leaders = {}
+
+    # Without this an empty history raises KeyError on "Rush Yds" below —
+    # which is what a franchise with nothing archived now has, since
+    # `load_history` stopped substituting the sample seasons.
+    if not history:
+        return pd.DataFrame(
+            columns=["Player", "Rush Yds", "Rec Yds", "Seasons", "Total Yds"])
 
     for season in history:
         # Rushing

@@ -25,6 +25,9 @@ import pandas as pd
 
 from src import roster as roster_mod
 from src import roster_analyzer as roster_analyzer_mod
+from src import close_games
+from src import roster_csv
+from src.game_log import efficiency_rates
 from src.theme import NEED_COLORS
 from src.trade_engine import get_trade_value
 
@@ -144,19 +147,51 @@ def get_effective_roster(team: str, group: str = "All", extra_players: "list[dic
 
 
 def persist_roster(team: str, extra_players: "list[dict] | None" = None) -> bool:
-    """Best-effort write of the team's full roster (base + session extras)
-    back to data/packers_roster.csv. Returns True on success.
+    """Append session-added players to data/packers_roster.csv.
+
+    Rows already in the file are re-read and written back untouched; only
+    the session's additions are appended, in whatever schema the file
+    already uses. Returns True on success.
 
     Skipped silently on read-only filesystems (e.g. Streamlit Cloud) —
     the additions still live for the rest of this browser session either
     way since they're tracked in st.session_state, not this file.
     """
+    if not extra_players:
+        return True  # nothing session-scoped to append
+
+    # Refuse to write when the loader fell back to demo data. SOURCE_COLUMNS
+    # stays empty in that case. Without this guard, a CSV the loader could
+    # not read (one missing column was enough) got replaced wholesale by the
+    # single "Demo Player" row — 37 real players destroyed by a checkbox.
+    if not roster_mod.SOURCE_COLUMNS:
+        return False
+
     try:
-        df = roster_mod.get_roster(team, "All", extra_players)
-        df = df.drop(columns=["Group", "_id"], errors="ignore")
-        df.to_csv(roster_mod._ROSTER_CSV, index=False)
+        raw = pd.read_csv(roster_mod._ROSTER_CSV)
+
+        # `extra_players` is the whole session list, and the caller passes
+        # it again after every addition — so appending it wholesale wrote
+        # each player once more per subsequent save. Three additions with
+        # "save to roster CSV" on produced seven rows instead of four,
+        # the first player appearing three times.
+        already = roster_csv.existing_player_names(raw)
+        pending = [
+            p for p in extra_players
+            # A player carries the team it was added under. Writing one
+            # team's signing into another team's roster file is what the
+            # `team` argument exists to prevent.
+            if str(p.get("Team", team)) == str(team)
+            and str(p.get("Name", "")).strip() not in already
+        ]
+        if not pending:
+            return True  # everything already on file
+
+        added = roster_csv.rows_to_source_schema(pending, raw)
+        combined = pd.concat([raw, added], ignore_index=True)
+        combined.to_csv(roster_mod._ROSTER_CSV, index=False)
         return True
-    except OSError:
+    except (OSError, ValueError):
         return False
 
 
@@ -167,11 +202,12 @@ def persist_roster(team: str, extra_players: "list[dict] | None" = None) -> bool
 def positional_needs(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Grade every starting position by depth + average OVR for a team."""
     df = roster_mod.get_roster(team, "All", extra_players)
+    # One groupby instead of a boolean mask over the roster per position.
+    by_pos = df.groupby("Pos")["OVR"].agg(["count", "mean"])
     needs = []
     for pos in SCOUTABLE_POSITIONS:
-        pos_df = df[df["Pos"] == pos]
-        count = len(pos_df)
-        avg_ovr = round(pos_df["OVR"].mean(), 1) if count else 0.0
+        count = int(by_pos.at[pos, "count"]) if pos in by_pos.index else 0
+        avg_ovr = round(float(by_pos.at[pos, "mean"]), 1) if count else 0.0
 
         # Semantic scale: a need level is a call to action, so it shares
         # hues with the KEEP/TRADE/CUT verdicts and nothing else.
@@ -349,5 +385,78 @@ def build_context_summary(team: str, extra_players: "list[dict] | None" = None) 
         lines.append(
             "NOTE: players added this session via the AI GM Assistant form "
             "are included in the roster above.")
+
+    return "\n".join(lines)
+
+
+def build_game_log_summary(game_df: "pd.DataFrame | None", recent: int = 5) -> str:
+    """Text snapshot of the franchise's results for the chat prompt.
+
+    `build_context_summary` covers the roster only, so questions like "why
+    are we losing close games?" had nothing to ground on. This serializes
+    the same prepared game log the Schemes and Home tabs chart. Every
+    column beyond Result/Score_Diff is optional — the log comes from
+    user uploads — so a missing one just drops its line.
+    """
+    if game_df is None or game_df.empty or "Result" not in game_df.columns:
+        return "GAME LOG: no games on file."
+
+    g = game_df
+    wins = int((g["Result"] == "WIN").sum())
+    losses = int((g["Result"] == "LOSS").sum())
+    ties = int((g["Result"] == "TIE").sum())
+    record = f"{wins}-{losses}" + (f"-{ties}" if ties else "")
+    lines = [f"GAME LOG ({len(g)} games): record {record}"]
+
+    def avg(col):
+        return pd.to_numeric(g[col], errors="coerce").mean() if col in g.columns else None
+
+    pf, pa = avg("Points_For"), avg("Points_Against")
+    if pf is not None and pa is not None:
+        lines.append(f"  Points/game: {pf:.1f} for, {pa:.1f} against")
+    for col, label in (("RZ_TD_Made", "Red zone TDs/game"),
+                       ("Turnovers", "Turnovers/game"),
+                       ("Takeaways", "Takeaways/game"),
+                       ("Sacks_For", "Sacks/game"),
+                       ("TOP_Mins", "Time of possession (min)")):
+        v = avg(col)
+        if v is not None and pd.notna(v):
+            lines.append(f"  {label}: {v:.1f}")
+
+    lines.extend(close_games.summary_lines(close_games.analyze(g)))
+
+    if "Playbook" in g.columns:
+        lines.append("  Record by playbook:")
+        for pb, grp in g.groupby("Playbook"):
+            # Same W-L-T formatting as the close-game lines; a tie was
+            # previously counted as a loss here.
+            lines.append(f"    {pb}: {close_games.record(grp)['record']} "
+                         f"({len(grp)} games)")
+
+    eff = efficiency_rates(g)
+    if eff["third_down_pct"] is not None:
+        lines.append(f"  3rd down conversion: {eff['third_down_pct']:.1f}% "
+                     f"(over {eff['third_down_games']} games with attempts logged)")
+    elif eff["third_down_conv_per_game"] is not None:
+        lines.append(f"  3rd down conversions: {eff['third_down_conv_per_game']:.1f} per game "
+                     f"(over {eff['third_down_conv_games']} games; attempts not logged, "
+                     f"so no conversion rate)")
+    else:
+        lines.append("  3rd down conversion: not tracked in this log.")
+    if eff["rz_td_pct"] is not None:
+        lines.append(f"  Red zone TD%: {eff['rz_td_pct']:.1f}% "
+                     f"(over {eff['rz_games']} games with trips logged)")
+    else:
+        lines.append("  Red zone TD%: not tracked (red zone trips not logged).")
+
+    tail = g.tail(recent)
+    if len(tail):
+        lines.append(f"  Last {len(tail)} games:")
+        for _, r in tail.iterrows():
+            opp = r.get("Opponent", "?")
+            score = ""
+            if pd.notna(r.get("Points_For")) and pd.notna(r.get("Points_Against")):
+                score = f" {int(r['Points_For'])}-{int(r['Points_Against'])}"
+            lines.append(f"    vs {opp}: {r['Result']}{score}")
 
     return "\n".join(lines)

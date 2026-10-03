@@ -19,16 +19,31 @@ invalid key) — the app must never break because of this being
 unavailable.
 """
 
+import json
 import os
 import re
 
-_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
-# The prompt asks for 3-4 sentences covering grade, strengths, weaknesses,
-# and a verdict endorsement — that routinely runs past 300 tokens and gets
-# cut off mid-sentence (confirmed against a live call: stop_reason was
-# "max_tokens" at 300). 500 gives real headroom; _trim_to_last_sentence()
-# below is the backstop for whatever still gets cut.
-_MAX_TOKENS = 500
+# Current-generation Sonnet (same per-token price as claude-sonnet-5).
+_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+# Sonnet 5.x runs adaptive thinking by default, and thinking tokens count
+# against max_tokens. The old 500 budget (sized for ~4 sentences of visible
+# text) could be spent before any text arrived. Low effort keeps thinking
+# short for these grounded, short-form answers; the larger ceilings are
+# headroom, not a target. _trim_to_last_sentence() stays the backstop.
+_OUTPUT_CONFIG = {"effort": "low"}
+
+
+def _effort_kwargs() -> dict:
+    """`output_config` for models that accept `effort`, else nothing.
+
+    Haiku 4.5 and pre-4.6 Sonnets 400 on `effort`, and every failure here
+    is swallowed into "Claude unavailable" — so an ANTHROPIC_MODEL
+    override to one of them would silently disable the AI features.
+    """
+    if "haiku" in _MODEL or re.search(r"-(3|4-[015])(-|$)", _MODEL):
+        return {}
+    return {"output_config": _OUTPUT_CONFIG}
+_MAX_TOKENS = 2000
 
 _client = None
 _client_checked = False
@@ -117,6 +132,7 @@ def generate_scouting_narrative(player: dict, report: dict, team: str) -> "str |
         resp = client.messages.create(
             model=_MODEL,
             max_tokens=_MAX_TOKENS,
+            **_effort_kwargs(),
             messages=[{"role": "user", "content": _build_prompt(player, report, team)}],
         )
         text = "".join(
@@ -131,7 +147,11 @@ def generate_scouting_narrative(player: dict, report: dict, team: str) -> "str |
         return None
 
 
-_CHAT_MAX_TOKENS = 600
+# The dedicated chat tab invites longer comparative questions ("rank my
+# three worst contracts and who replaces each") than the old inline box
+# did; 600 cut those off. Streaming makes the longer wait invisible, and
+# the budget is shared with thinking (see _MAX_TOKENS).
+_CHAT_MAX_TOKENS = 4000
 _CHAT_SYSTEM_PROMPT = """You are the AI GM Assistant for a Madden 27 franchise \
 dashboard, answering the user's questions about their team, {team}. Base every \
 answer strictly on the data below — never invent a player, stat, contract, or \
@@ -164,6 +184,7 @@ def answer_gm_question(question: str, context_summary: str,
         resp = client.messages.create(
             model=_MODEL,
             max_tokens=_CHAT_MAX_TOKENS,
+            **_effort_kwargs(),
             system=_CHAT_SYSTEM_PROMPT.format(team=team, context_summary=context_summary),
             messages=messages,
         )
@@ -177,3 +198,112 @@ def answer_gm_question(question: str, context_summary: str,
         return text or None
     except Exception:
         return None
+
+
+CHAT_ERROR_MESSAGE = ("Sorry — I couldn't reach Claude just now. "
+                      "Please try again in a moment.")
+
+
+# A question can take several lookups ("compare these three EDGEs, then
+# price the best one"), but a runaway loop spends tokens and makes the
+# user wait. Past this, the model is told to answer with what it has.
+_MAX_TOOL_ROUNDS = 6
+
+_TOOLS_PROMPT = """
+
+You also have tools that call this dashboard's own trade engine: player \
+lookup (ratings, trade value, verdict, cap hit), trade targets by position, \
+trade evaluation with a draft-pick counter-offer, and trade-partner search. \
+Use them whenever an answer depends on a trade value, a trade verdict, a \
+player on another team, or a cap figure for a specific player — don't \
+estimate those from the snapshot. Only DET, CHI and MIN are modeled as \
+trade partners; say so if the user asks about another team."""
+
+
+def stream_gm_answer(question: str, context_summary: str,
+                     history: "list[dict]", team: str, tool_ctx=None):
+    """Streaming version of `answer_gm_question`, for `st.write_stream`.
+
+    Yields text chunks as Claude produces them. With `tool_ctx` (a
+    `src.chat_tools.ToolContext`), Claude may call the trade-engine tools
+    mid-answer; each call is announced with a short italic line so the
+    user can see what was looked up, and the loop continues until Claude
+    answers or `_MAX_TOOL_ROUNDS` is reached.
+
+    Never raises: a missing client or a failure before any text arrived
+    yields `CHAT_ERROR_MESSAGE`; a failure mid-answer appends a short
+    note so a half answer isn't mistaken for a complete one.
+    """
+    client = _get_client()
+    if client is None:
+        yield CHAT_ERROR_MESSAGE
+        return
+
+    from src import chat_tools  # local: keeps this module importable alone
+
+    system = _CHAT_SYSTEM_PROMPT.format(team=team, context_summary=context_summary)
+    tool_kwargs = {}
+    if tool_ctx is not None:
+        system += _TOOLS_PROMPT
+        tool_kwargs = {"tools": chat_tools.TOOL_DEFINITIONS}
+
+    messages = list(history) + [{"role": "user", "content": question}]
+    produced = False
+    rounds = 0
+    try:
+        while True:
+            with client.messages.stream(
+                model=_MODEL,
+                max_tokens=_CHAT_MAX_TOKENS,
+                **_effort_kwargs(),
+                system=system,
+                messages=messages,
+                **tool_kwargs,
+            ) as stream:
+                for chunk in stream.text_stream:
+                    if chunk:
+                        produced = True
+                        yield chunk
+                final = stream.get_final_message()
+
+            if final.stop_reason == "refusal":
+                yield ("\n\n_(Claude declined to answer this one — try "
+                       "rephrasing the question.)_")
+                return
+            tool_uses = [b for b in final.content if getattr(b, "type", "") == "tool_use"]
+            if final.stop_reason == "max_tokens":
+                # A tool_use cut off here parses as a plausible partial
+                # input, so never run it.
+                yield "\n\n_(answer truncated — ask me to continue)_"
+                return
+            if final.stop_reason != "tool_use" or not tool_uses:
+                break
+
+            rounds += 1
+            # Append the whole assistant turn unchanged (thinking blocks
+            # included) so the history stays append-only.
+            messages.append({"role": "assistant", "content": final.content})
+            results = []
+            for block in tool_uses:
+                label = chat_tools.describe(block.name, block.input)
+                yield f"\n\n_🔎 {label[:1].upper() + label[1:]}…_\n\n"
+                produced = True
+                if rounds > _MAX_TOOL_ROUNDS:
+                    out = {"error": "Tool budget for this answer is used up. "
+                                    "Answer with what you have."}
+                else:
+                    out = chat_tools.run(tool_ctx, block.name, block.input)
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(out),
+                    **({"is_error": True} if "error" in out else {}),
+                })
+            # All results for this turn go back in one user message.
+            messages.append({"role": "user", "content": results})
+    except Exception:
+        yield ("\n\n_(connection lost — answer incomplete)_"
+               if produced else CHAT_ERROR_MESSAGE)
+        return
+    if not produced:
+        yield CHAT_ERROR_MESSAGE

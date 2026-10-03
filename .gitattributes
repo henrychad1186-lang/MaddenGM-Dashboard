@@ -1,1 +1,13 @@
-app.py text eol=lf
+# Normalize all text files to LF on checkout and commit.
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.toml  text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.csv   text eol=lf
+
+*.docx  binary
+*.png   binary

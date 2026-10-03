@@ -7,19 +7,14 @@ import os
 import pandas as pd
 import math
 
+from src import roster_csv
+
 # ──────────────────────────────────────────────
 # LOAD ROSTER DATA — Real CSV for GB + Demo for CPU teams
 # ──────────────────────────────────────────────
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
-_COLUMN_ALIASES = {
-    "Player Name": "Name",
-    "Position": "Pos",
-    "Dev Trait": "Dev",
-    "Cap Savings": "Savings",
-    "Cap Penalty": "Penalty",
-}
 
 # CPU team demo rosters (for trade partner scanning)
 _CPU_DEMO = [
@@ -72,35 +67,35 @@ _CPU_DEMO = [
 
 
 def _load_trade_rosters() -> pd.DataFrame:
-    """Load GB roster from CSV + CPU demo rosters."""
+    """Load GB roster from CSV + CPU demo rosters.
+
+    Never raises — this runs at import, like roster.py's loader, and an
+    unreadable CSV here kills the app just as dead. Guarding only
+    roster.py was not enough: an empty file still raised EmptyDataError
+    from this second reader.
+    """
     cpu_df = pd.DataFrame(_CPU_DEMO)
 
-    if os.path.exists(_ROSTER_CSV):
-        gb_df = pd.read_csv(_ROSTER_CSV)
-        gb_df = gb_df.rename(
-            columns={source: target for source, target in _COLUMN_ALIASES.items() if source in gb_df.columns and target not in gb_df.columns}
-        )
-        # Ensure required columns
-        if "Team" not in gb_df.columns:
-            gb_df["Team"] = "GB"
+    if not os.path.exists(_ROSTER_CSV):
+        return cpu_df
+
+    try:
+        # Shared reader — this used to be a second pd.read_csv with its own
+        # column handling, and drifted from roster.py's until an exported
+        # CSV made both raise KeyError: 'Pos' at import.
+        gb_df = roster_csv.load_roster_csv(_ROSTER_CSV)
+
+        if roster_csv.missing_required_columns(gb_df):
+            # roster.py reports this to the user; trading against a roster
+            # we can't read is not possible, so fall back to CPU teams only.
+            return cpu_df
+
         if "Scheme" not in gb_df.columns:
             gb_df["Scheme"] = "WestCoast"
-        if "Dev" not in gb_df.columns:
-            gb_df["Dev"] = "Normal"
-        else:
-            gb_df["Dev"] = gb_df["Dev"].replace({"X-Factor": "Superstar X"}).fillna("Normal")
-        # Normalize REDG/LEDG → EDGE
-        gb_df["Pos"] = gb_df["Pos"].replace({
-            "REDG": "EDGE",
-            "LEDG": "EDGE",
-            "LOLB": "OLB",
-            "ROLB": "OLB",
-            "SAM": "OLB",
-            "WILL": "OLB",
-            "MIKE": "MLB",
-        })
+        # Same normalisation roster.py applies (REDG → EDGE, SAM → OLB...)
+        gb_df["Pos"] = gb_df["Pos"].apply(roster_csv.normalize_position)
         return pd.concat([gb_df, cpu_df], ignore_index=True)
-    else:
+    except Exception:                              # noqa: BLE001 — see docstring
         return cpu_df
 
 
@@ -121,14 +116,19 @@ DEV_MULTIPLIERS = {
     "Normal": 1.00,
 }
 
+# On the same scale as get_trade_value(), which tops out around 1,400 for
+# a 99 OVR Superstar X. These were 10x larger (a 1st = 8,500, six
+# Justin Jeffersons), so every real value gap was "bridged" by a 6th- or
+# 7th-round pick: Jacobs for Jefferson, a 627-point gap, came back as
+# "add a 6th-Round Pick". A 1st is now roughly a young 85+ OVR starter.
 DRAFT_PICK_VALUES = [
-    ("1st-Round Pick",  8500),
-    ("2nd-Round Pick",  5500),
-    ("3rd-Round Pick",  3500),
-    ("4th-Round Pick",  2000),
-    ("5th-Round Pick",  1200),
-    ("6th-Round Pick",   700),
-    ("7th-Round Pick",   350),
+    ("1st-Round Pick",  850),
+    ("2nd-Round Pick",  550),
+    ("3rd-Round Pick",  350),
+    ("4th-Round Pick",  200),
+    ("5th-Round Pick",  120),
+    ("6th-Round Pick",   70),
+    ("7th-Round Pick",   35),
 ]
 
 
@@ -156,6 +156,38 @@ def parse_salary(val) -> float:
         return 0.0
 
 
+# Position-specific age curves
+# (peak_start, peak_end, bonus_per_yr_under, penalty_per_yr_over, floor)
+AGE_CURVES = {
+    "QB":   (26, 32, 0.02, 0.03, 0.60),  # QBs age gracefully
+    "HB":   (23, 27, 0.03, 0.07, 0.40),  # RBs cliff hard
+    "WR":   (23, 28, 0.03, 0.06, 0.45),
+    "TE":   (24, 30, 0.02, 0.04, 0.50),
+    "LT":   (24, 31, 0.02, 0.04, 0.50),  # OL stays productive
+    "LG":   (24, 31, 0.02, 0.04, 0.50),
+    "C":    (24, 31, 0.02, 0.04, 0.50),
+    "RG":   (24, 31, 0.02, 0.04, 0.50),
+    "RT":   (24, 31, 0.02, 0.04, 0.50),
+    "EDGE": (23, 29, 0.03, 0.05, 0.45),  # Pass rushers
+    "REDG": (23, 29, 0.03, 0.05, 0.45),
+    "LEDG": (23, 29, 0.03, 0.05, 0.45),
+    "DT":   (24, 30, 0.02, 0.04, 0.50),
+    "MLB":  (24, 29, 0.03, 0.05, 0.45),
+    "OLB":  (24, 29, 0.03, 0.05, 0.45),
+    "CB":   (23, 28, 0.03, 0.06, 0.40),  # CBs lose a step fast
+    "FS":   (24, 29, 0.03, 0.05, 0.45),
+    "SS":   (24, 29, 0.03, 0.05, 0.45),
+    "K":    (24, 35, 0.01, 0.02, 0.70),  # Kickers age slowly
+    "P":    (24, 35, 0.01, 0.02, 0.70),
+}
+_DEFAULT_AGE_CURVE = (24, 29, 0.03, 0.05, 0.45)
+
+
+def age_curve(pos: str) -> tuple:
+    """(peak_start, peak_end, bonus/yr under, penalty/yr over, floor) for a position."""
+    return AGE_CURVES.get(pos, _DEFAULT_AGE_CURVE)
+
+
 def get_trade_value(player: dict) -> float:
     """Calculate a trade-value score for a single player.
 
@@ -174,33 +206,8 @@ def get_trade_value(player: dict) -> float:
     pos_weight = POSITION_WEIGHTS.get(pos, 0.85)
     base *= pos_weight
 
-    # Position-specific age curves
-    # (peak_start, peak_end, bonus_per_yr_under, penalty_per_yr_over, floor)
-    _AGE_CURVES = {
-        "QB":   (26, 32, 0.02, 0.03, 0.60),  # QBs age gracefully
-        "HB":   (23, 27, 0.03, 0.07, 0.40),  # RBs cliff hard
-        "WR":   (23, 28, 0.03, 0.06, 0.45),
-        "TE":   (24, 30, 0.02, 0.04, 0.50),
-        "LT":   (24, 31, 0.02, 0.04, 0.50),  # OL stays productive
-        "LG":   (24, 31, 0.02, 0.04, 0.50),
-        "C":    (24, 31, 0.02, 0.04, 0.50),
-        "RG":   (24, 31, 0.02, 0.04, 0.50),
-        "RT":   (24, 31, 0.02, 0.04, 0.50),
-        "EDGE": (23, 29, 0.03, 0.05, 0.45),  # Pass rushers
-        "REDG": (23, 29, 0.03, 0.05, 0.45),
-        "LEDG": (23, 29, 0.03, 0.05, 0.45),
-        "DT":   (24, 30, 0.02, 0.04, 0.50),
-        "MLB":  (24, 29, 0.03, 0.05, 0.45),
-        "OLB":  (24, 29, 0.03, 0.05, 0.45),
-        "CB":   (23, 28, 0.03, 0.06, 0.40),  # CBs lose a step fast
-        "FS":   (24, 29, 0.03, 0.05, 0.45),
-        "SS":   (24, 29, 0.03, 0.05, 0.45),
-        "K":    (24, 35, 0.01, 0.02, 0.70),  # Kickers age slowly
-        "P":    (24, 35, 0.01, 0.02, 0.70),
-    }
     # Default curve for unmapped positions
-    peak_start, peak_end, bonus_yr, penalty_yr, floor = _AGE_CURVES.get(
-        pos, (24, 29, 0.03, 0.05, 0.45))
+    peak_start, peak_end, bonus_yr, penalty_yr, floor = age_curve(pos)
 
     if age < peak_start:
         age_factor = 1.0 + (peak_start - age) * bonus_yr

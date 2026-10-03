@@ -6,7 +6,7 @@ AI-powered Madden franchise management dashboard. Track game performance, analyz
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.10 or higher (Streamlit 1.51+ needs it; CI runs 3.10 and 3.11)
 - pip (Python package manager)
 
 ### Installation & Launch
@@ -24,6 +24,7 @@ The app will open at `http://localhost:8501`
 
 | Tab | What It Does |
 |-----|-------------|
+| 🏠 **Home** | Record, cap exposure, top needs, actionable moves, and the **close-game panel**: record in games decided by ≤ 8 vs by more, split by ≤ 3 and 4–8, per-game stat comparison, and which stats get worse in close games |
 | 📊 **Scheme Performance** | Strategy map, scheme head-to-head breakdown, season momentum curve |
 | 💪 **Wear & Tear** | Turnovers, defensive performance, rush/pass balance tracking |
 | 🏈 **Trade Machine** | AI trade finder, player radar charts, deal evaluator |
@@ -32,8 +33,10 @@ The app will open at `http://localhost:8501`
 | 🏆 **Season Awards** | Auto-generated MVP, DPOY, ROY, Iron Man, Best Contract |
 | 🎯 **Coach DNA** | Coaching archetype radar chart computed from your play style |
 | 📈 **Progression** | Snapshot roster OVRs over time, track player development |
-| 🗂️ **Raw Data** | Full game log table |
+| 🗂️ **Raw Data** | Full game log table, plus a **⚠️ Data checks** panel listing rows to verify against the box score: yard totals that don't add up, point differentials or results that don't match the score, and implausible or template-looking time of possession |
 | 🤖 **AI GM Assistant** | Plug in a new draft pick, UDFA, or trade target and get an instant AI scouting report + roster injection |
+| 💬 **GM Chat** | Dedicated chat with the AI GM — conversation list, search, streaming answers grounded in roster, cap and game log |
+| 🔎 **Draft Scouting** | Combine / pro day numbers and revealed letter grades → rating estimates, core-attribute fit and scouting priority, with post-draft calibration |
 
 ## Data Import
 
@@ -43,6 +46,14 @@ Three ways to get your franchise data into the app:
 2. **📤 File Upload** — Upload CSV or Excel files via the sidebar
 3. **📁 Local File** — Place `game_logs.csv` in the `data/` folder
 
+The dashboard shows one source at a time, in that order. **➕ Log this week's
+game** appends to the local `data/game_logs.csv`, so it's only offered when
+that file is the source; with a Sheet or upload active, add games there.
+Syncing a Sheet never writes over the local log (its offline copy is
+`data/game_logs_sheet_cache.csv`, used if the Sheet can't be reached). On
+Streamlit Cloud the local file resets on redeploy: download it from
+**Raw Data** after logging, or keep the log in a Sheet.
+
 ### Required Columns (game_logs.csv)
 
 | Column | Example | Required |
@@ -51,13 +62,28 @@ Three ways to get your franchise data into the app:
 | `Points_For` | 35 | Yes |
 | `Points_Against` | 10 | Yes |
 | `Result` | W or WIN | Yes |
-| `TOP` | 27:45 | Optional |
+| `TOP` | 27:45 | Optional — leave blank if unknown rather than estimating |
 | `Playbook` | WestCoast Zone Run | Optional |
 | `Pass_Yards` | 285 | Optional |
 | `Rush_Yards` | 142 | Optional |
+| `Total_Yards` | 427 | Optional — pass + rush. Use Madden's **Off Yards Gained** row, not "Total Yards Gained", which adds return yards |
+| `Pass_Yards_Allowed` / `Rush_Yards_Allowed` / `Total_Yards_Allowed` | 210 / 95 / 305 | Optional — the opponent's offense rows; same rule for the total |
 | `Turnovers` | 1 | Optional |
 | `Takeaways` | 3 | Optional |
 | `Sacks_For` | 4 | Optional |
+| `RZ_TD_Made` | 3 | Optional |
+| `RZ_Att` | 4 | Optional — with `RZ_TD_Made`, gives Red Zone TD% |
+| `Third_Down_Att` | 13 | Optional |
+| `Third_Down_Conv` | 6 | Optional — with `Third_Down_Att`, gives 3rd Down Conv %; on its own, conversions per game |
+
+3rd Down Conv % and Red Zone TD% show in the KPI row and feed the GM Chat.
+Both are totals over totals across the games that recorded attempts; games
+logged without them are left out, not counted as 0-for-0. Madden's post-game
+box score lists 3rd-down conversions but not attempts, so when no game has
+attempts the card shows conversions per game instead (a weaker signal: it
+rises with how often you face 3rd down, not only how well you convert). Logging a game with
+these stats through **➕ Log this week's game** adds the columns to an older
+CSV's header automatically; existing rows are not rewritten.
 
 ### Roster Data (packers_roster.csv)
 
@@ -99,7 +125,7 @@ To turn on live Claude scouting narratives, set an Anthropic API key:
 - **Local:** `export ANTHROPIC_API_KEY=sk-ant-...` before running `streamlit run app.py`
 - **Streamlit Cloud:** add `ANTHROPIC_API_KEY = "sk-ant-..."` under your app's Settings → Secrets (this writes to `.streamlit/secrets.toml`, which is gitignored — never commit a key to the repo)
 
-Optionally set `ANTHROPIC_MODEL` to override the model used (defaults to `claude-sonnet-5`) — useful if a model is deprecated or you want to trade quality for cost/latency without a code change.
+Optionally set `ANTHROPIC_MODEL` to override the model used (defaults to `claude-sonnet-5-5`) — useful if a model is deprecated or you want to trade quality for cost/latency without a code change.
 
 Without a key configured, the tab falls back to the heuristic-written
 blurb automatically — the grade/verdict/trade-value logic is unaffected
@@ -107,9 +133,139 @@ either way. The AI GM Assistant tab shows a badge (🟢 Live Claude
 scouting / ⚪ Heuristic scouting) so it's always clear which mode is active,
 and each report card is tagged ✨ Claude or ⚙️ Heuristic accordingly.
 
+## GM Chat
+
+The **💬 Chat** tab is a dedicated chat with the AI GM, laid out like a chat app:
+
+- **Left:** conversation list for the selected team — ➕ New chat, search, open, 🗑️ delete
+- **Right:** message pane with streaming answers, suggested starter questions,
+  🔄 regenerate last answer, ⬇️ export the conversation as Markdown
+
+Every answer is grounded in a text snapshot of the same data the other tabs
+use: roster with cut/keep verdicts and trade values, position grades,
+positional needs, cap/dead-cap, and the game log (record, points, red zone
+TDs, turnovers, the close-game breakdown, record by playbook, last 5 games,
+3rd down conversion % (or conversions per game when only conversions are
+logged), and red zone TD% when trips are logged). The game-log part
+respects the sidebar **Dashboard Filters**. Any stat that isn't tracked is
+labelled as such, so the model says so rather than guessing.
+
+For anything that needs an exact number, the chat calls the dashboard's own
+trade engine instead of estimating (`src/chat_tools.py`, all read-only):
+
+| Tool | Answers |
+|---|---|
+| `lookup_player` | Ratings, trade value, and for your players the cut/keep verdict and cap hit if moved |
+| `list_trade_targets` | Players at a position on other teams, by trade value, with OVR/age filters |
+| `evaluate_trade` | Verdict for a proposed swap, both sides' value, and a draft-pick sweetener |
+| `find_trade_partners` | Which teams want one of your players, and why |
+
+Each lookup shows in the answer as a 🔎 line. Only DET, CHI and MIN are modeled
+as trade partners.
+
+Requires `ANTHROPIC_API_KEY`.
+
+### Where chats are saved
+
+| Viewer | Saved to |
+|---|---|
+| Signed in, chat Sheet configured | Their own tab in your Google Sheet (survives redeploys) |
+| Signed in, no Sheet | A per-user file under `data/chat_history/` (survives refreshes, not a Streamlit Cloud redeploy) |
+| Not signed in, sign-in configured | Nothing: the session only, with a **🔐 Sign in to save chats** button |
+| No sign-in configured (local use) | Nothing, unless you flip **💾 Save chats on this machine** (or set `GM_CHAT_SAVE=1`), which writes `data/chat_history.json` |
+
+Users are keyed by a hash of their email, so emails never appear in file or tab
+names. If saved chats can't be read (network, permissions), that session is
+not saved at all rather than risk overwriting them.
+
+**1. Sign-in** (Streamlit's built-in `st.login`). Create an OAuth client in
+Google Cloud Console (Web application; redirect URI
+`https://<your-app>.streamlit.app/oauth2callback`), then add to Secrets:
+
+```toml
+[auth]
+redirect_uri = "https://<your-app>.streamlit.app/oauth2callback"
+cookie_secret = "<long random string>"
+
+[auth.google]
+client_id = "<client id>"
+client_secret = "<client secret>"
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+```
+
+A private Streamlit Cloud app whose viewers already sign in also works: the
+app picks up their email from `st.user` with no `[auth]` section.
+
+**2. Chat Sheet** (optional, for storage that survives redeploys). Create a
+Google Cloud service account with the Sheets API enabled, download its JSON
+key, create an empty Google Sheet, and share it with the service account's
+`client_email` as Editor. Then add:
+
+```toml
+[gm_chat_sheets]
+spreadsheet_key = "<the id in the Sheet's URL>"
+
+[gm_chat_sheets.service_account]
+type = "service_account"
+project_id = "..."
+private_key_id = "..."
+private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+client_email = "...@....iam.gserviceaccount.com"
+client_id = "..."
+token_uri = "https://oauth2.googleapis.com/token"
+```
+
+Each user gets a `chats_<hash>` tab with one row per message: team,
+conversation id, title, timestamps, order, role, content.
+
+## Draft Scouting
+
+Enter each prospect's 40, bench reps, arm length, 3-cone and shuttle, plus
+revealed grades in one cell (`MCV:A-; PRS:A to C`: a range while scouting
+narrows it). Import/export the board as CSV; **Save board** writes
+`data/draft_prospects.csv`.
+
+| Input | Estimate | Default rule (Madden 21–26 research) |
+|-------|----------|--------------------------------------|
+| 40 time | Speed | Chart 4.24 = 99 … 4.49 = 90, ±2 noise. ≤ 4.43 = 90+ safe; 4.44–4.49 = coin flip. By time, not class percentile |
+| 3-cone | Agility | 6.60–6.83 → 99–90. Also carries Acceleration; does **not** measure COD |
+| Shuttle | COD | 4.17 ≈ 178 AGI+COD points; COD = total − 3-cone AGI (even split without a 3-cone). Slope assumed |
+| Bench + arm | Strength | Reps scaled by arm length; 38 reps / 32" = 97. Slope assumed |
+| Letter grade | Rating range | Same range for every attribute. Only A- = 82–85 is confirmed; the rest continue its 4-point width |
+
+**Priority:** *Scout now* = a core attribute for the position already
+revealed at A-tier (floor ≥ 82); *Narrow grades* = a core range that still
+includes A-tier; *Unscouted* = no core grades yet. Core attributes per
+position are scheme-dependent and editable.
+
+None of this is confirmed for Madden 27. Every value is editable under
+**Scouting rules** (saved to `data/draft_rules.json`, downloadable). After
+the draft, enter drafted players' real ratings in the `Actual_` columns:
+the **Calibration** table shows each rule's mean error and average miss,
+which is how the defaults get replaced with Madden 27 numbers. Each
+estimate's *Basis* says whether it came from the researched range, an
+extrapolation, or an assumed slope.
+
 ## GitHub Actions
 
-Automated Python linting on every push. Check the [Actions tab](https://github.com/henrychad1186-lang/MaddenGM-Dashboard/actions) for build status.
+flake8 (syntax errors and undefined names fail the build), a `py_compile` of `app.py`, and the full pytest suite, on Python 3.10 and 3.11, for every push to `main` and every pull request into it. Check the [Actions tab](https://github.com/henrychad1186-lang/MaddenGM-Dashboard/actions) for build status.
+
+**Dependency canary** (`.github/workflows/dependency-canary.yml`) runs every
+Monday, on demand from the Actions tab, and on PRs that change
+`requirements.txt`:
+
+- **newest**: every dependency upgraded to its latest release, on the newest
+  Python. Catches a breaking Streamlit / pandas / anthropic release without
+  waiting for someone to push.
+- **lowest**: every `>=` floor in `requirements.txt` installed exactly, on
+  Python 3.10, so the declared minimums stay true.
+
+The smoke test also checks for Streamlit deprecation notices, so an API
+Streamlit is about to remove shows up while the old call still works. In
+regular CI and local runs that is a warning (listed on the Actions run
+page); the canary's **newest** job sets `STRICT_DEPRECATIONS=1` and fails
+on it. A scheduled failure opens (or comments on) an issue labelled
+`dependency-canary`.
 
 ## Deploy
 

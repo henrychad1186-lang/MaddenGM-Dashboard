@@ -6,7 +6,20 @@ Loads real roster data from data/packers_roster.csv when available.
 import os
 import pandas as pd
 
+from src import roster_csv
+# Canonical salary parser lives in trade_engine; re-exported here under the
+# _parse_sal name that roster.py internals already use.
+from src.trade_engine import parse_salary as _parse_sal
+
 from src.theme import RANK_COLORS, rank_color
+
+# Problems found while loading the CSV, surfaced in the Roster Explorer
+# alongside ROSTER_WARNINGS. Populated during _load_rosters().
+SOURCE_COLUMN_ISSUES: "list[str]" = []
+
+# The headings the roster CSV was actually read with, so writes can go
+# back out in the same schema. Populated during _load_rosters().
+SOURCE_COLUMNS: "list[str]" = []
 
 # ──────────────────────────────────────────────
 # POSITION → GROUP MAPPING
@@ -14,34 +27,38 @@ from src.theme import RANK_COLORS, rank_color
 
 _OFFENSE_POS = {"QB", "HB", "FB", "WR",
                 "TE", "LT", "LG", "C", "RG", "RT", "OL"}
+# SAM/WILL/MIKE are Madden's linebacker labels (strongside, weakside,
+# middle). They were absent here, so _assign_group fell through to its
+# "Offense" default and filed linebackers with the offensive line.
 _DEFENSE_POS = {"EDGE", "REDG", "LEDG", "DT", "DL", "MLB", "OLB", "LOLB", "ROLB",
-                "CB", "FS", "SS", "S", "LB"}
+                "SAM", "WILL", "MIKE", "CB", "FS", "SS", "S", "LB"}
 _ST_POS = {"K", "P"}
+
+# Unrecognised positions default to Offense, which is silent and wrong for
+# anything defensive. Collected so the Roster Explorer can say so.
+UNKNOWN_POSITIONS: "set[str]" = set()
 
 
 def _assign_group(pos: str) -> str:
-    pos_upper = pos.upper().strip()
+    pos_upper = str(pos).upper().strip()
     if pos_upper in _OFFENSE_POS:
         return "Offense"
     elif pos_upper in _DEFENSE_POS:
         return "Defense"
     elif pos_upper in _ST_POS:
         return "Special Teams"
+    UNKNOWN_POSITIONS.add(pos_upper)
     return "Offense"  # default
 
 
 def _normalize_pos(pos: str) -> str:
-    """Normalize position names (e.g., REDG/LEDG → EDGE, LOLB/ROLB → OLB)."""
-    pos_upper = pos.upper().strip()
-    if pos_upper in ("REDG", "LEDG"):
-        return "EDGE"
-    if pos_upper in ("LOLB", "ROLB"):
-        return "OLB"
-    if pos_upper in ("SAM", "WILL"):
-        return "OLB"
-    if pos_upper == "MIKE":
-        return "MLB"
-    return pos_upper
+    """Normalize position names (e.g., REDG/LEDG → EDGE, SAM/WILL → OLB).
+
+    Takes str() defensively: a blank cell in the CSV arrives as a float
+    nan, and `nan.upper()` raised AttributeError during module import,
+    which killed the app before any error could be displayed.
+    """
+    return roster_csv.normalize_position(pos)
 
 
 # ──────────────────────────────────────────────
@@ -50,48 +67,63 @@ def _normalize_pos(pos: str) -> str:
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
-_COLUMN_ALIASES = {
-    "Player Name": "Name",
-    "Position": "Pos",
-    "Dev Trait": "Dev",
-    "Cap Savings": "Savings",
-    "Cap Penalty": "Penalty",
-}
 
 
-def _normalize_dev(dev: str) -> str:
-    dev_text = str(dev).strip()
-    if dev_text == "X-Factor":
-        return "Superstar X"
-    return dev_text or "Normal"
-
-
-def _normalize_roster_frame(df: pd.DataFrame) -> pd.DataFrame:
-    renamed = df.rename(
-        columns={source: target for source, target in _COLUMN_ALIASES.items() if source in df.columns and target not in df.columns}
-    ).copy()
-    if "Team" not in renamed.columns:
-        renamed["Team"] = "GB"
-    if "Dev" in renamed.columns:
-        renamed["Dev"] = renamed["Dev"].apply(_normalize_dev)
-    else:
-        renamed["Dev"] = "Normal"
-    if "Pos" in renamed.columns:
-        renamed["Pos"] = renamed["Pos"].apply(_normalize_pos)
-        renamed["Group"] = renamed["Pos"].apply(_assign_group)
-    return renamed
+def _demo_roster() -> pd.DataFrame:
+    """Minimal stand-in used when the CSV is absent or unusable."""
+    return pd.DataFrame([
+        {"Team": "GB", "Name": "Demo Player", "Pos": "QB", "OVR": 75,
+         "Age": 25, "Dev": "Normal", "Group": "Offense"},
+    ])
 
 
 def _load_rosters() -> pd.DataFrame:
-    """Load roster data from CSV if available, otherwise use minimal demo."""
-    if os.path.exists(_ROSTER_CSV):
-        return _normalize_roster_frame(pd.read_csv(_ROSTER_CSV))
-    else:
-        # Minimal fallback demo
-        return pd.DataFrame([
-            {"Team": "GB", "Name": "Demo Player", "Pos": "QB", "OVR": 75,
-             "Age": 25, "Dev": "Normal", "Group": "Offense"},
-        ])
+    """Load roster data from CSV if available, otherwise use minimal demo.
+
+    Never raises. This runs at import, so anything thrown here takes down
+    the whole app — including the Roster Explorer panel that would have
+    explained the problem. An earlier version claimed to fall back but
+    left `pd.read_csv` and the position normalisation unguarded: an empty
+    file (EmptyDataError) and a blank Position cell (AttributeError on
+    nan) each still killed startup.
+
+    A ragged row is not among those cases, despite an earlier version of
+    this docstring saying so: pandas does not raise on one. It treats the
+    first field as an index and shifts every column left, so `OVR` ends
+    up holding a position string. The load survives it and
+    `validate_roster_df` is what surfaces the corruption.
+    """
+    if not os.path.exists(_ROSTER_CSV):
+        return _demo_roster()
+
+    try:
+        raw = pd.read_csv(_ROSTER_CSV)
+        df = roster_csv.normalize_roster_df(raw)
+
+        missing = roster_csv.missing_required_columns(df)
+        if missing:
+            SOURCE_COLUMN_ISSUES.append(
+                f"Roster CSV is missing required column(s): "
+                f"{', '.join(missing)}. The file's columns are: "
+                f"{', '.join(map(str, raw.columns))}. Using demo data until "
+                f"the file provides them.")
+            return _demo_roster()
+
+        # Normalize positions and assign groups
+        df["Pos"] = df["Pos"].apply(_normalize_pos)
+        df["Group"] = df["Pos"].apply(_assign_group)
+    except Exception as exc:                       # noqa: BLE001 — see docstring
+        SOURCE_COLUMN_ISSUES.append(
+            f"Roster CSV could not be read ({type(exc).__name__}: {exc}). "
+            f"Using demo data until the file is fixed.")
+        return _demo_roster()
+
+    # Only now, having actually loaded the file, record its headings.
+    # Recording them earlier meant a fallback-to-demo still looked
+    # writable, and "Save to roster CSV" replaced the user's roster with
+    # the single demo row.
+    SOURCE_COLUMNS[:] = list(raw.columns)
+    return df
 
 
 def validate_roster_df(df: pd.DataFrame) -> list[str]:
@@ -229,29 +261,60 @@ def ovr_label(ovr: int) -> str:
         return "Developing"
 
 
-def _letter_grade(avg_ovr: float) -> str:
-    """Convert an average OVR to a letter grade."""
-    if avg_ovr >= 90:
+def _letter_grade(rating: float) -> str:
+    """Convert a position group rating to a letter grade calibrated to Madden NFL OVR distribution.
+
+    Grade Tiers:
+      >= 93.0: A+ (Generational / Top 3 NFL elite anchor)
+      >= 88.0: A  (All-Pro caliber room)
+      >= 85.0: A- (Pro Bowl / High-end starter)
+      >= 82.0: B+ (Quality starter / upper-tier room)
+      >= 78.0: B  (Solid NFL starter / good contributor)
+      >= 75.0: B- (Average starter / serviceable)
+      >= 72.0: C+ (Below average starter / bridge starter)
+      >= 68.0: C  (Low starter / clear upgrade need)
+      >= 65.0: C- (Deficient starter / backup quality)
+      >= 60.0: D  (Fringe roster / practice squad caliber)
+      < 60.0:  F  (Critical roster liability)
+    """
+    if rating >= 93.0:
         return "A+"
-    elif avg_ovr >= 85:
+    elif rating >= 88.0:
         return "A"
-    elif avg_ovr >= 80:
+    elif rating >= 85.0:
+        return "A-"
+    elif rating >= 82.0:
         return "B+"
-    elif avg_ovr >= 75:
+    elif rating >= 78.0:
         return "B"
-    elif avg_ovr >= 70:
+    elif rating >= 75.0:
+        return "B-"
+    elif rating >= 72.0:
+        return "C+"
+    elif rating >= 68.0:
         return "C"
-    else:
+    elif rating >= 65.0:
+        return "C-"
+    elif rating >= 60.0:
         return "D"
+    else:
+        return "F"
 
 
 def _grade_color(grade: str) -> str:
     """Return a CSS color for a letter grade (sequential quality scale)."""
     return {
+        "F": RANK_COLORS[0],
         "D": RANK_COLORS[0],
+        "C-": RANK_COLORS[1],
         "C": RANK_COLORS[1],
-        "B": RANK_COLORS[2], "B+": RANK_COLORS[2],
-        "A": RANK_COLORS[3], "A+": RANK_COLORS[3],
+        "C+": RANK_COLORS[1],
+        "B-": RANK_COLORS[2],
+        "B": RANK_COLORS[2],
+        "B+": RANK_COLORS[2],
+        "A-": RANK_COLORS[3],
+        "A": RANK_COLORS[3],
+        "A+": RANK_COLORS[3],
     }.get(grade, "#ffffff")
 
 
@@ -260,48 +323,95 @@ _POS_ORDER = ["QB", "HB", "FB", "WR", "TE", "LT", "LG", "C", "RG", "RT",
               "EDGE", "DT", "MLB", "OLB", "CB", "SS", "FS"]
 POSITION_ORDER = _POS_ORDER
 
+# Position starter counts for realistic depth-weighted room ratings
+_THREE_STARTER_POS = {"WR", "CB"}
+_TWO_STARTER_POS = {"EDGE", "DT", "MLB", "OLB"}
+
+
+def _calculate_position_rating(pos: str, ovrs: "list[int]") -> float:
+    """Calculate an accurate depth-weighted rating for a position room.
+
+    In NFL/Madden, starters play 80-100% of snaps. A pure arithmetic mean
+    unfairly penalizes teams with elite starters for keeping raw developmental
+    backups. This weights starters heavily based on modern snap-share realities:
+      - 3-starter positions (WR in 11 personnel, CB in nickel): weights top 3
+      - 2-starter positions (EDGE, DT, LB): weights top 2 starters
+      - 1-starter positions (QB, OL, S, TE, HB, ST): primary starter carries 75-80%
+    """
+    if not ovrs:
+        return 0.0
+    sorted_ovrs = sorted(ovrs, reverse=True)
+    n = len(sorted_ovrs)
+
+    if n == 1:
+        return float(sorted_ovrs[0])
+
+    if pos in _THREE_STARTER_POS:
+        if n == 2:
+            return 0.55 * sorted_ovrs[0] + 0.45 * sorted_ovrs[1]
+        elif n == 3:
+            return 0.40 * sorted_ovrs[0] + 0.35 * sorted_ovrs[1] + 0.25 * sorted_ovrs[2]
+        else:
+            depth_avg = sum(sorted_ovrs[3:]) / len(sorted_ovrs[3:])
+            return (0.35 * sorted_ovrs[0] +
+                    0.30 * sorted_ovrs[1] +
+                    0.22 * sorted_ovrs[2] +
+                    0.13 * depth_avg)
+
+    elif pos in _TWO_STARTER_POS:
+        if n == 2:
+            return 0.55 * sorted_ovrs[0] + 0.45 * sorted_ovrs[1]
+        elif n == 3:
+            return 0.48 * sorted_ovrs[0] + 0.37 * sorted_ovrs[1] + 0.15 * sorted_ovrs[2]
+        else:
+            depth_avg = sum(sorted_ovrs[3:]) / len(sorted_ovrs[3:])
+            return (0.45 * sorted_ovrs[0] +
+                    0.35 * sorted_ovrs[1] +
+                    0.12 * sorted_ovrs[2] +
+                    0.08 * depth_avg)
+
+    else:
+        # Single-starter positions (QB, C, LT, LG, RG, RT, HB, TE, SS, FS, FB, K, P)
+        if n == 2:
+            return 0.78 * sorted_ovrs[0] + 0.22 * sorted_ovrs[1]
+        else:
+            depth_avg = sum(sorted_ovrs[2:]) / len(sorted_ovrs[2:])
+            return (0.75 * sorted_ovrs[0] +
+                    0.18 * sorted_ovrs[1] +
+                    0.07 * depth_avg)
+
 
 def get_position_grades(team: str, extra_players: "list[dict] | None" = None) -> list[dict]:
     """Return letter grades per position group for a team.
 
-    Returns list of dicts: {pos, count, avg_ovr, grade, color}.
+    Returns list of dicts: {pos, count, avg_ovr, raw_avg_ovr, starter_ovr, grade, color}.
     """
     df = _effective_all(extra_players)
     df = df[df["Team"] == team]
     if df.empty:
         return []
+    # One pass over the roster instead of a boolean mask per position.
+    ovrs_by_pos = df.groupby("Pos")["OVR"].apply(
+        lambda s: s.astype(int).tolist()).to_dict()
     grades = []
     for pos in _POS_ORDER:
-        pos_df = df[df["Pos"] == pos]
-        if pos_df.empty:
+        ovrs = ovrs_by_pos.get(pos)
+        if not ovrs:
             continue
-        avg = round(pos_df["OVR"].mean(), 1)
-        grade = _letter_grade(avg)
+        weighted_ovr = round(_calculate_position_rating(pos, ovrs), 1)
+        raw_avg = round(sum(ovrs) / len(ovrs), 1)
+        starter_ovr = int(max(ovrs))
+        grade = _letter_grade(weighted_ovr)
         grades.append({
             "pos": pos,
-            "count": len(pos_df),
-            "avg_ovr": avg,
+            "count": len(ovrs),
+            "avg_ovr": weighted_ovr,
+            "raw_avg_ovr": raw_avg,
+            "starter_ovr": starter_ovr,
             "grade": grade,
             "color": _grade_color(grade),
         })
     return grades
-
-
-def _parse_sal(val) -> float:
-    """Parse salary string like '$3M', '$1.29M', '$600K' to float millions."""
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return 0.0
-    s = str(val).strip().replace("$", "").replace(",", "")
-    if not s:
-        return 0.0
-    try:
-        if s.upper().endswith("M"):
-            return float(s[:-1])
-        elif s.upper().endswith("K"):
-            return float(s[:-1]) / 1000.0
-        return float(s)
-    except ValueError:
-        return 0.0
 
 
 def get_cap_summary(team: str, extra_players: "list[dict] | None" = None) -> dict:
@@ -318,7 +428,7 @@ def get_cap_summary(team: str, extra_players: "list[dict] | None" = None) -> dic
     players = []
     total_sav = 0.0
     total_pen = 0.0
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         sav = _parse_sal(row.get("Savings"))
         pen = _parse_sal(row.get("Penalty"))
         total_sav += sav
