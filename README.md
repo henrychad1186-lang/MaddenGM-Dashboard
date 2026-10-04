@@ -50,7 +50,8 @@ The dashboard shows one source at a time, in that order. **➕ Log this week's
 game** appends to the local `data/game_logs.csv`, so it's only offered when
 that file is the source; with a Sheet or upload active, add games there.
 Syncing a Sheet never writes over the local log (its offline copy is
-`data/game_logs_sheet_cache.csv`, used if the Sheet can't be reached). On
+`data/game_logs_sheet_cache_<hash>.csv`, one per Sheet URL, used if that
+Sheet can't be reached). On
 Streamlit Cloud the local file resets on redeploy: download it from
 **Raw Data** after logging, or keep the log in a Sheet.
 

@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -342,10 +343,15 @@ st.markdown('<div class="hero-title">🏈 Madden NFL 27: Franchise Strategy Audi
 # --- 1. DATA ENGINE ---
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 _GAME_LOGS_CSV = os.path.join(_DATA_DIR, "game_logs.csv")
-# Offline copy of the synced Google Sheet. Kept apart from game_logs.csv:
+# Offline copy of a synced Google Sheet. Kept apart from game_logs.csv:
 # writing the sheet over that file erased any game logged through the
-# entry form that wasn't in the sheet yet.
-_SHEET_CACHE_CSV = os.path.join(_DATA_DIR, "game_logs_sheet_cache.csv")
+# entry form that wasn't in the sheet yet. One file per sheet URL, so a
+# sheet that fails to load never falls back to a different sheet's games.
+
+
+def _sheet_cache_path(url: str) -> str:
+    key = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:16]
+    return os.path.join(_DATA_DIR, f"game_logs_sheet_cache_{key}.csv")
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -367,23 +373,24 @@ def _load_game_log_from_url(url: str) -> "tuple[pd.DataFrame, list[str], bytes]"
     return (*_prepare_game_log(pd.read_csv(io.BytesIO(payload))), payload)
 
 
-def _cache_sheet_locally(payload: bytes) -> None:
+def _cache_sheet_locally(url: str, payload: bytes) -> None:
     """Keep an offline copy of the synced sheet, only rewriting on change.
 
     This used to `df.to_csv` on every rerun — every widget click — which
     rewrote the file, bumped its mtime and so invalidated the disk loader's
     cache each time, even with the sheet unchanged. It also used to write
     over game_logs.csv itself, silently deleting games logged through the
-    entry form; the copy now has its own file.
+    entry form; the copy now has its own file, one per sheet URL.
     """
+    path = _sheet_cache_path(url)
     try:
-        with open(_SHEET_CACHE_CSV, "rb") as fh:
+        with open(path, "rb") as fh:
             if fh.read() == payload:
                 return
     except OSError:
         pass
     try:
-        with open(_SHEET_CACHE_CSV, "wb") as fh:
+        with open(path, "wb") as fh:
             fh.write(payload)
     except OSError:
         pass  # read-only filesystem (e.g. Streamlit Cloud)
@@ -510,15 +517,16 @@ with st.sidebar.expander("📡 Data Import", expanded=True):
         try:
             df, prep_warnings, _sheet_bytes = _load_game_log_from_url(sheet_url.strip())
             # Cache locally so it works offline next time
-            _cache_sheet_locally(_sheet_bytes)
+            _cache_sheet_locally(sheet_url, _sheet_bytes)
             _LOG_SOURCE = "sheet"
             st.success(f"📡 Live Sheet Synced — {len(df)} games!")
         except Exception as e:
             st.warning(f"Sheet sync failed: {e}")
-            if os.path.exists(_SHEET_CACHE_CSV):
+            _cache = _sheet_cache_path(sheet_url)
+            if os.path.exists(_cache):
                 try:
                     df, prep_warnings = _load_game_log_from_disk(
-                        _SHEET_CACHE_CSV, os.path.getmtime(_SHEET_CACHE_CSV))
+                        _cache, os.path.getmtime(_cache))
                     _LOG_SOURCE = "sheet"
                     st.info("Showing the last synced copy of the sheet.")
                 except Exception:
@@ -599,6 +607,9 @@ with st.sidebar.expander("🎚️ Dashboard Filters", expanded=False):
         recent_games = int(games_window.split(" ")[1])
         filtered_df = filtered_df.tail(recent_games)
 
+    # The unfiltered log, for checks that compare neighbouring games
+    # (a filtered view puts non-consecutive games side by side).
+    full_df = df
     df = filtered_df
     st.caption(f"Showing {len(df)} of {all_game_count} games")
 
@@ -2437,7 +2448,7 @@ with tabs[7]:
 # ── TAB 9: Raw Data ──
 with tabs[8]:
     render_tab_header("🗂️", "Raw Data", "Full historical game log table")
-    _issues = data_checks.check_log(df)
+    _issues = data_checks.check_log(full_df)
     if _issues:
         _counts = data_checks.summary(_issues)
         with st.expander(
