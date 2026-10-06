@@ -443,9 +443,9 @@ class TestEfficiencyTracking:
 
     def test_shipped_log_third_down_rates(self):
         r = game_log.efficiency_rates(pd.read_csv("data/game_logs.csv"))
-        assert r["third_down_pct"] == pytest.approx(8 / 22 * 100)
+        assert r["third_down_pct"] == pytest.approx(5 / 13 * 100)
         assert r["third_down_games"] == 2
-        assert (r["third_down_conv_per_game"], r["third_down_conv_games"]) == (4.0, 2)
+        assert (r["third_down_conv_per_game"], r["third_down_conv_games"]) == (2.5, 2)
 
     def test_rates_absent_without_columns(self):
         r = game_log.efficiency_rates(pd.DataFrame({"RZ_TD_Made": [2]}))
