@@ -79,10 +79,12 @@ Streamlit Cloud the local file resets on redeploy: download it from
 
 3rd Down Conv % and Red Zone TD% show in the KPI row and feed the GM Chat.
 Both are totals over totals across the games that recorded attempts; games
-logged without them are left out, not counted as 0-for-0. Madden's post-game
-box score lists 3rd-down conversions but not attempts, so when no game has
-attempts the card shows conversions per game instead (a weaker signal: it
-rises with how often you face 3rd down, not only how well you convert). Logging a game with
+logged without them are left out, not counted as 0-for-0. Both come from
+Madden's post-game **Team Stats** tab: `3rd Down Conv. 7/11 (63%)` is 7
+conversions in 11 attempts, and `Red Zone TD|FG|%` is scores per trip, so
+trips = (TDs + FGs) / % (`1|1|66%` is 3 trips). When no game has attempts
+the card shows conversions per game instead (a weaker signal: it rises with
+how often you face 3rd down, not only how well you convert). Logging a game with
 these stats through **➕ Log this week's game** adds the columns to an older
 CSV's header automatically; existing rows are not rewritten.
 

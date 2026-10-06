@@ -419,7 +419,7 @@ class TestEfficiencyTracking:
         assert r["rz_games"] == 2
 
     def test_conversions_per_game_without_attempts(self):
-        # Madden's box score: conversions only. Blank rows are untracked.
+        # Conversions logged without attempts. Blank rows are untracked.
         r = game_log.efficiency_rates(pd.DataFrame({
             "Third_Down_Att": [None, None, None],
             "Third_Down_Conv": [2, 6, None]}))
