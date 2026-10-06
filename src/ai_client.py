@@ -165,43 +165,6 @@ CURRENT TEAM DATA:
 {context_summary}"""
 
 
-def answer_gm_question(question: str, context_summary: str,
-                       history: "list[dict]", team: str) -> "str | None":
-    """Answer a free-form GM question grounded in a text snapshot of the
-    team's real roster/cap/needs data (see `src.ai_gm.build_context_summary`).
-
-    `history` is prior turns as [{"role": "user"|"assistant", "content": str}, ...],
-    NOT including `question` itself — that's appended here. Returns None if
-    no key is configured or the request fails; there's no non-Claude
-    fallback for open-ended chat, so callers should hide the chat UI
-    entirely when `is_available()` is False rather than call this.
-    """
-    client = _get_client()
-    if client is None:
-        return None
-
-    messages = list(history) + [{"role": "user", "content": question}]
-
-    try:
-        resp = client.messages.create(
-            model=_MODEL,
-            max_tokens=_CHAT_MAX_TOKENS,
-            **_effort_kwargs(),
-            system=_CHAT_SYSTEM_PROMPT.format(team=team, context_summary=context_summary),
-            messages=messages,
-        )
-        text = "".join(
-            block.text for block in resp.content if getattr(block, "type", "") == "text"
-        ).strip()
-        if not text:
-            return None
-        if resp.stop_reason == "max_tokens":
-            text = _trim_to_last_sentence(text)
-        return text or None
-    except Exception:
-        return None
-
-
 CHAT_ERROR_MESSAGE = ("Sorry — I couldn't reach Claude just now. "
                       "Please try again in a moment.")
 
@@ -243,7 +206,12 @@ trade partners; say so if the user asks about another team."""
 
 def stream_gm_answer(question: str, context_summary: str,
                      history: "list[dict]", team: str, tool_ctx=None):
-    """Streaming version of `answer_gm_question`, for `st.write_stream`.
+    """Answer a free-form GM question, streamed for `st.write_stream`.
+
+    Grounded in a text snapshot of the team's real roster/cap/needs data
+    (see `src.ai_gm.build_context_summary`). `history` is prior turns as
+    [{"role": "user"|"assistant", "content": str}, ...], NOT including
+    `question` itself.
 
     Yields text chunks as Claude produces them. With `tool_ctx` (a
     `src.chat_tools.ToolContext`), Claude may call the trade-engine tools

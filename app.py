@@ -2,7 +2,6 @@ import hashlib
 import io
 import json
 import os
-import urllib.request
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -30,6 +29,7 @@ from src import draft_scout
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
 from src import season as season_mod
+from src import sheet_fetch
 from src.roster import (
     get_roster,
     get_team_summary,
@@ -363,14 +363,22 @@ def _load_game_log_from_url(url: str) -> "tuple[pd.DataFrame, list[str], bytes]"
     pandas' float coercion (25 -> 25.0) into the file the entry form
     appends to.
     """
-    # urlopen (like the pd.read_csv(url) it replaces) also honours file://,
-    # which on a shared deployment would let a visitor read server files
-    # into the Raw Data tab.
-    if not url.lower().startswith(("https://", "http://")):
-        raise ValueError("Sheet URL must start with https://")
-    with urllib.request.urlopen(url, timeout=20) as resp:
-        payload = resp.read()
+    # Google's sheet hosts only (plus any the owner allows): fetching any
+    # URL a visitor typed let them use this server to reach addresses it
+    # can see and they can't. See src/sheet_fetch.py.
+    payload = sheet_fetch.fetch_csv(url, _sheet_extra_hosts())
     return (*_prepare_game_log(pd.read_csv(io.BytesIO(payload))), payload)
+
+
+def _sheet_extra_hosts() -> "tuple[str, ...]":
+    """Owner-approved CSV hosts beyond Google Sheets (SHEET_ALLOWED_HOSTS)."""
+    setting = os.environ.get("SHEET_ALLOWED_HOSTS")
+    if setting is None:
+        try:
+            setting = st.secrets.get("SHEET_ALLOWED_HOSTS")
+        except Exception:
+            setting = None
+    return sheet_fetch.parse_hosts(setting)
 
 
 def _cache_sheet_locally(url: str, payload: bytes) -> None:

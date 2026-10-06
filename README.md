@@ -55,6 +55,13 @@ Sheet can't be reached). On
 Streamlit Cloud the local file resets on redeploy: download it from
 **Raw Data** after logging, or keep the log in a Sheet.
 
+The sync box only accepts `https://` Google Sheets links
+(`docs.google.com`, which redirects to `*.googleusercontent.com`); any other
+address is refused before a request is made, so visitors can't use the
+server to fetch internal URLs. To sync a CSV hosted elsewhere, list its host
+in `SHEET_ALLOWED_HOSTS` (env var or Streamlit secret), comma-separated; a
+leading dot allows subdomains, e.g. `SHEET_ALLOWED_HOSTS = "data.example.com, .cdn.example.org"`.
+
 ### Required Columns (game_logs.csv)
 
 | Column | Example | Required |

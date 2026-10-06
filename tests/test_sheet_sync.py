@@ -7,7 +7,7 @@ that file) and not yet in the sheet was deleted on the next sync. The
 copy now lives in its own file, and the form is withdrawn while the
 dashboard is showing the sheet, since a logged game wouldn't appear.
 
-The app is run for real (AppTest) with urlopen replaced, so this covers
+The app is run for real (AppTest) with the network fetch replaced, so this covers
 the sidebar wiring, not just a helper.
 """
 
@@ -17,7 +17,6 @@ import io
 import os
 import pathlib
 import shutil
-import urllib.request
 
 import pytest
 
@@ -25,13 +24,15 @@ pytest.importorskip("streamlit.testing.v1", reason="AppTest needs streamlit >= 1
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
+from src import sheet_fetch  # noqa: E402
+
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _APP = str(_ROOT / "app.py")
 _LOG = _ROOT / "data" / "game_logs.csv"
 _CACHE_GLOB = str(_ROOT / "data" / "game_logs_sheet_cache_*.csv")
 # One URL per test: the app caches each URL's fetch for 120s, so a
 # shared URL would hand a later test an earlier test's result.
-_URL = "https://example.com/{}.csv"
+_URL = "https://docs.google.com/spreadsheets/d/e/{}/pub?output=csv"
 
 
 def _cache_for(name) -> pathlib.Path:
@@ -83,7 +84,7 @@ def _sheet_without_last_game() -> bytes:
 def test_sheet_sync_leaves_the_local_log_alone(isolated_data):
     local = _LOG.read_bytes()
     sheet = _sheet_without_last_game()
-    isolated_data.setattr(urllib.request, "urlopen", lambda url, timeout=20: _Resp(sheet))
+    isolated_data.setattr(sheet_fetch, "_open", lambda url, extra_hosts=(): _Resp(sheet))
 
     at = _run_with_sheet("sync")
 
@@ -94,8 +95,8 @@ def test_sheet_sync_leaves_the_local_log_alone(isolated_data):
 
 
 def test_entry_form_is_withdrawn_while_showing_the_sheet(isolated_data):
-    isolated_data.setattr(urllib.request, "urlopen",
-                          lambda url, timeout=20: _Resp(_sheet_without_last_game()))
+    isolated_data.setattr(sheet_fetch, "_open",
+                          lambda url, extra_hosts=(): _Resp(_sheet_without_last_game()))
     at = _run_with_sheet("form")
     assert any("add this game there" in str(i.value) for i in at.info)
     assert "Time of possession" not in [t.label for t in at.text_input]
@@ -105,9 +106,9 @@ def test_unreachable_sheet_falls_back_to_last_synced_copy(isolated_data):
     sheet = _sheet_without_last_game()
     _cache_for("offline").write_bytes(sheet)
 
-    def fail(url, timeout=20):
+    def fail(url, extra_hosts=()):
         raise OSError("offline")
-    isolated_data.setattr(urllib.request, "urlopen", fail)
+    isolated_data.setattr(sheet_fetch, "_open", fail)
 
     at = _run_with_sheet("offline")
 
@@ -121,11 +122,11 @@ def test_unreachable_sheet_never_shows_another_sheets_copy(isolated_data):
     # which can't be reached. B must not be shown A's games.
     sheet_a = _sheet_without_last_game()
 
-    def serve(url, timeout=20):
+    def serve(url, extra_hosts=()):
         if url == _URL.format("sheet-a"):
             return _Resp(sheet_a)
         raise OSError("offline")
-    isolated_data.setattr(urllib.request, "urlopen", serve)
+    isolated_data.setattr(sheet_fetch, "_open", serve)
 
     at = _run_with_sheet("sheet-a")
     assert any("Live Sheet Synced" in str(s.value) for s in at.sidebar.success)
