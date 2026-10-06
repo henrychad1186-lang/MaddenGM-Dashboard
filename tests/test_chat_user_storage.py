@@ -13,8 +13,11 @@ class WorksheetNotFound(Exception):
 
 
 class FakeWorksheet:
-    def __init__(self):
-        self.values = []
+    """Models the grid: like the Sheets API, a write past row_count fails
+    rather than growing the tab, and resize() truncates."""
+
+    def __init__(self, rows=200):
+        self.values, self.row_count, self.fail_update = [], rows, False
 
     def get_all_values(self):
         return [[str(c) for c in r] for r in self.values]  # Sheets returns text
@@ -22,9 +25,19 @@ class FakeWorksheet:
     def clear(self):
         self.values = []
 
+    def resize(self, rows=None, cols=None):
+        if rows is not None:
+            self.row_count = rows
+            self.values = self.values[:rows]
+
     def update(self, values, range_name=None):
         assert range_name == "A1"
-        self.values = [list(r) for r in values]
+        if self.fail_update:
+            raise RuntimeError("network")
+        if len(values) > self.row_count:
+            raise RuntimeError("exceeds grid limits")
+        rows = [list(r) for r in values]
+        self.values = rows + self.values[len(rows):]
 
 
 class FakeSpreadsheet:
@@ -39,7 +52,7 @@ class FakeSpreadsheet:
         return self.tabs[title]
 
     def add_worksheet(self, title, rows, cols):
-        self.tabs[title] = FakeWorksheet()
+        self.tabs[title] = FakeWorksheet(rows)
         return self.tabs[title]
 
 
@@ -144,3 +157,39 @@ def test_unreadable_file_is_none(tmp_path):
     if os.access(str(p), os.R_OK):                         # running as root
         pytest.skip("root can read mode-0 files")
     assert backend.load() is None
+
+
+def _big_store(n_msgs, team="GB"):
+    store = {}
+    for c in range(n_msgs // 10):
+        conv = cs.new_conversation(store, team)
+        for i in range(10):
+            cs.append_message(conv, "user" if i % 2 == 0 else "assistant", f"m{c}-{i}")
+    return store
+
+
+def test_sheets_save_grows_past_the_initial_200_rows():
+    ss = FakeSpreadsheet()
+    backend = cs.SheetsBackend(ss, "k", "tab")
+    store = _big_store(300)
+    assert backend.save(store) is True
+    assert len(ss.tabs["chats_k"].values) == 301  # header + one row per message
+    assert sum(len(c["messages"]) for c in backend.load()["GB"]) == 300
+
+
+def test_sheets_save_trims_rows_left_by_a_bigger_store():
+    ss = FakeSpreadsheet()
+    backend = cs.SheetsBackend(ss, "k", "tab")
+    backend.save(_big_store(300))
+    backend.save(_big_store(20))
+    assert ss.tabs["chats_k"].row_count == 21
+    assert sum(len(c["messages"]) for c in backend.load()["GB"]) == 20
+
+
+def test_failed_sheets_write_keeps_the_previous_history():
+    ss = FakeSpreadsheet()
+    backend = cs.SheetsBackend(ss, "k", "tab")
+    backend.save(_big_store(20))
+    ss.tabs["chats_k"].fail_update = True
+    assert backend.save(_big_store(30)) is False
+    assert sum(len(c["messages"]) for c in backend.load()["GB"]) == 20

@@ -275,10 +275,23 @@ class SheetsBackend:
             return None
 
     def save(self, store: dict) -> bool:
+        """Rewrite this user's tab with the store, one row per message.
+
+        Grows the grid before writing and trims it after. The tab starts
+        at 200 rows and the Sheets API refuses a write past the grid
+        ("exceeds grid limits"), so once a user's chats passed 199
+        messages every save failed. It also used to clear() first, so a
+        write failing after the clear left the tab empty; writing over
+        the old rows and then trimming the leftovers never does.
+        """
         try:
             ws = self._worksheet(create=True)
-            ws.clear()
-            ws.update(values=[SHEET_HEADER] + store_to_rows(store), range_name="A1")
+            values = [SHEET_HEADER] + store_to_rows(store)
+            if ws.row_count < len(values):
+                ws.resize(rows=len(values))
+            ws.update(values=values, range_name="A1")
+            if ws.row_count > len(values):
+                ws.resize(rows=len(values))
             return True
         except Exception:  # noqa: BLE001
             return False

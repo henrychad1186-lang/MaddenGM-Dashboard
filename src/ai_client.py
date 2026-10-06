@@ -43,6 +43,8 @@ def _effort_kwargs() -> dict:
     if "haiku" in _MODEL or re.search(r"-(3|4-[015])(-|$)", _MODEL):
         return {}
     return {"output_config": _OUTPUT_CONFIG}
+
+
 _MAX_TOKENS = 2000
 
 _client = None
@@ -208,6 +210,25 @@ CHAT_ERROR_MESSAGE = ("Sorry — I couldn't reach Claude just now. "
 # price the best one"), but a runaway loop spends tokens and makes the
 # user wait. Past this, the model is told to answer with what it has.
 _MAX_TOOL_ROUNDS = 6
+# ...and if it keeps calling tools anyway, the loop ends here. Telling it
+# the budget is spent was the only stop before, so a model that ignored
+# that kept the loop (and the API bill) running with no upper bound.
+_HARD_STOP_ROUNDS = _MAX_TOOL_ROUNDS + 2
+
+# Prompt caching. Every tool round resends the system prompt (instructions
+# plus a ~1.5-2.5k-token data snapshot) and the whole conversation so far,
+# so an answer with three lookups paid for that prefix four times. The
+# explicit marker caches the system prompt, which is identical across
+# rounds and across turns while the data is unchanged; the top-level
+# field caches the growing conversation tail. Cache reads bill at ~0.1x
+# input. A prefix under the model's minimum (512 tokens on Sonnet 5.5)
+# simply isn't cached; nothing errors.
+_CACHE = {"type": "ephemeral"}
+
+
+def _cached_system(text: str) -> "list[dict]":
+    return [{"type": "text", "text": text, "cache_control": _CACHE}]
+
 
 _TOOLS_PROMPT = """
 
@@ -256,7 +277,8 @@ def stream_gm_answer(question: str, context_summary: str,
                 model=_MODEL,
                 max_tokens=_CHAT_MAX_TOKENS,
                 **_effort_kwargs(),
-                system=system,
+                system=_cached_system(system),
+                cache_control=_CACHE,
                 messages=messages,
                 **tool_kwargs,
             ) as stream:
@@ -280,6 +302,10 @@ def stream_gm_answer(question: str, context_summary: str,
                 break
 
             rounds += 1
+            if rounds > _HARD_STOP_ROUNDS:
+                yield ("\n\n_(stopped after too many lookups — ask a narrower "
+                       "question)_")
+                return
             # Append the whole assistant turn unchanged (thinking blocks
             # included) so the history stays append-only.
             messages.append({"role": "assistant", "content": final.content})
