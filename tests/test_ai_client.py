@@ -128,7 +128,7 @@ def test_tool_call_runs_and_result_goes_back(monkeypatch):
     ], tool_ctx=_tool_ctx())
     assert "Looked up Parsons" in out and out.endswith("Parsons is untouchable.")
     assert len(client.calls) == 2
-    assert client.calls[0]["tools"] and "trade engine" in client.calls[0]["system"]
+    assert client.calls[0]["tools"] and "trade engine" in client.calls[0]["system"][0]["text"]
     second = client.calls[1]["messages"]
     # Assistant turn replayed unchanged, thinking block first.
     assert second[-2]["role"] == "assistant" and second[-2]["content"][0] is think
@@ -189,3 +189,30 @@ def test_runaway_loop_is_capped(monkeypatch):
 def test_no_tools_sent_without_a_context(monkeypatch):
     _, client = _run_scripted(monkeypatch, [_FakeStream(["Hi."])])
     assert "tools" not in client.calls[0]
+
+
+def test_model_that_ignores_the_budget_is_stopped(monkeypatch):
+    # Every reply is another tool call: the budget message alone used to
+    # be the only stop, so this looped (and billed) without end.
+    from src import ai_client
+    n = ai_client._HARD_STOP_ROUNDS + 5
+    streams = [_FakeStream([], stop_reason="tool_use",
+                           content=[_Block(type="tool_use", id=f"t{i}", name="lookup_player",
+                                           input={"name": "Parsons"})]) for i in range(n)]
+    out, client = _run_scripted(monkeypatch, streams, tool_ctx=_tool_ctx())
+    assert len(client.calls) == ai_client._HARD_STOP_ROUNDS + 1
+    assert "too many lookups" in out
+
+
+def test_chat_requests_cache_the_system_prompt_and_tail(monkeypatch):
+    use = _Block(type="tool_use", id="t", name="lookup_player", input={"name": "Parsons"})
+    _, client = _run_scripted(monkeypatch, [
+        _FakeStream([], stop_reason="tool_use", content=[use]),
+        _FakeStream(["Done."]),
+    ], tool_ctx=_tool_ctx())
+    for call in client.calls:
+        (block,) = call["system"]
+        assert block["cache_control"] == {"type": "ephemeral"}
+        assert call["cache_control"] == {"type": "ephemeral"}
+    # Byte-identical across rounds, or the cache never hits.
+    assert client.calls[0]["system"] == client.calls[1]["system"]
