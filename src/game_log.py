@@ -315,10 +315,11 @@ def efficiency_rates(df: pd.DataFrame) -> dict:
     game the same as a 9-for-16 one. Games without attempts recorded are
     left out rather than counted as 0-for-0.
 
-    Madden's post-game box score shows 3rd-down conversions but not
-    attempts, so conversions are also averaged per game over every game
-    that recorded them ("third_down_conv_per_game"): a weaker number than
-    the rate, but a real one, for logs that can't supply attempts.
+    Older games were logged with conversions but no attempts, so
+    conversions are also averaged per game over every game that recorded
+    them ("third_down_conv_per_game"): a weaker number than the rate, but
+    a real one, for logs that can't supply attempts. (Attempts are on
+    Madden's post-game Team Stats tab: "3rd Down Conv. 7/11 (63%)".)
     """
     empty = {"third_down_pct": None, "third_down_games": 0,
              "third_down_conv_per_game": None, "third_down_conv_games": 0,
