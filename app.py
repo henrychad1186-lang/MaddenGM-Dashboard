@@ -1679,6 +1679,12 @@ def render_trade_machine() -> None:
         # ── Interested Teams ──
         st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
         st.markdown("#### 🎯 Interested Teams")
+        # The player being shopped is real; the teams reading him are not.
+        # Saying so once here stops the CPU side being read as league data.
+        st.caption(
+            "CPU teams are demo rosters of 6–8 players, not full squads. "
+            "A position none of them lists reads as *interest unknown* "
+            "rather than as a need.")
         partners = find_trade_partners(selected_player, user_team=MY_TEAM)
         for p in partners:
             fit_badge = ' <span style="color:#10b981; font-size:0.75rem;">✅ SCHEME FIT</span>' if p[

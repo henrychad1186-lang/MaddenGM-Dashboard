@@ -238,19 +238,38 @@ def _attr_grade(val: float) -> str:
     return "average"
 
 
-def _write_blurb(name, pos, tier, age, dev, strengths, weaknesses, need, verdict, reason, trade_value) -> str:
+def _write_blurb(name, pos, tier, age, dev, strengths, weaknesses, need,
+                 verdict, reason, trade_value, graded_attrs=None) -> str:
     s1 = (f"**{name}** grades out as a **{tier}** {pos} prospect, "
           f"age {age}, carrying a **{dev}** development trait.")
 
-    if strengths:
-        s2 = f"Testing pops at **{', '.join(strengths)}** — a plus trait for the position."
-    else:
-        s2 = "Athletic testing is unremarkable — more technician than workout warrior."
+    # `strengths`/`weaknesses` are empty in two very different cases: the
+    # six attributes were read and none stood out, or none were on file at
+    # all. `graded_attrs` is how many were actually readable, so absence
+    # stops being reported as a finding. Defaults to None for callers that
+    # do not supply it, which is treated as "unknown" rather than "zero".
+    total_attrs = len(_ATTR_LABELS)
+    counted = total_attrs if graded_attrs is None else graded_attrs
 
-    if weaknesses:
-        s3 = f"Areas of concern: **{', '.join(weaknesses)}** — will need coaching up."
+    if not counted:
+        # Nothing on file: the code can neither call the testing
+        # unremarkable nor clear the player of red flags.
+        athletic = ["No athletic data on file for this player."]
     else:
-        s3 = "No glaring athletic red flags in the profile."
+        # A partial profile cannot speak for the attributes it lacks.
+        seen = ("" if counted >= total_attrs
+                else f" across the {counted} attribute(s) on file")
+        if strengths:
+            a1 = f"Testing pops at **{', '.join(strengths)}** — a plus trait for the position."
+        else:
+            a1 = f"Athletic testing is unremarkable{seen} — more technician than workout warrior."
+        if weaknesses:
+            a2 = f"Areas of concern: **{', '.join(weaknesses)}** — will need coaching up."
+        elif counted >= total_attrs:
+            a2 = "No glaring athletic red flags in the profile."
+        else:
+            a2 = f"No red flags{seen}."
+        athletic = [a1, a2]
 
     avg_txt = f"{need['avg_ovr']:.0f} avg OVR across {need['count']} player(s)" if need["count"] else "currently empty"
     s4 = (f"The {pos} room is rated **{need['level']}** ({avg_txt}); "
@@ -258,7 +277,7 @@ def _write_blurb(name, pos, tier, age, dev, strengths, weaknesses, need, verdict
 
     s5 = f"**AI GM Verdict: {verdict}** — {reason}"
 
-    return " ".join([s1, s2, s3, s4, s5])
+    return " ".join([s1, *athletic, s4, s5])
 
 
 def scout_player(player: dict, team: str, extra_players: "list[dict] | None" = None) -> dict:
@@ -280,11 +299,13 @@ def scout_player(player: dict, team: str, extra_players: "list[dict] | None" = N
                            "level": "Moderate", "color": "#ffc107"})
 
     strengths, weaknesses = [], []
+    graded_attrs = 0
     for attr, label in _ATTR_LABELS.items():
         val = player.get(attr)
         if val in (None, ""):
             continue
         val = float(val)
+        graded_attrs += 1
         grade = _attr_grade(val)
         if grade == "elite":
             strengths.append(f"{label} ({val:.0f})")
@@ -313,7 +334,8 @@ def scout_player(player: dict, team: str, extra_players: "list[dict] | None" = N
         reason = f"Below replacement level for a {need['level'].lower()}-need position."
 
     blurb = _write_blurb(player.get("Name", "This player"), pos, tier, age, dev,
-                         strengths, weaknesses, need, verdict, reason, trade_value)
+                         strengths, weaknesses, need, verdict, reason, trade_value,
+                         graded_attrs=graded_attrs)
 
     return {
         "_id": player.get("_id"),
