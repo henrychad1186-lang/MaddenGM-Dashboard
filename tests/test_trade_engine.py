@@ -196,3 +196,52 @@ class TestPickScale:
         first = dict(DRAFT_PICK_VALUES)["1st-Round Pick"]
         superstar = get_trade_value(_player(OVR=99, Dev="Superstar X", Age=26))
         assert first < superstar
+
+
+class TestUncoveredPositionIsNotANeed:
+    """A gap in a 6-player sketch is not a hole in a 53-man roster.
+
+    `_CPU_DEMO` carries 6-8 players per team, covering only
+    QB/HB/WR/TE/EDGE/CB (plus MLB/SS for MIN). Every other position —
+    the whole offensive line, DT, FS, K, P — is absent simply because
+    the fixture does not go that deep. Reading that as "fills critical
+    need" at the maximum interest of 90 turned 52 of 111 partner
+    evaluations (47%) into the strongest signal the system can emit.
+    """
+
+    # Positions no CPU demo team carries.
+    UNCOVERED = ["LT", "C", "RG", "DT", "K", "P"]
+
+    def test_an_uncovered_position_is_not_reported_as_a_critical_need(self):
+        for pos in self.UNCOVERED:
+            for p in find_trade_partners(_player(Pos=pos)):
+                assert "critical need" not in p["reason"].lower(), (
+                    f"{pos} -> {p['team']}: {p['reason']}")
+
+    def test_an_unknown_never_outranks_a_measured_upgrade(self):
+        """Interest must express confidence, not just presence.
+
+        A CB who genuinely beats the incumbent by >5 OVR is a known
+        upgrade; a punter nobody has data on is a guess. The guess must
+        not score higher.
+        """
+        upgrade = find_trade_partners(_player(Pos="CB", OVR=99, Age=25))
+        best_known = max(p["interest"] for p in upgrade)
+        for pos in self.UNCOVERED:
+            for p in find_trade_partners(_player(Pos=pos, OVR=99, Age=25)):
+                assert p["interest"] < best_known, (
+                    f"{pos} -> {p['team']} scored {p['interest']} vs "
+                    f"{best_known} for a real upgrade")
+
+    def test_an_unknown_still_outranks_a_measured_downgrade(self):
+        """Unknown is uncertainty, not rejection."""
+        downgrade = find_trade_partners(_player(Pos="CB", OVR=40, Age=25))
+        worst_known = min(p["interest"] for p in downgrade)
+        for p in find_trade_partners(_player(Pos="LT", OVR=85, Age=25)):
+            assert p["interest"] > worst_known
+
+    def test_a_covered_position_still_reports_a_real_comparison(self):
+        """The fix must not flatten positions the fixture does cover."""
+        reasons = [p["reason"] for p in find_trade_partners(
+            _player(Pos="QB", OVR=99, Age=25))]
+        assert any("upgrade" in r.lower() for r in reasons), reasons
