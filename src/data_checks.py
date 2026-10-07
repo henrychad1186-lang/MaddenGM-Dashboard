@@ -32,6 +32,16 @@ _SUM_CHECKS = [
 ]
 
 
+# Made, attempted, what the made column counts, and what the attempted
+# column is called in the entry form — the form says "red zone trips",
+# so the check says trips too rather than inventing a second name for
+# the same number.
+_RATE_CHECKS = [
+    ("Third_Down_Conv", "Third_Down_Att", "3rd-down conversions", "attempts"),
+    ("RZ_TD_Made", "RZ_Att", "Red zone TDs", "trips"),
+]
+
+
 def _num(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
@@ -91,6 +101,27 @@ def check_log(df: "pd.DataFrame | None",
                 add(i, f"{side} yards don't add up",
                     f"{total} {t[i]:.0f} vs pass {x[i]:.0f} + rush {y[i]:.0f} "
                     f"= {x[i] + y[i]:.0f} ({gap:+.0f}){hint}")
+
+    # Made can't exceed attempted. The entry form enforces this, but rows
+    # from a CSV or a Sheet never pass through the form, and one bad row
+    # skews the 3rd-down / red-zone rates on the KPI row and in the chat.
+    #
+    # Only rows with attempts above zero can do that skewing:
+    # `game_log._rate` filters on `a > 0`, so a zero-attempt row never
+    # reaches the rates. Zero also means "not tracked" everywhere else —
+    # the form writes `int(td_att) if td_att else ""` and
+    # `efficiency_rates` carries a `(conv == 0) & (att == 0)` sentinel —
+    # and a spreadsheet exporting an untracked cell as 0 rather than
+    # blank is the ordinary case on exactly this input path. Flagging it
+    # would send the user to the box score over a number nothing reads.
+    for made, att, label, denom in _RATE_CHECKS:
+        if not {made, att} <= set(df.columns):
+            continue
+        m, a = _num(df, made), _num(df, att)
+        for i in df.index:
+            if pd.notna(m[i]) and pd.notna(a[i]) and a[i] > 0 and m[i] > a[i]:
+                add(i, f"{label} exceed {denom}",
+                    f"{made} {m[i]:.0f} > {att} {a[i]:.0f}")
 
     if {"Points_For", "Points_Against"} <= set(df.columns):
         pf, pa = _num(df, "Points_For"), _num(df, "Points_Against")

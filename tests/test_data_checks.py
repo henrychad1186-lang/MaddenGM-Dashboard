@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from src import data_checks as dc
+from src import game_log
 
 
 def _row(**kw):
@@ -144,3 +145,70 @@ def test_data_checks_ignore_the_sidebar_filters():
     results.set_value(["WIN"]).run()
     assert not at.exception, at.exception
     assert any(want in lbl for lbl in label()), label()
+
+
+@pytest.mark.parametrize("made,att,cols,label", [
+    (7, 5, ("Third_Down_Conv", "Third_Down_Att"), "3rd-down conversions exceed attempts"),
+    (4, 3, ("RZ_TD_Made", "RZ_Att"), "Red zone TDs exceed trips"),
+])
+def test_made_above_attempts_is_flagged(made, att, cols, label):
+    df = pd.DataFrame({"GAME_ID": [1, 2], cols[0]: [made, 2], cols[1]: [att, 5]})
+    issues = dc.check_log(df)
+    assert [(i["game"], i["check"]) for i in issues] == [("1", label)]
+
+
+@pytest.mark.parametrize("blank", [None, 0])
+def test_made_without_attempts_is_not_flagged(blank):
+    """Conversions logged without attempts are a supported, untracked case.
+
+    Blank and 0 both mean "not tracked" everywhere else: the entry form
+    writes `int(td_att) if td_att else ""`, so a 0 leaves it as blank,
+    and `game_log.efficiency_rates` treats `(conv == 0) & (att == 0)` as
+    a sentinel rather than a 0-for-0 game. A Sheet or CSV — the input
+    this check exists for — is the one place that still writes the 0,
+    so the two have to read the same here too.
+    """
+    df = pd.DataFrame({"Third_Down_Conv": [6, 2], "Third_Down_Att": [blank, blank],
+                       "RZ_TD_Made": [3, 1], "RZ_Att": [blank, 2]})
+    assert dc.check_log(df) == []
+
+
+def test_zero_attempts_cannot_skew_the_rate_it_is_checked_against():
+    """Why 0 attempts is exempt and not merely tolerated.
+
+    The check earns its place by protecting the KPI rates, and
+    `game_log._rate` already filters on `a > 0`, so a zero-attempt row
+    cannot reach them. Flagging it would send the user to the box score
+    over a number nothing reads.
+    """
+    with_zero = pd.DataFrame({"Third_Down_Conv": [6, 5],
+                              "Third_Down_Att": [0, 10]})
+    assert (game_log.efficiency_rates(with_zero)["third_down_pct"]
+            == game_log.efficiency_rates(with_zero.iloc[1:])["third_down_pct"])
+
+
+def test_the_all_clear_names_every_category_it_checked():
+    """The clean-state caption enumerates the checks by name, so a new
+    check has to be added to it or the app under-reports what it read.
+
+    Parsed rather than grepped: the caption is two adjacent string
+    literals, and which words straddle the join moves whenever the
+    wording is reflowed. `ast` folds them into the one string the user
+    actually sees.
+    """
+    import ast
+    import pathlib
+    app = pathlib.Path(__file__).resolve().parent.parent / "app.py"
+    tree = ast.parse(app.read_text(encoding="utf-8"))
+    captions = [
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and node.args
+        and isinstance(node.func, ast.Attribute) and node.func.attr == "caption"
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value.startswith("✅ Data checks:")
+    ]
+    assert len(captions) == 1, captions
+    for word in ("yards", "scores", "time of possession", "efficiency"):
+        assert word in captions[0], f"{word!r} missing from {captions[0]!r}"

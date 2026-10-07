@@ -2480,8 +2480,8 @@ with tabs[8]:
                 "game": "Game", "opponent": "Opp", "check": "Check",
                 "detail": "Detail"}), hide_index=True, width="stretch")
     else:
-        st.caption("✅ Data checks: yards, scores and time of possession "
-                   "are consistent.")
+        st.caption("✅ Data checks: yards, scores, efficiency and time of "
+                   "possession are consistent.")
     st.dataframe(df)
     if os.path.exists(_GAME_LOGS_CSV) and _LOG_SOURCE == "local":
         with open(_GAME_LOGS_CSV, "rb") as _fh:
