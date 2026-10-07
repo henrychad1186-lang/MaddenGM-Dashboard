@@ -144,3 +144,20 @@ def test_data_checks_ignore_the_sidebar_filters():
     results.set_value(["WIN"]).run()
     assert not at.exception, at.exception
     assert any(want in lbl for lbl in label()), label()
+
+
+@pytest.mark.parametrize("made,att,cols,label", [
+    (7, 5, ("Third_Down_Conv", "Third_Down_Att"), "3rd-down conversions exceed attempts"),
+    (4, 3, ("RZ_TD_Made", "RZ_Att"), "Red zone TDs exceed attempts"),
+])
+def test_made_above_attempts_is_flagged(made, att, cols, label):
+    df = pd.DataFrame({"GAME_ID": [1, 2], cols[0]: [made, 2], cols[1]: [att, 5]})
+    issues = dc.check_log(df)
+    assert [(i["game"], i["check"]) for i in issues] == [("1", label)]
+
+
+def test_made_without_attempts_is_not_flagged():
+    # Conversions logged without attempts are a supported, untracked case.
+    df = pd.DataFrame({"Third_Down_Conv": [6, 2], "Third_Down_Att": [None, None],
+                       "RZ_TD_Made": [3, 1], "RZ_Att": [None, 2]})
+    assert dc.check_log(df) == []

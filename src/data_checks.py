@@ -32,6 +32,12 @@ _SUM_CHECKS = [
 ]
 
 
+_RATE_CHECKS = [
+    ("Third_Down_Conv", "Third_Down_Att", "3rd-down conversions"),
+    ("RZ_TD_Made", "RZ_Att", "Red zone TDs"),
+]
+
+
 def _num(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
@@ -91,6 +97,18 @@ def check_log(df: "pd.DataFrame | None",
                 add(i, f"{side} yards don't add up",
                     f"{total} {t[i]:.0f} vs pass {x[i]:.0f} + rush {y[i]:.0f} "
                     f"= {x[i] + y[i]:.0f} ({gap:+.0f}){hint}")
+
+    # Made can't exceed attempted. The entry form enforces this, but rows
+    # from a CSV or a Sheet never pass through the form, and one bad row
+    # skews the 3rd-down / red-zone rates on the KPI row and in the chat.
+    for made, att, label in _RATE_CHECKS:
+        if not {made, att} <= set(df.columns):
+            continue
+        m, a = _num(df, made), _num(df, att)
+        for i in df.index:
+            if pd.notna(m[i]) and pd.notna(a[i]) and m[i] > a[i]:
+                add(i, f"{label} exceed attempts",
+                    f"{made} {m[i]:.0f} > {att} {a[i]:.0f}")
 
     if {"Points_For", "Points_Against"} <= set(df.columns):
         pf, pa = _num(df, "Points_For"), _num(df, "Points_Against")
