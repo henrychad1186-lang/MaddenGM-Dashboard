@@ -274,6 +274,181 @@ def append_game(path: str, entry: dict, team: str) -> "tuple[bool, str]":
     return True, f"Logged game #{next_game_id(existing)}."
 
 
+def _field_spans(line: str) -> "list[tuple[int, int]]":
+    """Character span of each CSV field in one raw line.
+
+    Returned as offsets rather than values so a caller can splice one
+    field and leave every other byte of the line exactly as it was —
+    including quoting it would not have chosen itself. Splitting on ","
+    would shred a quoted Playbook like `"Shanahan, Wide Zone"`.
+    """
+    spans = []
+    i, n = 0, len(line)
+    while True:
+        start = i
+        if i < n and line[i] == '"':
+            i += 1
+            while i < n:
+                if line[i] != '"':
+                    i += 1
+                elif i + 1 < n and line[i + 1] == '"':
+                    i += 2  # an escaped quote inside the field
+                else:
+                    i += 1
+                    break
+        while i < n and line[i] != ",":
+            i += 1
+        spans.append((start, i))
+        if i < n and line[i] == ",":
+            i += 1
+            continue
+        return spans
+
+
+def _splice(line: str, index: int, value: str) -> str:
+    """`line` with field `index` replaced by `value`, padding if short.
+
+    `_extend_header` adds columns without touching existing rows, so a
+    legacy row genuinely has fewer fields than there are columns. Those
+    rows are padded with empty fields rather than skipped.
+    """
+    cell = _csv_cell(value)
+    spans = _field_spans(line)
+    if index < len(spans):
+        start, end = spans[index]
+        return line[:start] + cell + line[end:]
+    return line + "," * (index - len(spans) + 1) + cell
+
+
+# What a backfill may write. Deliberately not every column: the point is
+# to supply stats a game was logged without, not to re-open scores and
+# yardage that `derive_fields` computes from each other. A wider set
+# would need the derived columns recomputed too, and this writer exists
+# precisely because recomputing a row is how rows get corrupted.
+BACKFILL_FIELDS = EFFICIENCY_FIELDS + ["RZ_TD_Made"]
+
+
+def update_game(path: str, game_id, fields: dict) -> "tuple[bool, str]":
+    """Write `fields` into the logged game `game_id`. Returns (ok, message).
+
+    Splices the new values into that game's own line and leaves every
+    other byte of the file alone. The obvious implementation — read with
+    pandas, set a cell, write back — is exactly what `append_game`'s
+    docstring warns about: the shipped log has a game missing four
+    stats, so those columns read as float and `to_csv` renders every
+    other row's `25` as `25.0`.
+    """
+    existing = read_log(path)
+    refusal = _why_not(existing, game_id, fields)
+    if refusal:
+        return False, refusal + " Nothing was written."
+
+    try:
+        with open(path, "r", newline="") as handle:
+            lines = handle.read().splitlines(keepends=True)
+        # A quoted field may hold a newline, in which case raw line N is
+        # not row N and splicing by line index writes into the wrong
+        # game. The entry form cannot produce one; an uploaded CSV can.
+        if len(lines) - 1 != len(existing):
+            return False, ("A field in this log spans more than one line, "
+                           "so the row to edit cannot be located safely. "
+                           "Nothing was written.")
+
+        columns = list(existing.columns)
+        new_columns = [c for c in fields if c not in columns]
+        if new_columns:
+            _extend_header(path, new_columns)
+            with open(path, "r", newline="") as handle:
+                lines = handle.read().splitlines(keepends=True)
+            columns += new_columns
+
+        index = _row_numbers(existing, game_id)[0] + 1  # header is line 0
+        raw = lines[index]
+        body = raw.rstrip("\r\n")
+        for column, value in fields.items():
+            body = _splice(body, columns.index(column), _format(value))
+        lines[index] = body + raw[len(raw.rstrip("\r\n")):]
+
+        with open(path, "w", newline="") as handle:
+            handle.write("".join(lines))
+    except OSError:
+        return False, ("Could not write the game log — the filesystem is "
+                       "read-only. Download the CSV and edit locally.")
+    except Exception as exc:
+        return False, f"Could not update the game log: {exc}"
+    return True, (f"Updated game #{game_id}: "
+                  + ", ".join(f"{k} {_format(v)}" for k, v in fields.items())
+                  + ".")
+
+
+def _row_numbers(existing: pd.DataFrame, game_id) -> "list[int]":
+    """Positions of the rows carrying this GAME_ID (usually exactly one)."""
+    if "GAME_ID" not in existing.columns:
+        return []
+    wanted = pd.to_numeric(game_id, errors="coerce")
+    ids = pd.to_numeric(existing["GAME_ID"], errors="coerce")
+    return [i for i, v in enumerate(ids) if v == wanted]
+
+
+def _why_not(existing: pd.DataFrame, game_id, fields: dict) -> "str | None":
+    """Why this backfill must not be written, or None to go ahead.
+
+    Every check runs before the file is opened for writing, so a refusal
+    leaves the log untouched rather than half-edited.
+    """
+    bad = [key for key in fields if key not in BACKFILL_FIELDS]
+    if bad:
+        return (f"{', '.join(sorted(bad))} cannot be backfilled — only "
+                f"{', '.join(BACKFILL_FIELDS)}.")
+    if not looks_like_a_log(existing):
+        return ("The game log could not be read, so overwriting it would "
+                "lose whatever is in it.")
+    if "GAME_ID" not in existing.columns:
+        return ("This log has no GAME_ID column, so there is no way to say "
+                "which game to update.")
+    rows = _row_numbers(existing, game_id)
+    if not rows:
+        return f"No game #{game_id} in the log."
+    if len(rows) > 1:
+        return (f"Game #{game_id} appears {len(rows)} times, so the one to "
+                "edit is ambiguous.")
+    return _impossible_pair({**_row_as_dict(existing, game_id), **fields})
+
+
+def _row_as_dict(existing: pd.DataFrame, game_id) -> dict:
+    """The named game's current values, for validating a partial edit.
+
+    A backfill may supply attempts without conversions, so "conversions
+    cannot exceed attempts" has to be checked against the merge of what
+    is being written and what is already on the row.
+    """
+    if "GAME_ID" not in existing.columns:
+        return {}
+    ids = pd.to_numeric(existing["GAME_ID"], errors="coerce")
+    hit = existing[ids == pd.to_numeric(game_id, errors="coerce")]
+    return {} if hit.empty else hit.iloc[0].to_dict()
+
+
+def _impossible_pair(row: dict) -> "str | None":
+    """Why this row cannot be real, or None.
+
+    Same rule as the entry form and `data_checks`: made cannot exceed
+    attempted, and zero attempts means "not tracked" rather than a
+    contradiction, so it is exempt.
+    """
+    for made, att, label, denom in (
+            ("Third_Down_Conv", "Third_Down_Att", "3rd down conversions",
+             "attempts"),
+            ("RZ_TD_Made", "RZ_Att", "Red zone TDs", "field goal range "
+             "trips")):
+        m = pd.to_numeric(row.get(made), errors="coerce")
+        a = pd.to_numeric(row.get(att), errors="coerce")
+        if pd.notna(m) and pd.notna(a) and a > 0 and m > a:
+            return (f"{label} ({_format(m)}) cannot exceed {denom} "
+                    f"({_format(a)}).")
+    return None
+
+
 def _extend_header(path: str, columns: "list[str]") -> None:
     """Add columns to the end of the header line, leaving every row as is.
 

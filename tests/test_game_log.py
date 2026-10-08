@@ -494,3 +494,182 @@ def test_shipped_log_yards_allowed_total_is_pass_plus_rush():
     off = both[both.Total_Yards_Allowed != both.Pass_Yards_Allowed + both.Rush_Yards_Allowed]
     assert off.empty, df.loc[off.index, ["GAME_ID", "Pass_Yards_Allowed",
                                          "Rush_Yards_Allowed", "Total_Yards_Allowed"]]
+
+
+class TestUpdateGame:
+    """Backfilling a logged game.
+
+    The log was append-only, so the 28 games logged before third-down
+    attempts existed could never acquire them: 2 of 30 games carried the
+    two stats the KPI row calls this franchise's strongest predictors.
+
+    Every test here exists because the obvious implementation — read with
+    pandas, set a cell, write back — is the exact failure `append_game`
+    was built to avoid. The edit must splice bytes into one line.
+    """
+
+    def test_it_writes_the_fields_into_the_named_game(self, log_file):
+        ok, msg = game_log.update_game(
+            log_file, 1,
+            {"Third_Down_Att": 11, "Third_Down_Conv": 7, "RZ_Att": 4})
+        assert ok, msg
+        row = pd.read_csv(log_file).set_index("GAME_ID").loc[1]
+        assert row["Third_Down_Att"] == 11
+        assert row["Third_Down_Conv"] == 7
+        assert row["RZ_Att"] == 4
+
+    def test_it_only_touches_the_row_it_was_given(self, log_file):
+        # RZ_TD_Made, not RZ_Att: the fixture header carries the former,
+        # so the header is genuinely expected to stay put. Adding a
+        # missing column is correct and has its own test below.
+        extra = {"Season": 1, "Week": 6, "Opponent": "DET"}
+        game_log.append_game(log_file, _entry(**extra), "GB")
+        before = open(log_file).read().splitlines()
+        game_log.update_game(log_file, 1, {"RZ_TD_Made": 5})
+        after = open(log_file).read().splitlines()
+        assert len(before) == len(after)
+        assert before[0] == after[0], "header changed"
+        assert before[2] == after[2], "the other game's row changed"
+        assert before[1] != after[1], "the target row did not change"
+
+    def test_an_unknown_game_id_changes_nothing(self, log_file):
+        before = open(log_file, "rb").read()
+        ok, msg = game_log.update_game(log_file, 999, {"RZ_Att": 5})
+        assert not ok
+        assert "999" in msg
+        assert open(log_file, "rb").read() == before
+
+    @pytest.mark.parametrize("fields,word", [
+        ({"Third_Down_Att": 5, "Third_Down_Conv": 7}, "conversions"),
+        ({"RZ_Att": 2, "RZ_TD_Made": 4}, "field"),
+    ])
+    def test_impossible_numbers_are_refused(self, log_file, fields, word):
+        before = open(log_file, "rb").read()
+        ok, msg = game_log.update_game(log_file, 1, fields)
+        assert not ok, msg
+        assert word in msg.lower(), msg
+        assert open(log_file, "rb").read() == before
+
+    def test_a_column_outside_the_backfill_set_is_refused(self, log_file):
+        before = open(log_file, "rb").read()
+        ok, msg = game_log.update_game(log_file, 1, {"Points_For": 99})
+        assert not ok
+        assert "Points_For" in msg
+        assert open(log_file, "rb").read() == before
+
+    def test_an_unreadable_log_is_not_overwritten(self, tmp_path):
+        path = tmp_path / "garbage.csv"
+        path.write_bytes(b"\x00\x01 not a log at all\n")
+        before = path.read_bytes()
+        ok, _ = game_log.update_game(str(path), 1, {"RZ_Att": 3})
+        assert not ok
+        assert path.read_bytes() == before
+
+    def test_a_row_shorter_than_the_header_is_padded(self, tmp_path):
+        """`_extend_header` leaves old rows short on purpose.
+
+        It appends columns to the header and does not touch the rows, so
+        a legacy row has fewer cells than there are columns. Splicing by
+        field index has nothing to splice into.
+        """
+        path = tmp_path / "short.csv"
+        path.write_text(
+            "GAME_ID,Team,Opponent,Points_For,Third_Down_Att,"
+            "Third_Down_Conv,RZ_Att\n"
+            "1,GB,IND,35\n")
+        ok, msg = game_log.update_game(
+            str(path), 1, {"Third_Down_Att": 9, "Third_Down_Conv": 4})
+        assert ok, msg
+        row = pd.read_csv(str(path)).iloc[0]
+        assert row["Points_For"] == 35
+        assert row["Third_Down_Att"] == 9
+        assert row["Third_Down_Conv"] == 4
+        assert pd.isna(row["RZ_Att"])
+
+    def test_a_column_missing_from_the_header_is_added(self, tmp_path):
+        path = tmp_path / "noeff.csv"
+        path.write_text("GAME_ID,Team,Opponent,Points_For\n1,GB,IND,35\n")
+        ok, msg = game_log.update_game(str(path), 1, {"RZ_Att": 4})
+        assert ok, msg
+        out = pd.read_csv(str(path))
+        assert "RZ_Att" in out.columns
+        assert out.iloc[0]["RZ_Att"] == 4
+        assert out.iloc[0]["Points_For"] == 35
+
+    def test_quoted_cells_on_the_same_row_survive(self, tmp_path):
+        """Playbook is free text and the shipped log quotes it when it
+        carries a comma. Splitting the line on "," would shred it."""
+        path = tmp_path / "quoted.csv"
+        path.write_text(
+            "GAME_ID,Team,Playbook,Opponent,RZ_Att\n"
+            '1,GB,"Shanahan, Wide Zone",IND,\n')
+        ok, msg = game_log.update_game(str(path), 1, {"RZ_Att": 6})
+        assert ok, msg
+        out = pd.read_csv(str(path))
+        assert out.iloc[0]["Playbook"] == "Shanahan, Wide Zone"
+        assert out.iloc[0]["Opponent"] == "IND"
+        assert out.iloc[0]["RZ_Att"] == 6
+
+    def test_a_field_holding_a_newline_is_refused_not_mangled(self, tmp_path):
+        """A quoted embedded newline means raw line N is not row N.
+
+        Splicing by line index would then write into the wrong game. The
+        app's own form cannot produce one, but an uploaded CSV can.
+        """
+        path = tmp_path / "multiline.csv"
+        path.write_text(
+            "GAME_ID,Team,Playbook,RZ_Att\n"
+            '1,GB,"two\nlines",\n'
+            "2,GB,Zone,\n")
+        before = path.read_bytes()
+        ok, msg = game_log.update_game(str(path), 2, {"RZ_Att": 3})
+        assert not ok, msg
+        assert path.read_bytes() == before
+
+
+class TestUpdateAgainstTheShippedLog:
+    """The fixture above has no gaps, so it cannot catch float promotion.
+
+    This is the same reason `TestAgainstTheShippedLog` exists for the
+    append path: the real file has a game missing four stats, which
+    forces those columns to float on read, and any frame round-trip
+    rewrites every other row's `25` as `25.0`.
+    """
+
+    @pytest.fixture
+    def real_log_copy(self, tmp_path):
+        path = tmp_path / "game_logs.csv"
+        path.write_bytes(open("data/game_logs.csv", "rb").read())
+        return str(path)
+
+    def test_every_other_line_is_byte_identical(self, real_log_copy):
+        before = open(real_log_copy, "rb").read().split(b"\n")
+        target = pd.read_csv(real_log_copy)["GAME_ID"].iloc[5]
+        ok, msg = game_log.update_game(
+            real_log_copy, int(target),
+            {"Third_Down_Att": 12, "Third_Down_Conv": 5, "RZ_Att": 4})
+        assert ok, msg
+        after = open(real_log_copy, "rb").read().split(b"\n")
+        assert len(before) == len(after)
+        changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+        assert len(changed) == 1, (
+            f"expected one changed line, got {changed}")
+
+    def test_no_integer_anywhere_becomes_a_float(self, real_log_copy):
+        before = open(real_log_copy).read()
+        game_log.update_game(real_log_copy, 1, {"RZ_Att": 3})
+        after = open(real_log_copy).read()
+        assert after.count(".0") == before.count(".0")
+
+    def test_the_backfill_reaches_the_efficiency_rates(self, real_log_copy):
+        start = game_log.efficiency_rates(pd.read_csv(real_log_copy))
+        ids = pd.read_csv(real_log_copy)
+        blank = ids[pd.to_numeric(ids["Third_Down_Att"],
+                                  errors="coerce").isna()]["GAME_ID"]
+        assert len(blank), "the shipped log should still have games to backfill"
+        ok, msg = game_log.update_game(
+            real_log_copy, int(blank.iloc[0]),
+            {"Third_Down_Att": 10, "Third_Down_Conv": 5})
+        assert ok, msg
+        end = game_log.efficiency_rates(pd.read_csv(real_log_copy))
+        assert end["third_down_games"] == start["third_down_games"] + 1

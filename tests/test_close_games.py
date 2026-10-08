@@ -70,3 +70,55 @@ def test_shipped_log_close_record():
     r = close_games.analyze(df)
     assert r["close"]["record"] == "4-9"
     assert r["decided"]["record"] == "13-4"
+
+
+class TestNoUnreadSplitRates:
+    """`_group_stats` carried third_down_pct / rz_td_pct that nothing read.
+
+    On the shipped log those were built from one game per side — 20.0%
+    close vs 100.0% decided — and sat on the dict looking authoritative.
+    Nothing rendered them, so they were a loaded gun for whoever did.
+    Either the sample size travels with a rate or the rate goes.
+    """
+
+    # Spelled out rather than derived from the key: efficiency_rates
+    # pairs third_down_pct with third_down_games but rz_td_pct with
+    # rz_games, and renaming a published key to make a test tidier is
+    # the wrong way round.
+    _COUNT_FOR = {"third_down_pct": "third_down_games",
+                  "rz_td_pct": "rz_games"}
+
+    def test_a_rate_is_never_published_without_its_sample_size(self):
+        df = pd.read_csv("data/game_logs.csv")
+        df["Result"] = df["Result"].map({"W": "WIN", "L": "LOSS", "T": "TIE"})
+        result = close_games.analyze(df)
+        for side in ("close", "decided"):
+            rates = [k for k in result[side]
+                     if k.endswith("_pct") and k != "win_pct"]
+            assert rates, f"{side} publishes no rates; did they move?"
+            for key in rates:
+                assert key in self._COUNT_FOR, (
+                    f"{side}.{key} is a new rate — pair it with a count")
+                assert self._COUNT_FOR[key] in result[side], (
+                    f"{side}.{key} is published without a game count")
+
+
+class TestRecordReadsEitherSpelling:
+    """`derive_fields` writes "W"; `app._prepare_game_log` expands it to
+    "WIN" before the panel sees it. record() matched only the long form,
+    so a caller that skipped that normalisation got a silent 0-0 rather
+    than an error — which is exactly how a reader gets fooled."""
+
+    @pytest.mark.parametrize("spelling", [
+        ["W", "W", "L"], ["WIN", "WIN", "LOSS"], ["win", "Win", "loss"],
+    ])
+    def test_short_and_long_forms_agree(self, spelling):
+        df = pd.DataFrame({"Result": spelling})
+        rec = close_games.record(df)
+        assert (rec["wins"], rec["losses"]) == (2, 1), rec
+
+    def test_a_tie_is_still_a_tie_either_way(self):
+        assert close_games.record(
+            pd.DataFrame({"Result": ["T"]}))["ties"] == 1
+        assert close_games.record(
+            pd.DataFrame({"Result": ["TIE"]}))["ties"] == 1

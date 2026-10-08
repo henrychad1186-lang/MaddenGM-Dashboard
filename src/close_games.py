@@ -52,9 +52,14 @@ def _margin(df: pd.DataFrame) -> "pd.Series | None":
 
 
 def record(df: pd.DataFrame) -> dict:
-    wins = int((df["Result"] == "WIN").sum())
-    losses = int((df["Result"] == "LOSS").sum())
-    ties = int((df["Result"] == "TIE").sum())
+    # Match on the first letter, as data_checks does. `derive_fields`
+    # writes "W" and `app._prepare_game_log` expands it to "WIN", so a
+    # caller handed the underived frame used to get a silent 0-0 — no
+    # error, just every split reading as if no game had been decided.
+    first = df["Result"].astype(str).str.strip().str.upper().str[0]
+    wins = int((first == "W").sum())
+    losses = int((first == "L").sum())
+    ties = int((first == "T").sum())
     decided = wins + losses + ties
     return {
         "games": len(df), "wins": wins, "losses": losses, "ties": ties,
@@ -76,9 +81,15 @@ def _group_stats(df: pd.DataFrame) -> dict:
     out["stats"] = {col: _avg(df, col) for col, _, _ in _STAT_ROWS}
     to, ta = out["stats"]["Turnovers"], out["stats"]["Takeaways"]
     out["turnover_margin"] = (ta - to) if to is not None and ta is not None else None
+    # The sample size travels with the rate. Split across close and
+    # decided, the shipped log has one game with attempts on each side,
+    # so these read 20.0% against 100.0% — a number nothing should quote
+    # without saying what it rests on.
     eff = efficiency_rates(df)
     out["third_down_pct"] = eff["third_down_pct"]
+    out["third_down_games"] = eff["third_down_games"]
     out["rz_td_pct"] = eff["rz_td_pct"]
+    out["rz_games"] = eff["rz_games"]
     return out
 
 

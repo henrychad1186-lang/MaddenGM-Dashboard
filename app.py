@@ -1227,6 +1227,110 @@ def render_game_log_form() -> None:
         st.rerun()
 
 
+def _backfill_label(games: pd.DataFrame, gid: int) -> str:
+    """"#12 vs CHI (WIN 27-20)" — enough to pick the right box score."""
+    row = games[pd.to_numeric(games["GAME_ID"], errors="coerce") == gid]
+    if row.empty:
+        return f"#{gid}"
+    r = row.iloc[0]
+    pf, pa = pd.to_numeric(r.get("Points_For"), errors="coerce"), \
+        pd.to_numeric(r.get("Points_Against"), errors="coerce")
+    score = f" {pf:.0f}-{pa:.0f}" if pd.notna(pf) and pd.notna(pa) else ""
+    return (f"#{gid} vs {r.get('Opponent', '?')} "
+            f"({str(r.get('Result', '') or '?')}{score})")
+
+
+def _backfill_fields(td_att: int, td_conv: int, rz_att: int) -> dict:
+    """The columns to write. 0 attempts means "not tracked", so an
+    untouched field is left out rather than written as a real
+    measurement of nothing — the same rule the entry form applies."""
+    fields = {}
+    if td_att:
+        fields["Third_Down_Att"] = int(td_att)
+        fields["Third_Down_Conv"] = int(td_conv)
+    if rz_att:
+        fields["RZ_Att"] = int(rz_att)
+    return fields
+
+
+def render_backfill_form() -> None:
+    """Add third-down and red-zone numbers to a game already logged.
+
+    These columns arrived after the first 28 games, and the log was
+    append-only, so a game logged without them could never acquire them
+    — leaving the two rates the KPI row calls this franchise's strongest
+    predictors computed over a couple of games out of thirty.
+
+    Deliberately narrow: it writes only the efficiency columns. Scores
+    and yardage feed derived columns that `derive_fields` computes from
+    each other, and reopening those would mean recomputing a row, which
+    is the operation `game_log` exists to avoid.
+    """
+    _note = st.session_state.pop("backfill_note", None)
+    if _note:
+        st.success(_note)
+
+    existing = game_log.read_log(_GAME_LOGS_CSV)
+    if existing.empty or "GAME_ID" not in existing.columns:
+        return
+
+    att = pd.to_numeric(existing.get("Third_Down_Att"), errors="coerce")
+    rz = pd.to_numeric(existing.get("RZ_Att"), errors="coerce")
+    missing = existing[att.isna() | rz.isna()] if len(existing) else existing
+    if missing.empty:
+        return
+
+    label = (f"🧮 Backfill 3rd down / red zone — {len(missing)} of "
+             f"{len(existing)} games are missing them")
+    with st.expander(label, expanded=False):
+        if _LOG_SOURCE != "local":
+            st.info("The dashboard is showing an uploaded file or a Google "
+                    "Sheet, so edit the numbers there. Backfilling here "
+                    "would write to the local file, which isn't what you "
+                    "are looking at.")
+            return
+        st.caption("From Madden's post-game **Team Stats** tab: "
+                   "`3rd Down Conv. 7/11` and the red zone row. Leave a "
+                   "field at 0 to skip it — 0 attempts reads as *not "
+                   "tracked*, not as a game with none.")
+
+        ids = [int(v) for v in pd.to_numeric(
+            missing["GAME_ID"], errors="coerce").dropna()]
+        with st.form("backfill_form"):
+            gid = st.selectbox(
+                "Game", ids,
+                format_func=lambda g: _backfill_label(missing, g))
+            b1, b2, b3 = st.columns(3)
+            with b1:
+                td_att = st.number_input("3rd down attempts", min_value=0,
+                                         max_value=40, value=0, step=1)
+            with b2:
+                td_conv = st.number_input("3rd down conversions",
+                                          min_value=0, max_value=40,
+                                          value=0, step=1)
+            with b3:
+                rz_att = st.number_input("Red zone trips", min_value=0,
+                                         max_value=20, value=0, step=1)
+            saved = st.form_submit_button("Save to this game",
+                                          type="primary")
+
+        if not saved:
+            return
+
+        fields = _backfill_fields(td_att, td_conv, rz_att)
+        if not fields:
+            st.warning("Nothing entered — set attempts or trips above 0. "
+                       "Nothing was written.")
+            return
+
+        ok, message = game_log.update_game(_GAME_LOGS_CSV, gid, fields)
+        if not ok:
+            st.error(message)
+            return
+        st.session_state["backfill_note"] = message
+        st.rerun()
+
+
 # ──────────────────────────────────────────────────────
 # TABS — Home + Original + New Features
 # ──────────────────────────────────────────────────────
@@ -1259,6 +1363,7 @@ with home_tab:
     render_tab_header("🏠", "Franchise Home",
                       f"Record, cap exposure, needs and moves for {MY_TEAM}")
     render_game_log_form()
+    render_backfill_form()
     render_franchise_home()
     render_close_games()
 
