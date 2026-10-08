@@ -1,6 +1,6 @@
 ---
-name: code-review
-description: Review proposed changes in the MaddenGM Dashboard repository for correctness, regressions, and security issues. Use when asked to review a diff, pull request, or code changes.
+name: maddengm-review
+description: Review proposed changes in the MaddenGM Dashboard repository for correctness, regressions, and security issues. Use when asked to review a diff, pull request, or code changes against this repo's own conventions. Named to avoid shadowing Claude Code's built-in `code-review`, which this does not replace — that one still provides levels, `--comment` and `--fix`.
 ---
 
 Review changes; do not implement them unless explicitly asked.
