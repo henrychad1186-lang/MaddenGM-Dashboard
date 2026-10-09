@@ -163,11 +163,27 @@ class TestGetEras:
 
 
 class TestArchiveSeasonRobustness:
-    def test_hand_edited_entry_without_season_does_not_crash(self, history_file):
-        broken = [{"era": "no season key"}, "not a dict", _season(season=2026)]
-        out = dynasty.archive_season(_season(season=2027), broken)
-        assert [s["season"] for s in out] == [2026, 2027]
-        assert [s["season"] for s in dynasty.load_history()] == [2026, 2027]
+    def test_hand_edited_entries_are_kept_not_deleted(self, history_file):
+        # An earlier version dropped anything without an int season and
+        # wrote the file back, deleting it for good.
+        odd = [{"era": "no season key"}, "not a dict",
+               _season(season="2025"), _season(season=2026.0)]
+        out, saved = dynasty.archive_and_save(_season(season=2027), odd)
+        assert saved
+        assert out[:3] == [odd[2], odd[3], _season(season=2027)]
+        assert odd[0] in out and odd[1] in out
+        assert dynasty.load_history() == out
+
+    def test_string_season_is_replaced_not_duplicated(self, history_file):
+        out = dynasty.archive_season(_season(season=2027, era="New"),
+                                     [_season(season="2027", era="Old")])
+        assert [s["era"] for s in out] == ["New"]
+
+    def test_failed_write_is_reported(self, history_file, monkeypatch):
+        monkeypatch.setattr(dynasty, "_HISTORY_FILE",
+                            str(history_file.parent / "missing-dir" / "h.json"))
+        _, saved = dynasty.archive_and_save(_season(), [])
+        assert saved is False
 
     def test_write_leaves_no_temp_file(self, history_file):
         dynasty.archive_season(_season(), [])

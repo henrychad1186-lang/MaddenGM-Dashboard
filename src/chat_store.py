@@ -32,13 +32,27 @@ MAX_CONVERSATIONS_PER_TEAM = 50
 
 def load(path: str = DEFAULT_PATH) -> dict:
     """Read the store from disk, or return an empty one on any problem."""
+    store = load_strict(path)
+    return {} if store is None else store
+
+
+def load_strict(path: str) -> "dict | None":
+    """The store on disk; {} if there is no file; None if there is a
+    file but it can't be read or isn't a store.
+
+    The None matters to anything that saves afterwards: an unreadable
+    file still holds the user's chats, and treating it as empty let the
+    next save replace all of them with this session's.
+    """
+    if not os.path.exists(path):
+        return {}
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
-        return {}
+        return None
     if not isinstance(data, dict):
-        return {}
+        return None
     store = {}
     for team, convs in data.items():
         if not isinstance(convs, list):
@@ -186,9 +200,10 @@ class FileBackend:
         self.path, self.label = path, label
 
     def load(self) -> "dict | None":
-        if os.path.exists(self.path) and not os.access(self.path, os.R_OK):
-            return None
-        return load(self.path)
+        # None (not {}) for a file that exists but can't be read or
+        # parsed: per the backend contract the caller then won't save,
+        # so a hand-edit typo can't cost every saved conversation.
+        return load_strict(self.path)
 
     def save(self, store: dict) -> bool:
         return save(store, self.path)

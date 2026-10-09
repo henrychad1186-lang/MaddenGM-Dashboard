@@ -205,3 +205,9 @@ def test_normalize_position_folds_side_labels():
     assert roster_csv.normalize_position("MIKE") == "MLB"
     assert roster_csv.normalize_position(float("nan")) == "NAN"
     assert roster_csv.normalize_position("QB") == "QB"
+
+
+def test_existing_keys_tell_same_named_players_apart():
+    raw = pd.DataFrame({"Player Name": ["J. Smith"], "Position": ["REDG"]})
+    keys = roster_csv.existing_player_keys(raw)
+    assert ("J. Smith", "EDGE") in keys and ("J. Smith", "WR") not in keys
