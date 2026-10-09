@@ -216,3 +216,49 @@ def test_chat_requests_cache_the_system_prompt_and_tail(monkeypatch):
         assert call["cache_control"] == {"type": "ephemeral"}
     # Byte-identical across rounds, or the cache never hits.
     assert client.calls[0]["system"] == client.calls[1]["system"]
+
+
+def test_request_kwargs_are_accepted_by_the_installed_sdk(monkeypatch):
+    """The fakes above take any keyword, so they can't tell when a request
+    uses a parameter the installed `anthropic` doesn't have. That's how
+    requirements.txt claimed `anthropic>=0.40` while every chat turn sent
+    `output_config` (SDK 0.77+) and `cache_control` (0.83+): on an older
+    SDK each call raised TypeError, which the broad except turned into
+    "couldn't reach Claude". Binding the recorded kwargs against the real
+    method signatures fails here instead, and the canary's `lowest` job
+    runs this against the declared floor."""
+    import inspect
+
+    import anthropic
+
+    from src import ai_client
+
+    real = anthropic.Anthropic(api_key="test").messages
+    calls = {}
+
+    class _Recorder:
+        def stream(self, **kw):
+            calls["stream"] = kw
+            return _FakeStream(["ok"])
+
+        def create(self, **kw):
+            calls["create"] = kw
+            return type("M", (), {"stop_reason": "end_turn",
+                                  "content": [_Block(type="text", text="ok.")]})()
+
+    client = type("C", (), {"messages": _Recorder()})()
+    monkeypatch.setattr(ai_client, "_get_client", lambda: client)
+    "".join(ai_client.stream_gm_answer("q", "ctx", [], "GB", tool_ctx=_tool_ctx()))
+    # The prompt's wording isn't under test, only the request around it.
+    monkeypatch.setattr(ai_client, "_build_prompt", lambda *a: "prompt")
+    ai_client.generate_scouting_narrative({}, {}, "GB")
+
+    assert set(calls) == {"stream", "create"}
+    for method, kw in calls.items():
+        try:
+            inspect.signature(getattr(real, method)).bind(**kw)
+        except TypeError as e:
+            raise AssertionError(
+                f"anthropic {anthropic.__version__} messages.{method} rejects "
+                f"this request ({e}); raise the floor in requirements.txt"
+            ) from None
