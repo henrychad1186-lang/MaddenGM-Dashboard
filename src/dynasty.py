@@ -3,6 +3,7 @@ Dynasty Tracker — Season archival, era tracking, and career leaderboards.
 """
 
 import json
+import math
 import os
 from typing import Optional
 
@@ -86,15 +87,27 @@ def load_history() -> list[dict]:
     played into their timeline, their chronicles and their career
     leaderboard.
     """
+    loaded = load_history_strict()
+    return [] if loaded is None else loaded
+
+
+def load_history_strict() -> "list | None":
+    """The history on file; [] if there is no file; None if there is a
+    file but it can't be read or isn't a list of seasons.
+
+    None is what keeps an archive from overwriting it. A hand edit that
+    left a trailing comma used to read as "nothing archived", and the
+    next archive then replaced the file with that one season.
+    """
     if not os.path.exists(_HISTORY_FILE):
         return []
     try:
         with open(_HISTORY_FILE, "r") as f:
             loaded = json.load(f)
     except Exception:
-        return []
+        return None
     # A file holding anything but a list of seasons is not history.
-    return loaded if isinstance(loaded, list) else []
+    return loaded if isinstance(loaded, list) else None
 
 
 def _season_key(entry) -> "float | None":
@@ -106,9 +119,12 @@ def _season_key(entry) -> "float | None":
     if not isinstance(entry, dict):
         return None
     try:
-        return float(entry.get("season"))
+        key = float(entry.get("season"))
     except (TypeError, ValueError):
         return None
+    # NaN (Python's json reads it) never compares equal and breaks the
+    # sort order; treat it like a missing season.
+    return key if math.isfinite(key) else None
 
 
 def save_history(history: list) -> bool:
@@ -137,13 +153,27 @@ def archive_and_save(season_data: dict,
     time any season was archived. Entries with no usable season now stay
     in place, after the numbered ones.
     """
-    history = list(existing_history if existing_history is not None
-                   else load_history())
+    if existing_history is None:
+        existing_history = load_history_strict()
+        if existing_history is None:
+            # Unreadable file: writing now would replace what's in it.
+            return [], False
+    history = list(existing_history)
     target = _season_key(season_data)
 
     if target is not None and any(_season_key(s) == target for s in history):
-        history = [season_data if _season_key(s) == target else s
-                   for s in history]
+        # Replace the first entry for this season and drop any other
+        # copies ("2027" and 2027 are the same season), rather than
+        # writing the new data over each of them.
+        replaced, kept = False, []
+        for s in history:
+            if _season_key(s) == target:
+                if not replaced:
+                    kept.append(season_data)
+                    replaced = True
+                continue
+            kept.append(s)
+        history = kept
     else:
         history.append(season_data)
 
@@ -179,10 +209,18 @@ def get_career_leaders(history: list[dict]) -> pd.DataFrame:
         return pd.DataFrame(
             columns=["Player", "Rush Yds", "Rec Yds", "Seasons", "Total Yds"])
 
+    def _yards(v) -> float:
+        # Hand-edited entries hold "1200" or null as readily as 1200;
+        # `0 += "1200"` raised and stopped the script (every later tab).
+        n = pd.to_numeric(v, errors="coerce")
+        return 0 if pd.isna(n) else n
+
     for season in history:
+        if not isinstance(season, dict):
+            continue
         # Rushing
-        rusher = season.get("top_rusher", "Unknown")
-        rush_yds = season.get("rush_yards", 0)
+        rusher = str(season.get("top_rusher") or "Unknown")
+        rush_yds = _yards(season.get("rush_yards"))
         if rusher not in leaders:
             leaders[rusher] = {"Player": rusher,
                                "Rush Yds": 0, "Rec Yds": 0, "Seasons": 0}
@@ -190,8 +228,8 @@ def get_career_leaders(history: list[dict]) -> pd.DataFrame:
         leaders[rusher]["Seasons"] += 1
 
         # Receiving
-        receiver = season.get("top_receiver", "Unknown")
-        rec_yds = season.get("rec_yards", 0)
+        receiver = str(season.get("top_receiver") or "Unknown")
+        rec_yds = _yards(season.get("rec_yards"))
         if receiver not in leaders:
             leaders[receiver] = {"Player": receiver,
                                  "Rush Yds": 0, "Rec Yds": 0, "Seasons": 0}
