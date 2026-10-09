@@ -89,6 +89,28 @@ def normalize_roster_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def drop_unrated(df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
+    """(rows with a numeric OVR and Age, names of the rows that lacked one).
+
+    Every view does arithmetic on these two (int(OVR), age curves, room
+    ratings), so one blank cell raised "cannot convert float NaN to
+    integer" in the Home tab, which stops the script and blanks every tab
+    after it, including the Roster tab that would explain why. Those rows
+    are set aside and reported instead. OVR and Age come back numeric.
+    """
+    df = df.copy()
+    for col in ("OVR", "Age"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    present = [c for c in ("OVR", "Age") if c in df.columns]
+    if not present:
+        return df, []
+    bad = df[present].isna().any(axis=1)
+    names = [str(n) for n in df.loc[bad, "Name"]] if "Name" in df.columns \
+        else [f"row {i + 2}" for i in df.index[bad]]
+    return df[~bad].reset_index(drop=True), names
+
+
 def load_roster_csv(path: str) -> pd.DataFrame:
     """Read and normalise the roster CSV at `path`."""
     return normalize_roster_df(pd.read_csv(path))
@@ -113,12 +135,20 @@ def source_column_for(canonical: str, raw: pd.DataFrame) -> str:
     return canonical
 
 
-def existing_player_names(raw: pd.DataFrame) -> "set[str]":
-    """Names already in the file, for skipping players that are in it."""
-    column = source_column_for("Name", raw)
-    if column not in raw.columns:
+def existing_player_keys(raw: pd.DataFrame) -> "set[tuple[str, str]]":
+    """(name, position) pairs already in the file.
+
+    Name alone was the old key, which skipped a new "J. Smith" WR because
+    a J. Smith CB was on file, then reported the save as done. Position
+    is normalised, so a stored REDG and an added EDGE are the same slot.
+    """
+    name_col = source_column_for("Name", raw)
+    pos_col = source_column_for("Pos", raw)
+    if name_col not in raw.columns:
         return set()
-    return {str(n).strip() for n in raw[column].dropna()}
+    positions = raw[pos_col] if pos_col in raw.columns else [""] * len(raw)
+    return {(str(n).strip(), normalize_position(p) if p == p else "")
+            for n, p in zip(raw[name_col], positions) if n == n}
 
 
 def rows_to_source_schema(players: "list[dict]", raw: pd.DataFrame) -> pd.DataFrame:

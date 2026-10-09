@@ -97,43 +97,72 @@ def load_history() -> list[dict]:
     return loaded if isinstance(loaded, list) else []
 
 
-def archive_season(
-    season_data: dict, existing_history: Optional[list[dict]] = None
-) -> list[dict]:
+def _season_key(entry) -> "float | None":
+    """An entry's season as a number, or None if it has no usable one.
+
+    Hand edits produce "2027" and 2027.0 as readily as 2027; all three
+    are the same season.
     """
-    Add a new season to the dynasty history and persist to disk.
-    Returns the updated history list.
+    if not isinstance(entry, dict):
+        return None
+    try:
+        return float(entry.get("season"))
+    except (TypeError, ValueError):
+        return None
+
+
+def save_history(history: list) -> bool:
+    """Write the history atomically. Returns False if it couldn't.
+
+    Atomic because a crash mid-write used to leave truncated JSON, which
+    load_history reads as "no history" — every archived season gone.
     """
-    history = existing_history if existing_history is not None else load_history()
-
-    # The file is hand-editable, so an entry may lack "season" (or not be
-    # a dict at all). Indexing s["season"] raised KeyError and took the
-    # archive form down; such entries are dropped rather than crashing.
-    history = [s for s in history
-               if isinstance(s, dict) and isinstance(s.get("season"), int)]
-
-    # Prevent duplicate season numbers
-    if any(s["season"] == season_data.get("season") for s in history):
-        # Update in place
-        history = [s if s["season"] != season_data["season"]
-                   else season_data for s in history]
-    else:
-        history.append(season_data)
-
-    # Sort by season
-    history.sort(key=lambda s: s["season"])
-
-    # Persist atomically: a crash mid-write used to leave truncated JSON,
-    # which load_history reads as "no history" — every archived season gone.
     tmp = f"{_HISTORY_FILE}.tmp"
     try:
         with open(tmp, "w") as f:
             json.dump(history, f, indent=2)
         os.replace(tmp, _HISTORY_FILE)
+        return True
     except Exception:
-        pass  # If write fails, data is still in memory
+        return False
 
-    return history
+
+def archive_and_save(season_data: dict,
+                     existing_history: Optional[list] = None) -> "tuple[list, bool]":
+    """Add (or replace) a season and persist. Returns (history, saved).
+
+    Every entry already in the file is kept. An earlier version dropped
+    any entry whose season wasn't a Python int and then wrote the file
+    back, so a hand-edited "2027" or 2027.0 was deleted for good the next
+    time any season was archived. Entries with no usable season now stay
+    in place, after the numbered ones.
+    """
+    history = list(existing_history if existing_history is not None
+                   else load_history())
+    target = _season_key(season_data)
+
+    if target is not None and any(_season_key(s) == target for s in history):
+        history = [season_data if _season_key(s) == target else s
+                   for s in history]
+    else:
+        history.append(season_data)
+
+    # Numbered seasons in order, then anything without one, as found.
+    numbered = sorted((s for s in history if _season_key(s) is not None),
+                      key=_season_key)
+    history = numbered + [s for s in history if _season_key(s) is None]
+    return history, save_history(history)
+
+
+def archive_season(
+    season_data: dict, existing_history: Optional[list[dict]] = None
+) -> list[dict]:
+    """
+    Add a new season to the dynasty history and persist to disk.
+    Returns the updated history list (see archive_and_save for whether
+    the write succeeded).
+    """
+    return archive_and_save(season_data, existing_history)[0]
 
 
 def get_career_leaders(history: list[dict]) -> pd.DataFrame:

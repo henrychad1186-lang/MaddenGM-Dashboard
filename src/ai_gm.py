@@ -175,14 +175,15 @@ def persist_roster(team: str, extra_players: "list[dict] | None" = None) -> bool
         # each player once more per subsequent save. Three additions with
         # "save to roster CSV" on produced seven rows instead of four,
         # the first player appearing three times.
-        already = roster_csv.existing_player_names(raw)
+        already = roster_csv.existing_player_keys(raw)
         pending = [
             p for p in extra_players
             # A player carries the team it was added under. Writing one
             # team's signing into another team's roster file is what the
             # `team` argument exists to prevent.
             if str(p.get("Team", team)) == str(team)
-            and str(p.get("Name", "")).strip() not in already
+            and (str(p.get("Name", "")).strip(),
+                 roster_csv.normalize_position(p.get("Pos", ""))) not in already
         ]
         if not pending:
             return True  # everything already on file

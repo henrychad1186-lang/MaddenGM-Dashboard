@@ -55,11 +55,27 @@ class TestLoadNeverRaises:
         # ends up holding "EXTRA". The load must survive it (it used to
         # raise AttributeError once Pos became an int), and
         # validate_roster_df is what surfaces the corruption.
-        from src.roster import validate_roster_df
+        # The shifted row has no numeric OVR, so it is now set aside at
+        # load and reported there (it used to load with "EXTRA" as its
+        # OVR and crash int(OVR) in the Home tab).
+        # The shift hits every row, so nothing usable remains and the
+        # loader falls back to demo data, saying why.
         roster, df = roster_module(
             "Player Name,Position,Age,OVR\nA. Player,QB,25,80,EXTRA\n")
-        assert not df.empty
-        assert any("not a number" in w for w in validate_roster_df(df))
+        assert list(df["Name"]) == ["Demo Player"]
+        assert any("non-numeric OVR or Age" in i for i in roster.SOURCE_COLUMN_ISSUES)
+
+    def test_blank_ovr_is_left_out_and_reported(self, roster_module):
+        roster, df = roster_module(
+            "Player Name,Position,Age,OVR\nA. Player,QB,25,\nB. Player,WR,24,77\n")
+        assert list(df["Name"]) == ["B. Player"]
+        assert df["OVR"].dtype.kind in "if"
+        assert any("A. Player" in i for i in roster.SOURCE_COLUMN_ISSUES)
+
+    def test_no_usable_rows_falls_back_to_demo(self, roster_module):
+        roster, df = roster_module("Player Name,Position,Age,OVR\nA. Player,QB,,\n")
+        assert list(df["Name"]) == ["Demo Player"]
+        assert not roster.SOURCE_COLUMNS  # demo data must not look writable
 
     def test_blank_position_cell(self, roster_module):
         # A blank cell arrives as float nan; nan.upper() used to raise

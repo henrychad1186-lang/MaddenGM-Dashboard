@@ -1,4 +1,5 @@
 """Tests for the sentence-trimming helper used to clean up truncated Claude output."""
+import pytest
 
 import json
 
@@ -216,3 +217,13 @@ def test_chat_requests_cache_the_system_prompt_and_tail(monkeypatch):
         assert call["cache_control"] == {"type": "ephemeral"}
     # Byte-identical across rounds, or the cache never hits.
     assert client.calls[0]["system"] == client.calls[1]["system"]
+
+
+@pytest.mark.parametrize("model,ok", [
+    ("claude-sonnet-5-5", True), ("claude-opus-4-6", True), ("claude-opus-4-5-20251101", True),
+    ("claude-sonnet-4-20250514", False), ("claude-opus-4-20250514", False),
+    ("claude-sonnet-4-5", False), ("claude-haiku-4-5", False), ("claude-3-7-sonnet-20250219", False),
+])
+def test_effort_only_sent_to_models_that_accept_it(model, ok):
+    from src import ai_client
+    assert ai_client._supports_effort(model) is ok

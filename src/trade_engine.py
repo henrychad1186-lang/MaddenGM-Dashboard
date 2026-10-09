@@ -85,6 +85,10 @@ def _load_trade_rosters() -> pd.DataFrame:
         # CSV made both raise KeyError: 'Pos' at import.
         gb_df = roster_csv.load_roster_csv(_ROSTER_CSV)
 
+        # Same rows roster.py leaves out (and reports): int(OVR) on a
+        # blank cell crashed the Trades tab.
+        gb_df, _ = roster_csv.drop_unrated(gb_df)
+
         if roster_csv.missing_required_columns(gb_df):
             # roster.py reports this to the user; trading against a roster
             # we can't read is not possible, so fall back to CPU teams only.
