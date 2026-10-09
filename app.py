@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -16,7 +17,7 @@ from src.trade_engine import (
     evaluate_trade,
     parse_salary,
 )
-from src.dynasty import load_history, archive_season, get_career_leaders
+from src.dynasty import load_history, archive_and_save, get_career_leaders
 from src.theme import RANK_COLORS, VERDICT_COLORS, rank_color
 from src.roster_analyzer import analyze_roster
 from src import ai_gm
@@ -431,6 +432,20 @@ def _result_from_margin(diff: pd.Series) -> pd.Series:
         index=diff.index, dtype="object")
 
 
+_RESULT_LABELS = {"W": "WIN", "L": "LOSS", "T": "TIE",
+                  "WIN": "WIN", "LOSS": "LOSS", "TIE": "TIE"}
+
+
+def _normalize_result(col: pd.Series) -> pd.Series:
+    """W/L/T (any case) -> WIN/LOSS/TIE; anything else -> blank.
+
+    "T" is carried through rather than folded into LOSS: a 20-20 game is
+    a real outcome. Every consumer tests for "WIN"/"LOSS" explicitly, so
+    a tie counts as neither.
+    """
+    return col.astype(str).str.strip().str.upper().map(_RESULT_LABELS)
+
+
 def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
     """Derive Points_For/Points_Against/Score_Diff/Result/TOP_Mins.
 
@@ -457,36 +472,27 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
         df["Points_For"] = pd.to_numeric(df["Points_For"], errors="coerce")
         df["Points_Against"] = pd.to_numeric(df["Points_Against"], errors="coerce")
         df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
-        # Normalize Result: W → WIN, L → LOSS
         if "Result" in df.columns:
-            # "T" is carried through rather than folded into LOSS: a
-            # 20-20 game is a real outcome, and the entry form can now
-            # produce one. Every consumer tests for "WIN"/"LOSS"
-            # explicitly, so a tie counts as neither.
             # An unrecognised or blank Result falls back to the score
             # rather than to "LOSS", which recorded a blank cell on a
             # 31-10 win as a defeat.
-            df["Result"] = (
-                df["Result"].astype(str).str.strip().str.upper().map(
-                    {"W": "WIN", "L": "LOSS", "T": "TIE",
-                     "WIN": "WIN", "LOSS": "LOSS", "TIE": "TIE"})
-                .fillna(_result_from_margin(df["Score_Diff"])))
+            df["Result"] = (_normalize_result(df["Result"])
+                            .fillna(_result_from_margin(df["Score_Diff"])))
         else:
             df["Result"] = _result_from_margin(df["Score_Diff"])
+    if "Result" in df.columns and "Score_Diff" not in df.columns:
+        # No score to derive from, so the Result column is all there is.
+        # Left as "W"/"L" it matched none of the WIN/LOSS/TIE filter
+        # options, and the Results filter then hid every game.
+        df["Result"] = _normalize_result(df["Result"])
 
     if "TOP" in df.columns:
-        def parse_top(x):
-            if isinstance(x, str) and ":" in x:
-                parts = x.split(":")
-                try:
-                    return int(parts[0]) + int(parts[1]) / 60
-                except ValueError:
-                    return None
-            return x
-        try:
-            df["TOP_Mins"] = df["TOP"].apply(parse_top)
-        except Exception:
-            pass
+        # game_log.parse_top: None for anything that isn't MM:SS or a
+        # number. The local parser this replaces handed back any other
+        # string unchanged ("N/A", "28"), which made TOP_Mins a text
+        # column and crashed the sidebar's .sub() for the whole app.
+        df["TOP_Mins"] = pd.to_numeric(
+            df["TOP"].apply(game_log.parse_top), errors="coerce")
 
     # Season/Week are optional: the 28 games already on file predate the
     # columns and there is no real season boundary to infer (19 distinct
@@ -604,11 +610,15 @@ with st.sidebar.expander("🎚️ Dashboard Filters", expanded=False):
     )
 
     filtered_df = df.copy()
-    if "Result" in filtered_df.columns:
-        filtered_df = (
-            filtered_df[filtered_df["Result"].isin(selected_results)]
-            if selected_results else filtered_df.iloc[0:0]
-        )
+    if "Result" in filtered_df.columns and result_options:
+        # Same rule as the playbook filter: a game with no result
+        # recorded stays in while every result is selected (the
+        # default), and drops out once the selection is narrowed. A
+        # plain isin() hid it from every tab with nothing filtered.
+        keep = filtered_df["Result"].isin(selected_results)
+        if set(selected_results) >= set(result_options):
+            keep |= filtered_df["Result"].isna()
+        filtered_df = filtered_df[keep]
     filtered_df = game_log.filter_by_playbook(
         filtered_df, selected_playbooks, playbook_options)
     if games_window != "All Games" and not filtered_df.empty:
@@ -1827,12 +1837,28 @@ with tabs[3]:
     render_tab_header("🏛️", "Dynasty — Franchise Legacy",
                       "Season archives, era tracking, and career leaderboards")
 
-    history = load_history()
+    # Shown after the rerun that follows an archive: a banner rendered
+    # before st.rerun() is discarded with the run that drew it.
+    _dyn_note = st.session_state.pop("dynasty_note", None)
+    if _dyn_note:
+        (st.success if _dyn_note[0] else st.warning)(_dyn_note[1])
+
+    # The file is hand-editable, so an entry may be missing any field;
+    # indexing one that isn't there stopped the script, blanking every
+    # later tab. Display reads defaults; the file itself is untouched.
+    history = [s for s in load_history() if isinstance(s, dict)]
 
     # Timeline visualization
     st.markdown("#### 📅 Franchise Timeline")
     if history:
-        hist_df = pd.DataFrame(history)
+        hist_df = pd.DataFrame([{
+            "season": pd.to_numeric(s.get("season"), errors="coerce"),
+            "wins": pd.to_numeric(s.get("wins"), errors="coerce"),
+            "era": s.get("era") or "Unknown Era",
+            "record": s.get("record", "N/A"),
+            "playoff_result": s.get("playoff_result", "N/A"),
+            "mvp": s.get("mvp", "N/A"),
+        } for s in history]).dropna(subset=["season", "wins"])
         fig_timeline = px.scatter(
             hist_df,
             x="season",
@@ -1853,9 +1879,9 @@ with tabs[3]:
         st.markdown("#### 📜 The Chronicles")
         for season in reversed(history):
             era_label = season.get("era", "Unknown Era")
-            trophy = " 🏆" if "Champion" in season.get(
-                "playoff_result", "") else ""
-            with st.expander(f"Season {season['season']} — {era_label}{trophy}"):
+            trophy = " 🏆" if "Champion" in str(season.get(
+                "playoff_result", "")) else ""
+            with st.expander(f"Season {season.get('season', '?')} — {era_label}{trophy}"):
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     st.metric("Record", season.get("record", "N/A"))
@@ -1904,7 +1930,11 @@ with tabs[3]:
 
     # Archive new season form
     st.markdown("#### 📝 Archive a Season")
-    with st.form("archive_season_form", clear_on_submit=True):
+    # Keyed on a counter bumped only after a successful archive, so a
+    # rejected submission keeps what was typed (clear_on_submit wiped it
+    # even when nothing was saved).
+    st.session_state.setdefault("archive_form_ver", 0)
+    with st.form(f"archive_season_form_{st.session_state.archive_form_ver}"):
         acol1, acol2 = st.columns(2)
         with acol1:
             new_season = st.number_input(
@@ -1924,12 +1954,16 @@ with tabs[3]:
             "Season Notes", placeholder="Brief summary of the season...")
 
         submitted = st.form_submit_button("💾 Archive Season")
-        if submitted and new_record:
-            try:
-                wins = int(new_record.split("-")[0])
-                losses = int(new_record.split("-")[1])
-            except Exception:
-                wins, losses = 0, 0
+        # W-L or W-L-T, with a hyphen or the en/em dashes phones and
+        # word processors substitute. A record that didn't parse used to
+        # be saved as 0-0 without a word, and a blank one did nothing.
+        _rec = re.fullmatch(r"\s*(\d+)\s*[-–—]\s*(\d+)(?:\s*[-–—]\s*\d+)?\s*",
+                            new_record or "")
+        if submitted and not _rec:
+            st.error("Enter the record as wins-losses, e.g. 11-6 "
+                     "(or 10-6-1 with ties). Nothing was archived.")
+        if submitted and _rec:
+            wins, losses = int(_rec.group(1)), int(_rec.group(2))
 
             season_data = {
                 "season": int(new_season),
@@ -1946,8 +1980,15 @@ with tabs[3]:
                 "rec_yards": 0,
                 "notes": new_notes,
             }
-            archive_season(season_data, history)
-            st.success(f"✅ Season {new_season} archived under \"{new_era}\"!")
+            _hist, _saved = archive_and_save(season_data, load_history())
+            st.session_state["dynasty_note"] = (
+                (True, f"✅ Season {new_season} archived under "
+                       f"\"{new_era or 'Unknown Era'}\".") if _saved else
+                (False, f"Season {new_season} could not be saved: this "
+                        "server's disk is read-only, so the archive won't "
+                        "keep it."))
+            if _saved:
+                st.session_state.archive_form_ver += 1
             st.rerun()
 
 # ── TAB 5: Roster Explorer ──
@@ -2511,6 +2552,12 @@ with tabs[9]:
                     '⚪ Heuristic scouting (set ANTHROPIC_API_KEY for live Claude writeups)</span>',
                     unsafe_allow_html=True)
 
+    # Banners from the last action, shown after the rerun that follows
+    # it. Rendered before st.rerun() they were discarded unseen, so a
+    # failed Claude call or CSV save looked exactly like success.
+    for _kind, _msg in st.session_state.pop("ai_gm_notes", []):
+        (st.success if _kind == "success" else st.warning)(_msg)
+
     if "ai_gm_log" not in st.session_state:
         st.session_state.ai_gm_log = []
     if "ai_gm_form_version" not in st.session_state:
@@ -2564,6 +2611,7 @@ with tabs[9]:
                 "🔮 Scout & Add to Roster", width="stretch")
 
         if submitted:
+            notes = []
             new_player = {
                 "Name": f_name, "Pos": f_pos, "Age": f_age, "OVR": f_ovr,
                 "Dev": f_dev, "SPD": f_spd, "ACC": f_acc, "AGI": f_agi,
@@ -2592,18 +2640,26 @@ with tabs[9]:
                         report["ai_generated"] = True
                     else:
                         report["ai_generated"] = False
-                        st.warning(
-                            "Claude request failed — showing heuristic scouting report instead.")
+                        notes.append(("warning", "Claude request failed — showing "
+                                                 "the heuristic scouting report instead."))
                 else:
                     report["ai_generated"] = False
 
                 st.session_state.ai_gm_players.append(result["player"])
                 st.session_state.ai_gm_log.insert(0, report)
-                if f_persist:
-                    ai_gm.persist_roster(MY_TEAM, st.session_state.ai_gm_players)
+                notes.insert(0, ("success", f"✅ **{result['player']['Name']}** added "
+                                            f"to the {MY_TEAM} roster."))
+                if f_persist and not ai_gm.persist_roster(
+                        MY_TEAM, st.session_state.ai_gm_players):
+                    # It used to report success here regardless; on a
+                    # read-only disk or a demo-data fallback nothing was
+                    # written and the player vanished on the next restart.
+                    notes.append(("warning", "Couldn't save to the roster CSV "
+                                             "(read-only disk, or the roster "
+                                             "file couldn't be read). The "
+                                             "player is in this session only."))
                 st.session_state.ai_gm_form_version += 1
-                st.success(
-                    f"✅ **{result['player']['Name']}** added to the {MY_TEAM} roster.")
+                st.session_state.ai_gm_notes = notes
                 st.rerun()
 
         st.markdown("---")
@@ -2675,8 +2731,9 @@ with tabs[9]:
                                     rep["blurb"] = new_blurb
                                     rep["ai_generated"] = True
                                 else:
-                                    st.warning(
-                                        "Regeneration failed — keeping the previous version.")
+                                    st.session_state.ai_gm_notes = [(
+                                        "warning", "Regeneration failed — "
+                                                   "keeping the previous version.")]
                             st.rerun()
 
     st.markdown("---")

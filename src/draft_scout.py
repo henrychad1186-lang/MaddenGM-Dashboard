@@ -152,9 +152,16 @@ def clean_rules(raw) -> dict:
                 t, r = _num(p[0]), _num(p[1])
                 if t is not None and r is not None and t > 0:
                     pts.append([t, r])
-        # Two points make a line; duplicate times would divide by zero.
-        if len({t for t, _ in pts}) >= 2:
-            rules["speed_chart"] = sorted(pts)
+        # Two points make a line, and a repeated time would divide by
+        # zero in estimate_speed (it interpolates between neighbours).
+        # Requiring two distinct times wasn't enough: [[4.24, 99],
+        # [4.24, 98], [4.30, 97]] passed and crashed the Draft tab for
+        # any prospect at or under 4.24. Keep the first rating per time.
+        by_time = {}
+        for t, r in pts:
+            by_time.setdefault(t, r)
+        if len(by_time) >= 2:
+            rules["speed_chart"] = sorted([t, r] for t, r in by_time.items())
 
     for key in ("speed_band", "speed_safe_max", "speed_coinflip_max", "a_tier_floor"):
         v = _num(raw.get(key))

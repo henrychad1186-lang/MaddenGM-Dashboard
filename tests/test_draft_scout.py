@@ -278,3 +278,9 @@ def test_calibration_reports_bias_per_rating(rules):
 
 def test_calibration_without_actuals_is_empty(rules):
     assert ds.calibrate(_board([{"Name": "A", "Forty": 4.4}]), rules).empty
+
+
+def test_duplicate_chart_times_do_not_divide_by_zero():
+    rules = ds.clean_rules({"speed_chart": [[4.24, 99], [4.24, 98], [4.30, 97]]})
+    assert rules["speed_chart"] == [[4.24, 99], [4.30, 97]]
+    assert ds.estimate_speed(4.20, rules)["est"] >= 99

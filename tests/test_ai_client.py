@@ -1,4 +1,5 @@
 """Tests for the sentence-trimming helper used to clean up truncated Claude output."""
+import pytest
 
 import json
 
@@ -262,3 +263,13 @@ def test_request_kwargs_are_accepted_by_the_installed_sdk(monkeypatch):
                 f"anthropic {anthropic.__version__} messages.{method} rejects "
                 f"this request ({e}); raise the floor in requirements.txt"
             ) from None
+
+
+@pytest.mark.parametrize("model,ok", [
+    ("claude-sonnet-5-5", True), ("claude-opus-4-6", True), ("claude-opus-4-5-20251101", True),
+    ("claude-sonnet-4-20250514", False), ("claude-opus-4-20250514", False),
+    ("claude-sonnet-4-5", False), ("claude-haiku-4-5", False), ("claude-3-7-sonnet-20250219", False),
+])
+def test_effort_only_sent_to_models_that_accept_it(model, ok):
+    from src import ai_client
+    assert ai_client._supports_effort(model) is ok
