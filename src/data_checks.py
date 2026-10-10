@@ -15,6 +15,8 @@ holding the box score to decide.
 
 import pandas as pd
 
+from src.game_log import parse_top
+
 # Madden's default quarter is 11 minutes (44-minute game). A side
 # holding the ball under a quarter of that (or over three quarters)
 # is implausible enough to verify.
@@ -55,18 +57,6 @@ def _game(df: pd.DataFrame, i) -> str:
 
 def _opp(df: pd.DataFrame, i) -> str:
     return str(df.at[i, "Opponent"]) if "Opponent" in df.columns else ""
-
-
-def top_minutes(value) -> "float | None":
-    """'MM:SS' -> minutes, or None if it isn't one."""
-    if not isinstance(value, str) or ":" not in value:
-        return None
-    mm, _, ss = value.strip().partition(":")
-    try:
-        m, s = int(mm), int(ss)
-    except ValueError:
-        return None
-    return m + s / 60 if 0 <= s < 60 and m >= 0 else None
 
 
 def check_log(df: "pd.DataFrame | None",
@@ -147,7 +137,7 @@ def check_log(df: "pd.DataFrame | None",
         # A list, not a Series: Series.apply turns the None for a blank
         # or unparseable cell into NaN, which passes `is not None` and
         # fails every range comparison, flagging blanks as implausible.
-        mins = [top_minutes(v) for v in df["TOP"]]
+        mins = [parse_top(v) for v in df["TOP"]]
         lo, hi = game_minutes * _TOP_LOW_SHARE, game_minutes * _TOP_HIGH_SHARE
         for i in df.index:
             m = mins[i]
