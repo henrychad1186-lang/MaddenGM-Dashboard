@@ -1297,11 +1297,13 @@ def render_backfill_form() -> None:
         return
 
     missing = game_log.games_missing_efficiency(existing)
-    if missing.empty:
-        return
-
-    label = (f"🧮 Backfill 3rd down / red zone — {len(missing)} of "
-             f"{len(existing)} games are missing them")
+    # Every game is offered, missing ones first. Offering only the
+    # missing ones hid the games this form most needs to reach: the 13
+    # imported in #63 carry an estimated 12 third-down attempts, which
+    # reads as "tracked", so 11 of them could never be corrected.
+    label = ("🧮 Backfill / correct 3rd down & red zone"
+             + (f" — {len(missing)} of {len(existing)} games are missing them"
+                if len(missing) else ""))
     with st.expander(label, expanded=False):
         if _LOG_SOURCE != "local":
             st.info("The dashboard is showing an uploaded file or a Google "
@@ -1314,15 +1316,21 @@ def render_backfill_form() -> None:
                    "field at 0 to skip it — 0 attempts reads as *not "
                    "tracked*, not as a game with none.")
 
-        ids = [int(v) for v in pd.to_numeric(
+        missing_ids = [int(v) for v in pd.to_numeric(
             missing["GAME_ID"], errors="coerce").dropna()]
+        ids = missing_ids + [
+            int(v) for v in pd.to_numeric(
+                existing["GAME_ID"], errors="coerce").dropna()
+            if int(v) not in missing_ids]
         # Outside the form on purpose. A form batches its widgets until
         # submit, so a picker inside it could not prefill the inputs
         # from the chosen game — and a conversion count already on the
         # row would be submitted away as the 0 default.
-        gid = st.selectbox("Game", ids, key="backfill_game",
-                           format_func=lambda g: _backfill_label(missing, g))
-        current = game_log.row_for_game(missing, gid)
+        gid = st.selectbox(
+            "Game", ids, key="backfill_game",
+            format_func=lambda g: _backfill_label(existing, g)
+            + (" — missing" if g in missing_ids else ""))
+        current = game_log.row_for_game(existing, gid)
 
         def _prefill(column: str) -> int:
             value = pd.to_numeric(current.get(column), errors="coerce")
@@ -1335,15 +1343,19 @@ def render_backfill_form() -> None:
                 # three labels, and only its differing max_value keeps
                 # the auto-generated widget IDs apart. Aligning the
                 # ranges would take the tab down with DuplicateWidgetID.
+                # The game is part of the key: a keyed widget keeps its
+                # state and ignores a new `value`, so with one key per
+                # input, switching games kept the previous game's numbers
+                # and Save wrote them onto this one.
                 td_att = st.number_input(
                     "3rd down attempts", min_value=0, max_value=40,
                     value=_prefill("Third_Down_Att"), step=1,
-                    key="backfill_td_att")
+                    key=f"backfill_td_att_{gid}")
             with b2:
                 td_conv = st.number_input(
                     "3rd down conversions", min_value=0, max_value=40,
                     value=_prefill("Third_Down_Conv"), step=1,
-                    key="backfill_td_conv",
+                    key=f"backfill_td_conv_{gid}",
                     help="Prefilled from the log where it is already "
                          "recorded, so supplying attempts cannot write "
                          "an existing count away.")
@@ -1351,7 +1363,7 @@ def render_backfill_form() -> None:
                 rz_att = st.number_input(
                     "Red zone trips", min_value=0, max_value=20,
                     value=_prefill("RZ_Att"), step=1,
-                    key="backfill_rz_att")
+                    key=f"backfill_rz_att_{gid}")
             saved = st.form_submit_button("Save to this game",
                                           type="primary")
 
