@@ -18,7 +18,7 @@ from src.trade_engine import (
     parse_salary,
 )
 from src.dynasty import load_history_strict, archive_and_save, get_career_leaders
-from src.theme import RANK_COLORS, VERDICT_COLORS, rank_color
+from src.theme import NEED_COLORS, RANK_COLORS, VERDICT_COLORS, rank_color
 from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
@@ -38,6 +38,7 @@ from src.roster import (
     ovr_label,
     get_position_grades,
     get_cap_summary,
+    POSITION_ORDER,
     TEAMS,
     POSITION_GROUPS,
     ROSTER_WARNINGS,
@@ -1731,9 +1732,11 @@ def render_trade_machine() -> None:
                     unsafe_allow_html=True)
 
         # Offered player(s) — user's side
-        st.markdown('<div class="trade-card">', unsafe_allow_html=True)
-        st.markdown("**🟢 You Send:**")
-        offer_names = st.multiselect(
+        # A <div> opened in one st.markdown and closed in another doesn't
+        # wrap the widgets between them; it rendered as an empty box.
+        _send_box = st.container(border=True)
+        _send_box.markdown("**🟢 You Send:**")
+        offer_names = _send_box.multiselect(
             "Players to offer:",
             user_roster["Name"].tolist(),
             default=[selected_player_name],
@@ -1744,18 +1747,17 @@ def render_trade_machine() -> None:
             for n in offer_names
             if n in user_roster["Name"].values
         ]
-        st.markdown('</div>', unsafe_allow_html=True)
 
         # Requested player(s) — CPU side
-        st.markdown('<div class="trade-card">', unsafe_allow_html=True)
-        st.markdown("**🔴 You Receive:**")
-        cpu_team = st.selectbox(
+        _recv_box = st.container(border=True)
+        _recv_box.markdown("**🔴 You Receive:**")
+        cpu_team = _recv_box.selectbox(
             "From team:", [
                 t for t in TRADE_ROSTERS["Team"].unique() if t != MY_TEAM],
             key="trade_cpu_team",
         )
         cpu_roster = TRADE_ROSTERS[TRADE_ROSTERS["Team"] == cpu_team]
-        request_names = st.multiselect(
+        request_names = _recv_box.multiselect(
             "Players to request:",
             cpu_roster["Name"].tolist(),
             key="trade_request_select",
@@ -1765,7 +1767,6 @@ def render_trade_machine() -> None:
             for n in request_names
             if n in cpu_roster["Name"].values
         ]
-        st.markdown('</div>', unsafe_allow_html=True)
 
         if st.button("📋 Evaluate Trade", key="eval_trade_btn", width="stretch"):
             if not offered or not requested:
@@ -2142,9 +2143,30 @@ with tabs[4]:
     st.markdown("#### 📊 Position Group Grades")
     grades = roster_view("grades", selected_team, AI_GM_EXTRA)
     if grades:
+        # get_position_grades skips rooms with nobody in them, so the
+        # positions Home lists as top needs (an empty FB/LG/MLB) were the
+        # ones missing from this grid. Show them as empty, in grid order.
+        _graded = {g["pos"]: g for g in grades}
         grade_cols = st.columns(4)
-        for i, g in enumerate(grades):
+        for i, pos in enumerate(POSITION_ORDER):
+            g = _graded.get(pos)
             with grade_cols[i % 4]:
+                if g is None:
+                    st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(30,30,60,0.9), rgba(50,50,80,0.7));
+                    border: 1px dashed {NEED_COLORS['Critical']}80; border-radius: 14px; padding: 1rem;
+                    text-align: center; margin-bottom: 0.8rem;">
+                    <div style="font-size: 2.2rem; font-weight: 900; color: {NEED_COLORS['Critical']}; line-height: 1.1;">—</div>
+                    <div style="font-size: 1.15rem; font-weight: 700; color: white; margin-top: 0.2rem;">{pos}</div>
+                    <div style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; margin-top: 0.25rem;">
+                        No starter
+                    </div>
+                    <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.1rem;">
+                        0 players on roster
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                    continue
                 st.markdown(f"""
                 <div style="background: linear-gradient(135deg, rgba(30,30,60,0.9), rgba(50,50,80,0.7));
                     border: 1px solid {g['color']}40; border-radius: 14px; padding: 1rem;
@@ -2171,13 +2193,17 @@ with tabs[4]:
         with cap_c1:
             st.metric("Total Cap Savings", f"${cap['total_savings']:.1f}M")
         with cap_c2:
-            st.metric("Total Dead Cap", f"${cap['total_penalty']:.1f}M",
-                      delta=f"-${cap['total_penalty']:.1f}M", delta_color="inverse")
+            # The delta used to repeat the value as "-$482.4M" in green.
+            st.metric("Total Dead Cap", f"${cap['total_penalty']:.1f}M")
         with cap_c3:
+            # Savings minus dead cap if the whole roster were released: a
+            # what-if, not the team's cap space, which the roster file
+            # doesn't carry. It was labelled "Net Cap Position" with a
+            # Healthy/Tight badge, and printed "$-400.1M".
             net = cap['total_savings'] - cap['total_penalty']
-            st.metric("Net Cap Position", f"${net:+.1f}M",
-                      delta="Healthy" if net > 0 else "Tight",
-                      delta_color="normal" if net > 0 else "inverse")
+            st.metric("Net if All Released", f"{'−' if net < 0 else '+'}${abs(net):.1f}M",
+                      help="Cap savings minus dead cap if every player were "
+                           "released. Not your current cap space.")
 
         st.markdown("##### 🔴 Top 5 Dead Cap Hits")
         top_dead = [p for p in cap["players"] if p["Penalty"] > 0][:5]
