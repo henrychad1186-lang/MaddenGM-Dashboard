@@ -1253,19 +1253,6 @@ def _backfill_label(games: pd.DataFrame, gid: int) -> str:
             f"({str(r.get('Result', '') or '?')}{score})")
 
 
-def _backfill_fields(td_att: int, td_conv: int, rz_att: int) -> dict:
-    """The columns to write. 0 attempts means "not tracked", so an
-    untouched field is left out rather than written as a real
-    measurement of nothing — the same rule the entry form applies."""
-    fields = {}
-    if td_att:
-        fields["Third_Down_Att"] = int(td_att)
-        fields["Third_Down_Conv"] = int(td_conv)
-    if rz_att:
-        fields["RZ_Att"] = int(rz_att)
-    return fields
-
-
 def render_backfill_form() -> None:
     """Add third-down and red-zone numbers to a game already logged.
 
@@ -1287,9 +1274,7 @@ def render_backfill_form() -> None:
     if existing.empty or "GAME_ID" not in existing.columns:
         return
 
-    att = pd.to_numeric(existing.get("Third_Down_Att"), errors="coerce")
-    rz = pd.to_numeric(existing.get("RZ_Att"), errors="coerce")
-    missing = existing[att.isna() | rz.isna()] if len(existing) else existing
+    missing = game_log.games_missing_efficiency(existing)
     if missing.empty:
         return
 
@@ -1309,31 +1294,52 @@ def render_backfill_form() -> None:
 
         ids = [int(v) for v in pd.to_numeric(
             missing["GAME_ID"], errors="coerce").dropna()]
+        # Outside the form on purpose. A form batches its widgets until
+        # submit, so a picker inside it could not prefill the inputs
+        # from the chosen game — and a conversion count already on the
+        # row would be submitted away as the 0 default.
+        gid = st.selectbox("Game", ids, key="backfill_game",
+                           format_func=lambda g: _backfill_label(missing, g))
+        current = game_log.row_for_game(missing, gid)
+
+        def _prefill(column: str) -> int:
+            value = pd.to_numeric(current.get(column), errors="coerce")
+            return 0 if pd.isna(value) else int(value)
+
         with st.form("backfill_form"):
-            gid = st.selectbox(
-                "Game", ids,
-                format_func=lambda g: _backfill_label(missing, g))
             b1, b2, b3 = st.columns(3)
             with b1:
-                td_att = st.number_input("3rd down attempts", min_value=0,
-                                         max_value=40, value=0, step=1)
+                # Explicit keys: the entry form above carries the same
+                # three labels, and only its differing max_value keeps
+                # the auto-generated widget IDs apart. Aligning the
+                # ranges would take the tab down with DuplicateWidgetID.
+                td_att = st.number_input(
+                    "3rd down attempts", min_value=0, max_value=40,
+                    value=_prefill("Third_Down_Att"), step=1,
+                    key="backfill_td_att")
             with b2:
-                td_conv = st.number_input("3rd down conversions",
-                                          min_value=0, max_value=40,
-                                          value=0, step=1)
+                td_conv = st.number_input(
+                    "3rd down conversions", min_value=0, max_value=40,
+                    value=_prefill("Third_Down_Conv"), step=1,
+                    key="backfill_td_conv",
+                    help="Prefilled from the log where it is already "
+                         "recorded, so supplying attempts cannot write "
+                         "an existing count away.")
             with b3:
-                rz_att = st.number_input("Red zone trips", min_value=0,
-                                         max_value=20, value=0, step=1)
+                rz_att = st.number_input(
+                    "Red zone trips", min_value=0, max_value=20,
+                    value=_prefill("RZ_Att"), step=1,
+                    key="backfill_rz_att")
             saved = st.form_submit_button("Save to this game",
                                           type="primary")
 
         if not saved:
             return
 
-        fields = _backfill_fields(td_att, td_conv, rz_att)
+        fields = game_log.backfill_changes(current, td_att, td_conv, rz_att)
         if not fields:
-            st.warning("Nothing entered — set attempts or trips above 0. "
-                       "Nothing was written.")
+            st.warning("Nothing to change — set attempts or trips above 0, "
+                       "or enter a different number. Nothing was written.")
             return
 
         ok, message = game_log.update_game(_GAME_LOGS_CSV, gid, fields)

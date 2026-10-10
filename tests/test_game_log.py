@@ -689,3 +689,154 @@ class TestUpdateAgainstTheShippedLog:
         assert ok, msg
         end = game_log.efficiency_rates(pd.read_csv(real_log_copy))
         assert end["third_down_games"] == start["third_down_games"] + 1
+
+
+class TestGamesMissingEfficiency:
+    """Which games the backfill picker should offer.
+
+    The mask lived in app.py and used `df.get(col)`, which returns None
+    for an absent column; `pd.to_numeric(None)` is a scalar NaN, and
+    calling `.isna()` on that raises AttributeError — taking Franchise
+    Home down on exactly the legacy schema this editor exists to repair.
+    """
+
+    def test_an_absent_column_does_not_raise(self):
+        df = pd.DataFrame({"GAME_ID": [1, 2], "Team": ["GB", "GB"]})
+        out = game_log.games_missing_efficiency(df)
+        assert len(out) == 2, "every game is missing both columns"
+
+    def test_zero_counts_as_missing(self):
+        # 0 attempts is this repo's "not tracked" sentinel: the entry
+        # form writes blank for it and efficiency_rates filters on
+        # `a > 0`. Treating it as complete hid those games from the one
+        # screen that can fix them.
+        df = pd.DataFrame({"GAME_ID": [1], "Third_Down_Att": [0],
+                           "RZ_Att": [0]})
+        assert len(game_log.games_missing_efficiency(df)) == 1
+
+    def test_a_fully_recorded_game_is_not_offered(self):
+        df = pd.DataFrame({"GAME_ID": [1], "Third_Down_Att": [11],
+                           "RZ_Att": [4]})
+        assert game_log.games_missing_efficiency(df).empty
+
+    def test_missing_either_column_is_enough(self):
+        df = pd.DataFrame({"GAME_ID": [1, 2],
+                           "Third_Down_Att": [11, None],
+                           "RZ_Att": [None, 4]})
+        assert len(game_log.games_missing_efficiency(df)) == 2
+
+    def test_an_empty_log_is_handled(self):
+        assert game_log.games_missing_efficiency(pd.DataFrame()).empty
+
+
+class TestBackfillChanges:
+    """What the form actually writes.
+
+    Defaulting conversions to 0 erased known data: a row with
+    Third_Down_Conv recorded but no attempts — a shape
+    `efficiency_rates` explicitly supports — lost its conversion count
+    the moment someone supplied the attempts.
+    """
+
+    def test_conversions_already_on_the_row_are_not_zeroed(self):
+        # The form prefills this input from the row, so the 6 comes
+        # back as a 6. Dropping it as a no-op is the strongest way to
+        # preserve it: the cell is never rewritten at all.
+        current = {"Third_Down_Conv": 6}
+        out = game_log.backfill_changes(current, td_att=11, td_conv=6,
+                                        rz_att=0)
+        assert out["Third_Down_Att"] == 11
+        assert out.get("Third_Down_Conv", 6) == 6, (
+            "a recorded conversion count must never be written away")
+
+    def test_a_value_equal_to_what_is_there_is_not_rewritten(self):
+        current = {"Third_Down_Att": 11, "Third_Down_Conv": 6, "RZ_Att": 4}
+        assert game_log.backfill_changes(current, 11, 6, 4) == {}
+
+    def test_zero_attempts_writes_nothing_for_that_stat(self):
+        out = game_log.backfill_changes({}, td_att=0, td_conv=0, rz_att=5)
+        assert "Third_Down_Att" not in out
+        assert "Third_Down_Conv" not in out
+        assert out["RZ_Att"] == 5
+
+    def test_a_genuine_nought_for_eleven_is_still_writable(self):
+        out = game_log.backfill_changes({}, td_att=11, td_conv=0, rz_att=0)
+        assert out == {"Third_Down_Att": 11, "Third_Down_Conv": 0}
+
+
+class TestTheWriteIsAtomic:
+    """A failed write must not destroy the log.
+
+    Opening the live path with "w" truncates it before `write` runs, so
+    a full disk returned False and left an empty CSV — an error message
+    on screen and the franchise gone. This module exists to make that
+    impossible.
+    """
+
+    def _disk_full(self, monkeypatch):
+        """Fail the staged write the way a full disk would.
+
+        Patched at `tempfile.NamedTemporaryFile`, not at `open`: the
+        staging file is created through `os.open`, so a `builtins.open`
+        patch never fires and the test passes against a writer that is
+        not atomic at all.
+        """
+        import tempfile as real_tempfile
+        real_factory = real_tempfile.NamedTemporaryFile
+
+        class Boom:
+            def __init__(self, handle):
+                self._handle = handle
+                self.name = handle.name
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self._handle.close()
+                return False
+
+            def write(self, _):
+                raise OSError(28, "No space left on device")
+
+        def fake(*a, **k):
+            return Boom(real_factory(*a, **k))
+
+        monkeypatch.setattr(game_log.tempfile, "NamedTemporaryFile", fake)
+
+    def test_a_failed_write_leaves_the_log_untouched(self, tmp_path,
+                                                     monkeypatch):
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Team,RZ_Att\n1,GB,\n2,GB,\n")
+        before = path.read_bytes()
+        self._disk_full(monkeypatch)
+        ok, msg = game_log.update_game(str(path), 1, {"RZ_Att": 4})
+        assert not ok, msg
+        assert path.read_bytes() == before, "the log was damaged"
+
+    def test_a_failed_header_extension_leaves_the_log_untouched(
+            self, tmp_path, monkeypatch):
+        """`_extend_header` runs first and rewrites the same file, so
+        it needs the same protection or the edit fails halfway."""
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Team\n1,GB\n2,GB\n")
+        before = path.read_bytes()
+        self._disk_full(monkeypatch)
+        ok, _ = game_log.update_game(str(path), 1, {"RZ_Att": 4})
+        assert not ok
+        assert path.read_bytes() == before, "the log was damaged"
+
+    def test_the_staging_file_is_cleaned_up_after_a_failure(
+            self, tmp_path, monkeypatch):
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Team,RZ_Att\n1,GB,\n")
+        self._disk_full(monkeypatch)
+        game_log.update_game(str(path), 1, {"RZ_Att": 4})
+        assert [p.name for p in tmp_path.iterdir()] == ["game_logs.csv"]
+
+    def test_no_temporary_file_is_left_behind(self, tmp_path):
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Team,RZ_Att\n1,GB,\n")
+        ok, _ = game_log.update_game(str(path), 1, {"RZ_Att": 4})
+        assert ok
+        assert [p.name for p in tmp_path.iterdir()] == ["game_logs.csv"]

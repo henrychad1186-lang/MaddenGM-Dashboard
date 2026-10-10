@@ -13,6 +13,7 @@ already.
 """
 
 import os
+import tempfile
 
 import pandas as pd
 
@@ -342,6 +343,77 @@ def _splice(line: str, index: int, value: str) -> str:
 BACKFILL_FIELDS = EFFICIENCY_FIELDS + ["RZ_TD_Made"]
 
 
+def _untracked(df: pd.DataFrame, column: str) -> pd.Series:
+    """Rows where `column` holds no usable count, as an aligned Series.
+
+    Blank and 0 both mean "not tracked": the entry form writes blank
+    for a 0 and `_rate` filters on `a > 0`. An absent column means no
+    row has it — returned as an all-True Series rather than the scalar
+    NaN `pd.to_numeric(df.get(missing))` would give, whose `.isna()`
+    raises AttributeError.
+    """
+    if column not in df.columns:
+        return pd.Series(True, index=df.index, dtype=bool)
+    value = pd.to_numeric(df[column], errors="coerce")
+    return value.isna() | (value == 0)
+
+
+def games_missing_efficiency(df: pd.DataFrame) -> pd.DataFrame:
+    """The games a backfill could still improve — missing either stat."""
+    if df is None or df.empty:
+        return df if df is not None else pd.DataFrame()
+    return df[_untracked(df, "Third_Down_Att") | _untracked(df, "RZ_Att")]
+
+
+def backfill_changes(current: dict, td_att, td_conv, rz_att) -> dict:
+    """The columns a backfill should actually write.
+
+    Takes what the row already holds so a submitted value that matches
+    it is dropped rather than rewritten — re-saving a prefilled form
+    touches nothing. Conversions ride along with attempts, because
+    `Third_Down_Conv` on its own cannot produce a rate; 0 attempts
+    still means "not tracked" and writes neither.
+    """
+    proposed = {}
+    if td_att:
+        proposed["Third_Down_Att"] = int(td_att)
+        proposed["Third_Down_Conv"] = int(td_conv)
+    if rz_att:
+        proposed["RZ_Att"] = int(rz_att)
+
+    changes = {}
+    for column, value in proposed.items():
+        now = pd.to_numeric(current.get(column), errors="coerce")
+        if pd.isna(now) or now != value:
+            changes[column] = value
+    return changes
+
+
+def _write_atomically(path: str, text: str) -> None:
+    """Replace `path` with `text`, or leave it exactly as it was.
+
+    Opening the live file with "w" truncates it before `write` runs, so
+    a full disk used to return a failure *and* an empty log — an error
+    message on screen and the franchise gone. The new content is staged
+    beside the original (same directory, so `os.replace` is a rename
+    within one filesystem) and swapped in only once it is safely down.
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    handle = tempfile.NamedTemporaryFile(
+        "w", newline="", dir=directory, prefix=".game_log-", suffix=".tmp",
+        delete=False)
+    try:
+        with handle:
+            handle.write(text)
+        os.replace(handle.name, path)
+    except BaseException:
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        raise
+
+
 def update_game(path: str, game_id, fields: dict) -> "tuple[bool, str]":
     """Write `fields` into the logged game `game_id`. Returns (ok, message).
 
@@ -383,8 +455,7 @@ def update_game(path: str, game_id, fields: dict) -> "tuple[bool, str]":
             body = _splice(body, columns.index(column), _format(value))
         lines[index] = body + raw[len(raw.rstrip("\r\n")):]
 
-        with open(path, "w", newline="") as handle:
-            handle.write("".join(lines))
+        _write_atomically(path, "".join(lines))
     except OSError:
         return False, ("Could not write the game log — the filesystem is "
                        "read-only. Download the CSV and edit locally.")
@@ -426,17 +497,19 @@ def _why_not(existing: pd.DataFrame, game_id, fields: dict) -> "str | None":
     if len(rows) > 1:
         return (f"Game #{game_id} appears {len(rows)} times, so the one to "
                 "edit is ambiguous.")
-    return _impossible_pair({**_row_as_dict(existing, game_id), **fields})
+    return _impossible_pair({**row_for_game(existing, game_id), **fields})
 
 
-def _row_as_dict(existing: pd.DataFrame, game_id) -> dict:
-    """The named game's current values, for validating a partial edit.
+def row_for_game(existing: pd.DataFrame, game_id) -> dict:
+    """The named game's current values, or {} if it isn't there.
 
-    A backfill may supply attempts without conversions, so "conversions
-    cannot exceed attempts" has to be checked against the merge of what
-    is being written and what is already on the row.
+    Used for two things that both need to know what is already on the
+    row: validating a partial edit ("conversions cannot exceed
+    attempts" has to hold against the merge of old and new), and
+    prefilling the backfill form so supplying one stat cannot write
+    another away.
     """
-    if "GAME_ID" not in existing.columns:
+    if existing is None or existing.empty or "GAME_ID" not in existing.columns:
         return {}
     ids = pd.to_numeric(existing["GAME_ID"], errors="coerce")
     hit = existing[ids == pd.to_numeric(game_id, errors="coerce")]
@@ -480,8 +553,7 @@ def _extend_header(path: str, columns: "list[str]") -> None:
             first_break = min(first_break, idx)
     header, rest = text[:first_break], text[first_break:]
     header += "".join("," + _csv_cell(c) for c in columns)
-    with open(path, "w", newline="") as handle:
-        handle.write(header + rest)
+    _write_atomically(path, header + rest)
 
 
 def _rate(df: pd.DataFrame, made: str, att: str) -> "tuple[float | None, int]":
