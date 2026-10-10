@@ -242,6 +242,19 @@ class TestParseTop:
     def test_accepts_a_plain_number(self):
         assert game_log.parse_top(30) == 30.0
 
+    @pytest.mark.parametrize("sheet, minutes", [("19:39:00", 19.65),
+                                                ("0:19:39", 19.65),
+                                                (" 28:30 ", 28.5)])
+    def test_reads_what_a_google_sheet_exports(self, sheet, minutes):
+        # Sheets turns a typed or imported "19:39" into a time and
+        # exports "19:39:00"; that dropped every TOP synced from a Sheet.
+        assert game_log.parse_top(sheet) == pytest.approx(minutes)
+
+    @pytest.mark.parametrize("bad", ["1:19:39", "19:39:15", "1:2:3:4",
+                                     float("nan")])
+    def test_rejects_real_hours_and_blanks(self, bad):
+        assert game_log.parse_top(bad) is None
+
 
 class TestDuplicateWeek:
 
