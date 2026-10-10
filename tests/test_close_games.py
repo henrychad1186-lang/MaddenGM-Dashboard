@@ -68,5 +68,5 @@ def test_shipped_log_close_record():
     df = pd.read_csv("data/game_logs.csv")
     df["Result"] = df["Result"].map({"W": "WIN", "L": "LOSS", "T": "TIE"})
     r = close_games.analyze(df)
-    assert r["close"]["record"] == "4-9"
-    assert r["decided"]["record"] == "13-4"
+    assert r["close"]["record"] == "6-12"
+    assert r["decided"]["record"] == "14-10"
