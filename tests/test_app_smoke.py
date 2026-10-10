@@ -155,3 +155,11 @@ def test_cap_what_if_is_not_called_a_cap_position(app):
     assert "Net Cap Position" not in labels
     value = labels["Net if All Released"]
     assert value.startswith(("−$", "+$")), value
+
+
+def test_peak_win_pct_skips_the_opening_games(app):
+    """Over every game the peak was 100% for any team that won its opener."""
+    labels = {m.label: m.value for m in app.metric}
+    assert "Peak Win %" not in labels
+    peak = next(v for k, v in labels.items() if k.startswith("Peak Win % (game"))
+    assert peak != "100.0%"
