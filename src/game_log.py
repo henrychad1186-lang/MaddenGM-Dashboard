@@ -79,19 +79,33 @@ NFL_TEAMS = [
 def parse_top(text: str) -> "float | None":
     """Minutes from a "MM:SS" time of possession, or None if unparseable.
 
+    A number is taken as minutes already; NaN (a blank cell) is None.
+
     Mirrors the reader in `app.py`, which silently yields None on a bad
     value — the form validates up front so a typo does not become a row
     that quietly drops out of every TOP chart.
     """
     if isinstance(text, (int, float)) and not isinstance(text, bool):
-        return float(text)
+        return None if pd.isna(text) else float(text)
     if not isinstance(text, str) or ":" not in text:
         return None
-    minutes, _, seconds = text.partition(":")
+    parts = text.strip().split(":")
     try:
-        minutes, seconds = int(minutes), int(seconds)
+        parts = [int(p) for p in parts]
     except ValueError:
         return None
+    # Google Sheets reads a typed or imported "19:39" as a time and
+    # exports it as "19:39:00"; a duration-formatted cell exports
+    # "0:19:39". Both are MM:SS underneath. Any other H:MM:SS is not a
+    # time of possession.
+    if len(parts) == 3:
+        if parts[0] == 0:
+            parts = parts[1:]
+        elif parts[2] == 0:
+            parts = parts[:2]
+    if len(parts) != 2:
+        return None
+    minutes, seconds = parts
     if minutes < 0 or not 0 <= seconds < 60:
         return None
     return minutes + seconds / 60

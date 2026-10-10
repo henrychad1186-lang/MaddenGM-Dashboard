@@ -205,3 +205,17 @@ def test_normalize_position_folds_side_labels():
     assert roster_csv.normalize_position("MIKE") == "MLB"
     assert roster_csv.normalize_position(float("nan")) == "NAN"
     assert roster_csv.normalize_position("QB") == "QB"
+
+
+def test_existing_keys_tell_same_named_players_apart():
+    raw = pd.DataFrame({"Player Name": ["J. Smith"], "Position": ["REDG"]})
+    keys = roster_csv.existing_player_keys(raw)
+    assert ("J. Smith", "EDGE") in keys and ("J. Smith", "WR") not in keys
+
+
+def test_drop_unrated_hands_back_int_ratings():
+    # One blank cell made the column float, so survivors showed "88.0".
+    df = pd.DataFrame({"Name": ["A", "B"], "OVR": [88, None], "Age": [25, 30]})
+    out, names = roster_csv.drop_unrated(df)
+    assert names == ["B"]
+    assert out["OVR"].tolist() == [88] and out["OVR"].dtype.kind == "i"

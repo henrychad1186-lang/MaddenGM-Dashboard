@@ -40,3 +40,20 @@ def test_movers_between_snapshots(prog_csv):
     assert movers["gainers"] == [{"Name": "A", "Pos": "QB", "Start_OVR": 80,
                                   "Current_OVR": 84, "Delta": 4}]
     assert movers["losers"][0]["Delta"] == -3
+
+
+@pytest.mark.parametrize("content", ["garbage\x00\x01", "a,b\n1,2\n",
+                                     "Player,Pos,Team,Season,Week,OVR\nA,QB,GB,2026,1,80\n"])
+def test_snapshot_leaves_an_unreadable_log_alone(prog_csv, content):
+    # It used to read these as empty and overwrite them with one week.
+    prog_csv.write_text(content)
+    assert progression.snapshot_roster(roster.TEAMS[0], 2026, 1) == 0
+    assert prog_csv.read_text() == content
+
+
+def test_snapshot_appends_and_leaves_no_temp_file(prog_csv):
+    team = roster.TEAMS[0]
+    first = progression.snapshot_roster(team, 2026, 1)
+    second = progression.snapshot_roster(team, 2026, 2)
+    assert len(progression.get_progression(team)) == first + second
+    assert not (prog_csv.parent / (prog_csv.name + ".tmp")).exists()

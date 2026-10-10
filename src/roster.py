@@ -109,6 +109,22 @@ def _load_rosters() -> pd.DataFrame:
                 f"the file provides them.")
             return _demo_roster()
 
+        df, unrated = roster_csv.drop_unrated(df)
+        if unrated:
+            SOURCE_COLUMN_ISSUES.append(
+                f"Left out {len(unrated)} roster row(s) with a blank or "
+                f"non-numeric OVR or Age: {', '.join(unrated[:8])}"
+                f"{'…' if len(unrated) > 8 else ''}. Fix them in "
+                f"data/packers_roster.csv to include them.")
+            if df.empty:
+                # Nothing usable left: same fallback as an unreadable
+                # file, so the app has a team to show and SOURCE_COLUMNS
+                # stays empty (no "Save to roster CSV" over the user's file).
+                SOURCE_COLUMN_ISSUES.append(
+                    "No roster rows had a usable OVR and Age. Using demo "
+                    "data until the file is fixed.")
+                return _demo_roster()
+
         # Normalize positions and assign groups
         df["Pos"] = df["Pos"].apply(_normalize_pos)
         df["Group"] = df["Pos"].apply(_assign_group)

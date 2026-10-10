@@ -108,10 +108,11 @@ def test_two_step_run_is_not_a_placeholder():
     assert _checks(rows) == []
 
 
-def test_top_minutes_parsing():
-    assert dc.top_minutes("17:35") == pytest.approx(17 + 35 / 60)
-    for bad in ("17", "17:75", "a:b", None, 17.5):
-        assert dc.top_minutes(bad) is None
+def test_sheets_time_format_is_range_checked():
+    # A Sheet exports a typed "8:05" as "8:05:00"; the checks used
+    # their own parser, which skipped it, so the outlier went unflagged.
+    assert _checks([_row(TOP="8:05:00")]) == [
+        ("1", "Time of possession implausible")]
 
 
 def test_summary_counts_in_first_seen_order():

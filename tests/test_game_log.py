@@ -242,6 +242,19 @@ class TestParseTop:
     def test_accepts_a_plain_number(self):
         assert game_log.parse_top(30) == 30.0
 
+    @pytest.mark.parametrize("sheet, minutes", [("19:39:00", 19.65),
+                                                ("0:19:39", 19.65),
+                                                (" 28:30 ", 28.5)])
+    def test_reads_what_a_google_sheet_exports(self, sheet, minutes):
+        # Sheets turns a typed or imported "19:39" into a time and
+        # exports "19:39:00"; that dropped every TOP synced from a Sheet.
+        assert game_log.parse_top(sheet) == pytest.approx(minutes)
+
+    @pytest.mark.parametrize("bad", ["1:19:39", "19:39:15", "1:2:3:4",
+                                     float("nan")])
+    def test_rejects_real_hours_and_blanks(self, bad):
+        assert game_log.parse_top(bad) is None
+
 
 class TestDuplicateWeek:
 
@@ -443,9 +456,12 @@ class TestEfficiencyTracking:
 
     def test_shipped_log_third_down_rates(self):
         r = game_log.efficiency_rates(pd.read_csv("data/game_logs.csv"))
-        assert r["third_down_pct"] == pytest.approx(5 / 13 * 100)
-        assert r["third_down_games"] == 2
-        assert (r["third_down_conv_per_game"], r["third_down_conv_games"]) == (2.5, 2)
+        # KC's placeholder 2/10 plus 13 imported games at 12 estimated
+        # attempts each (conversions are from the box scores).
+        assert r["third_down_pct"] == pytest.approx(61 / 166 * 100)
+        assert r["third_down_games"] == 14
+        assert r["third_down_conv_per_game"] == pytest.approx(61 / 14)
+        assert r["third_down_conv_games"] == 14
 
     def test_rates_absent_without_columns(self):
         r = game_log.efficiency_rates(pd.DataFrame({"RZ_TD_Made": [2]}))
