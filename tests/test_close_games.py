@@ -70,3 +70,24 @@ def test_shipped_log_close_record():
     r = close_games.analyze(df)
     assert r["close"]["record"] == "6-12"
     assert r["decided"]["record"] == "14-10"
+
+
+def test_predictor_rows_use_real_counts_and_carry_game_counts():
+    # RZ TD % from logged trips; third downs as conversions per game, not
+    # a rate over attempts (most logged attempts are estimates).
+    df = _log().assign(RZ_TD_Made=[1, 0, 1, 2, 3, 1], RZ_Att=[4, 2, 4, 3, 3, None],
+                       Third_Down_Conv=[3, 2, 4, 6, 5, 4],
+                       Third_Down_Att=[12] * 6)
+    rows = {x["label"]: x for x in close_games.analyze(df)["rows"]}
+    rz = rows["Red zone TD %"]
+    assert rz["close"] == pytest.approx(2 / 10 * 100)   # tie has no trips logged
+    assert rz["decided"] == pytest.approx(5 / 6 * 100)
+    assert rz["games"] == (3, 2)
+    td = rows["3rd-down conversions"]
+    assert td["close"] == pytest.approx(13 / 4) and td["games"] == (4, 2)
+    assert "Red zone TD %" in [d["label"] for d in close_games.analyze(df)["drivers"]]
+
+
+def test_predictor_rows_absent_without_the_columns():
+    labels = [x["label"] for x in close_games.analyze(_log())["rows"]]
+    assert "Red zone TD %" not in labels and "3rd-down conversions" not in labels
