@@ -887,6 +887,8 @@ def render_franchise_home() -> None:
 
 
 def _fmt_stat(label: str, value: float) -> str:
+    if label.endswith("%"):
+        return f"{value:.0f}%"
     if "Yards" in label:
         return f"{value:.0f}"
     if label == "Turnover margin":
@@ -956,8 +958,12 @@ def render_close_games() -> None:
             else:
                 sign_gap = (("+" if gap > 0 else "−")
                             + _fmt_stat(r["label"], abs(gap)).lstrip("+"))
+            # Rates from a handful of games say so next to the label.
+            n_note = (f' <span style="color:var(--text-muted); font-size:0.72rem;">'
+                      f'({r["games"][0]} / {r["games"][1]} games)</span>'
+                      if "games" in r else "")
             body += (
-                f'<tr><td style="color:var(--text-dim); padding:4px 8px;">{r["label"]}</td>'
+                f'<tr><td style="color:var(--text-dim); padding:4px 8px;">{r["label"]}{n_note}</td>'
                 f'<td style="text-align:right; padding:4px 8px; color:#f1f5f9;">{_fmt_stat(r["label"], r["close"])}</td>'
                 f'<td style="text-align:right; padding:4px 8px; color:#f1f5f9;">{_fmt_stat(r["label"], r["decided"])}</td>'
                 f'<td style="text-align:right; padding:4px 8px; color:{color}; font-weight:700;">{sign_gap}</td></tr>')

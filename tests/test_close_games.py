@@ -72,13 +72,36 @@ def test_shipped_log_close_record():
     assert r["decided"]["record"] == "14-10"
 
 
-class TestNoUnreadSplitRates:
-    """`_group_stats` carried third_down_pct / rz_td_pct that nothing read.
+def test_predictor_rows_use_real_counts_and_carry_game_counts():
+    # RZ TD % from logged trips; third downs as conversions per game, not
+    # a rate over attempts (most logged attempts are estimates).
+    df = _log().assign(RZ_TD_Made=[1, 0, 1, 2, 3, 1], RZ_Att=[4, 2, 4, 3, 3, None],
+                       Third_Down_Conv=[3, 2, 4, 6, 5, 4],
+                       Third_Down_Att=[12] * 6)
+    rows = {x["label"]: x for x in close_games.analyze(df)["rows"]}
+    rz = rows["Red zone TD %"]
+    assert rz["close"] == pytest.approx(2 / 10 * 100)   # tie has no trips logged
+    assert rz["decided"] == pytest.approx(5 / 6 * 100)
+    assert rz["games"] == (3, 2)
+    td = rows["3rd-down conversions"]
+    assert td["close"] == pytest.approx(13 / 4) and td["games"] == (4, 2)
+    assert "Red zone TD %" in [d["label"] for d in close_games.analyze(df)["drivers"]]
 
-    On the shipped log those were built from one game per side — 20.0%
-    close vs 100.0% decided — and sat on the dict looking authoritative.
-    Nothing rendered them, so they were a loaded gun for whoever did.
-    Either the sample size travels with a rate or the rate goes.
+
+def test_predictor_rows_absent_without_the_columns():
+    labels = [x["label"] for x in close_games.analyze(_log())["rows"]]
+    assert "Red zone TD %" not in labels and "3rd-down conversions" not in labels
+
+
+class TestNoUnreadSplitRates:
+    """No rate leaves `_group_stats` without the count it rests on.
+
+    These were computed and unread when this guard was written — one
+    game per side on the log of the day, reading 20.0% close against
+    100.0% decided, sitting on the dict looking authoritative. #66 has
+    since put them on screen, which is the case the guard was for: a
+    rate that nothing renders is only a latent problem, a rendered one
+    is a claim to the user.
     """
 
     # Spelled out rather than derived from the key: efficiency_rates
