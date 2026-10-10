@@ -886,6 +886,22 @@ def render_franchise_home() -> None:
         """, unsafe_allow_html=True)
 
 
+# Display names for game-log columns on chart axes, legends and hovers.
+# Without them plotly prints the CSV headings ("TOP_Mins", "Score_Diff").
+_CHART_LABELS = {
+    "TOP_Mins": "Time of possession (min)",
+    "Score_Diff": "Score margin",
+    "Points_For": "Points scored",
+    "Total_Yards": "Total yards",
+    "Total_Yards_Allowed": "Yards allowed",
+    "Pass_Yards": "Pass yards",
+    "Rush_Yards": "Rush yards",
+    "Takeaways": "Takeaways",
+    "Turnovers": "Turnovers",
+    "_size": "Points scored",
+}
+
+
 def _fmt_stat(label: str, value: float) -> str:
     if label.endswith("%"):
         return f"{value:.0f}%"
@@ -1413,6 +1429,7 @@ with tabs[0]:
                 size="_size" if "Points_For" in scatter_df.columns else None,
                 hover_data=[
                     "Opponent"] if "Opponent" in scatter_df.columns else None,
+                labels=_CHART_LABELS,
                 template="plotly_dark",
                 title="Madden 27 Strategy Map",
             )
@@ -1422,13 +1439,15 @@ with tabs[0]:
     with col2:
         st.markdown("#### Scheme Efficiency")
         if "Playbook" in df.columns and "Points_For" in df.columns:
+            # Games next to the average: one scheme here had 6 games to the
+            # other's 22, which a bare points column didn't show.
             scheme_perf = (
                 df.groupby("Playbook")["Points_For"]
-                .mean()
+                .agg(Games="count", PPG="mean")
                 .reset_index()
             )
             st.dataframe(
-                scheme_perf.style.format({"Points_For": "{:.1f}"}),
+                scheme_perf.style.format({"PPG": "{:.1f}"}),
                 hide_index=True,
             )
         else:
@@ -1498,26 +1517,31 @@ with tabs[0]:
                 </div>
                 """, unsafe_allow_html=True)
 
-        # Grouped bar chart comparison
-        compare_metrics = ["PPG", "Opp PPG",
-                           "Pass YPG", "Rush YPG", "Total YPG"]
-        compare_rows = []
-        for scheme in schemes:
-            for metric in compare_metrics:
-                compare_rows.append({
-                    "Scheme": scheme, "Metric": metric,
-                    "Value": scheme_stats[scheme][metric],
-                })
-        compare_df = pd.DataFrame(compare_rows)
-        fig_compare = px.bar(
-            compare_df, x="Metric", y="Value", color="Scheme",
-            barmode="group", template="plotly_dark",
-            title="Scheme Comparison — Key Averages",
-            color_discrete_sequence=["#6366f1", "#10b981"],
-        )
-        fig_compare.update_layout(yaxis_title="Per Game Average",
-                                  xaxis_title="")
-        st.plotly_chart(fig_compare, width="stretch")
+        # Grouped bar charts. Points (~25) and yards (~380) used to share
+        # one axis, which flattened the points bars to a sliver; they get
+        # a chart each.
+        def _compare_chart(metrics, title, y_title):
+            rows = [{"Scheme": scheme, "Metric": m,
+                     "Value": scheme_stats[scheme][m]}
+                    for scheme in schemes for m in metrics]
+            fig = px.bar(
+                pd.DataFrame(rows), x="Metric", y="Value", color="Scheme",
+                barmode="group", template="plotly_dark", title=title,
+                color_discrete_sequence=["#6366f1", "#10b981"],
+            )
+            fig.update_layout(yaxis_title=y_title, xaxis_title="")
+            return fig
+
+        cmp_pts, cmp_yds = st.columns(2)
+        with cmp_pts:
+            st.plotly_chart(_compare_chart(
+                ["PPG", "Opp PPG"], "Scheme Comparison — Points",
+                "Points per game"), width="stretch")
+        with cmp_yds:
+            st.plotly_chart(_compare_chart(
+                ["Pass YPG", "Rush YPG", "Total YPG"],
+                "Scheme Comparison — Yards", "Yards per game"),
+                width="stretch")
 
         # GM Text Analysis
         st.markdown("#### 🧠 GM Analysis")
@@ -1537,6 +1561,7 @@ with tabs[0]:
         """)
 
     # ── Win Probability / Momentum Curve ──
+    _PEAK_FROM = 5
     if "Result" in df.columns and len(df) > 1:
         st.markdown("---")
         st.markdown("#### 📈 Season Momentum Tracker")
@@ -1605,8 +1630,15 @@ with tabs[0]:
         with ins2:
             st.metric("Best Win Streak", f"{best_streak} games")
         with ins3:
-            peak = momentum_df["Win_Pct"].max()
-            st.metric("Peak Win %", f"{peak:.1f}%")
+            # Over every game this was 100% for any team that won its
+            # opener. Measured from game _PEAK_FROM on once there are that
+            # many games.
+            settled = momentum_df[momentum_df["Game_Num"] >= _PEAK_FROM]
+            if settled.empty:
+                st.metric("Peak Win %", f"{momentum_df['Win_Pct'].max():.1f}%")
+            else:
+                st.metric(f"Peak Win % (game {_PEAK_FROM}+)",
+                          f"{settled['Win_Pct'].max():.1f}%")
 
 # ── TAB 2: Wear & Tear Impact ──
 with tabs[1]:
@@ -1638,6 +1670,7 @@ with tabs[1]:
                 color_discrete_map={"WIN": "#00e676", "LOSS": "#ff5252"},
                 size="Total_Yards" if "Total_Yards" in df.columns else None,
                 hover_data=_opponent_hover,
+                labels=_CHART_LABELS,
                 title="Turnovers vs Points Scored",
                 template="plotly_dark",
             )
@@ -1649,6 +1682,7 @@ with tabs[1]:
                     color="Result" if "Result" in df.columns else None,
                     color_discrete_map={"WIN": "#00e676", "LOSS": "#ff5252"},
                     hover_data=_opponent_hover,
+                    labels=_CHART_LABELS,
                     title="Yards Allowed vs Takeaways",
                     template="plotly_dark",
                 )
@@ -1674,6 +1708,8 @@ with tabs[1]:
         fig_bal.update_layout(legend_title="Yard Type",
                               yaxis_title="Yards",
                               xaxis_title="Game")
+        fig_bal.for_each_trace(
+            lambda t: t.update(name=_CHART_LABELS.get(t.name, t.name)))
         st.plotly_chart(fig_bal, width="stretch")
 
 # ── TAB 3: Trade Machine ──
