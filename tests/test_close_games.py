@@ -91,3 +91,57 @@ def test_predictor_rows_use_real_counts_and_carry_game_counts():
 def test_predictor_rows_absent_without_the_columns():
     labels = [x["label"] for x in close_games.analyze(_log())["rows"]]
     assert "Red zone TD %" not in labels and "3rd-down conversions" not in labels
+
+
+class TestNoUnreadSplitRates:
+    """No rate leaves `_group_stats` without the count it rests on.
+
+    These were computed and unread when this guard was written — one
+    game per side on the log of the day, reading 20.0% close against
+    100.0% decided, sitting on the dict looking authoritative. #66 has
+    since put them on screen, which is the case the guard was for: a
+    rate that nothing renders is only a latent problem, a rendered one
+    is a claim to the user.
+    """
+
+    # Spelled out rather than derived from the key: efficiency_rates
+    # pairs third_down_pct with third_down_games but rz_td_pct with
+    # rz_games, and renaming a published key to make a test tidier is
+    # the wrong way round.
+    _COUNT_FOR = {"third_down_pct": "third_down_games",
+                  "rz_td_pct": "rz_games"}
+
+    def test_a_rate_is_never_published_without_its_sample_size(self):
+        df = pd.read_csv("data/game_logs.csv")
+        df["Result"] = df["Result"].map({"W": "WIN", "L": "LOSS", "T": "TIE"})
+        result = close_games.analyze(df)
+        for side in ("close", "decided"):
+            rates = [k for k in result[side]
+                     if k.endswith("_pct") and k != "win_pct"]
+            assert rates, f"{side} publishes no rates; did they move?"
+            for key in rates:
+                assert key in self._COUNT_FOR, (
+                    f"{side}.{key} is a new rate — pair it with a count")
+                assert self._COUNT_FOR[key] in result[side], (
+                    f"{side}.{key} is published without a game count")
+
+
+class TestRecordReadsEitherSpelling:
+    """`derive_fields` writes "W"; `app._prepare_game_log` expands it to
+    "WIN" before the panel sees it. record() matched only the long form,
+    so a caller that skipped that normalisation got a silent 0-0 rather
+    than an error — which is exactly how a reader gets fooled."""
+
+    @pytest.mark.parametrize("spelling", [
+        ["W", "W", "L"], ["WIN", "WIN", "LOSS"], ["win", "Win", "loss"],
+    ])
+    def test_short_and_long_forms_agree(self, spelling):
+        df = pd.DataFrame({"Result": spelling})
+        rec = close_games.record(df)
+        assert (rec["wins"], rec["losses"]) == (2, 1), rec
+
+    def test_a_tie_is_still_a_tie_either_way(self):
+        assert close_games.record(
+            pd.DataFrame({"Result": ["T"]}))["ties"] == 1
+        assert close_games.record(
+            pd.DataFrame({"Result": ["TIE"]}))["ties"] == 1
