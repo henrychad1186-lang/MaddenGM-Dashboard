@@ -2507,8 +2507,14 @@ with tabs[7]:
     with snap_c3:
         if st.button("📸 Save Current OVR Snapshot", type="primary"):
             count = snapshot_roster(MY_TEAM, snap_season, snap_week)
-            st.success(
-                f"Saved {count} player OVRs for Season {snap_season}, Week {snap_week}!")
+            # 0 is a failed write, not an empty save; it used to read
+            # "Saved 0 player OVRs!" as a success.
+            if count:
+                st.success(
+                    f"Saved {count} player OVRs for Season {snap_season}, Week {snap_week}!")
+            else:
+                st.error("Snapshot not saved: data/progression_log.csv couldn't be "
+                         "read or written. Nothing in it was changed.")
 
     # Show movers
     movers = get_movers(MY_TEAM)

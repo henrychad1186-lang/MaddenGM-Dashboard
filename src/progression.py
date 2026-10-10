@@ -41,7 +41,9 @@ def snapshot_roster(team: str, season: int, week: int):
         })
 
     new_df = pd.DataFrame(new_rows)
-    existing = _read_log()
+    existing = _read_log_strict()
+    if existing is None:
+        return 0  # unreadable: overwriting it would lose every snapshot
     # Append to existing log
     if not existing.empty:
         # Remove duplicate entries for same season/week/team
@@ -54,9 +56,16 @@ def snapshot_roster(team: str, season: int, week: int):
     else:
         combined = new_df
 
+    # Through a temp file, so a failed write can't truncate the log.
+    tmp = _PROG_CSV + ".tmp"
     try:
-        combined.to_csv(_PROG_CSV, index=False)
+        combined.to_csv(tmp, index=False)
+        os.replace(tmp, _PROG_CSV)
     except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
         return 0  # read-only filesystem
     return len(new_rows)
 
@@ -70,14 +79,30 @@ def _read_log() -> pd.DataFrame:
     An unguarded read_csv here raised on an empty or hand-mangled file,
     which took down the Progression tab and the game-log form's snapshot.
     """
+    log = _read_log_strict()
+    return pd.DataFrame(columns=_LOG_COLUMNS) if log is None else log
+
+
+def _read_log_strict() -> "pd.DataFrame | None":
+    """The log; an empty frame if there is none yet; None if unreadable.
+
+    For writers. `_read_log` reads an unreadable file as empty, which is
+    right for display but not for a write: the snapshot then replaced a
+    hand-edited log (a renamed column, a stray quote) with one week's
+    rows, and logging a game snapshots automatically. A file holding only
+    whitespace has nothing to lose and counts as empty.
+    """
     if not os.path.exists(_PROG_CSV):
         return pd.DataFrame(columns=_LOG_COLUMNS)
     try:
+        with open(_PROG_CSV, "r", errors="replace") as handle:
+            if not handle.read().strip():
+                return pd.DataFrame(columns=_LOG_COLUMNS)
         log = pd.read_csv(_PROG_CSV)
     except Exception:
-        return pd.DataFrame(columns=_LOG_COLUMNS)
+        return None
     if not set(_LOG_COLUMNS) <= set(log.columns):
-        return pd.DataFrame(columns=_LOG_COLUMNS)
+        return None
     return log
 
 
