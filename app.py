@@ -17,7 +17,7 @@ from src.trade_engine import (
     evaluate_trade,
     parse_salary,
 )
-from src.dynasty import load_history, archive_and_save, get_career_leaders
+from src.dynasty import load_history_strict, archive_and_save, get_career_leaders
 from src.theme import RANK_COLORS, VERDICT_COLORS, rank_color
 from src.roster_analyzer import analyze_roster
 from src import ai_gm
@@ -491,8 +491,10 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
         # number. The local parser this replaces handed back any other
         # string unchanged ("N/A", "28"), which made TOP_Mins a text
         # column and crashed the sidebar's .sub() for the whole app.
+        # A bare "28" read as text is minutes too, as it is for a number.
         df["TOP_Mins"] = pd.to_numeric(
-            df["TOP"].apply(game_log.parse_top), errors="coerce")
+            df["TOP"].apply(game_log.parse_top), errors="coerce").fillna(
+            pd.to_numeric(df["TOP"], errors="coerce"))
 
     # Season/Week are optional: the 28 games already on file predate the
     # columns and there is no real season boundary to infer (19 distinct
@@ -1846,7 +1848,13 @@ with tabs[3]:
     # The file is hand-editable, so an entry may be missing any field;
     # indexing one that isn't there stopped the script, blanking every
     # later tab. Display reads defaults; the file itself is untouched.
-    history = [s for s in load_history() if isinstance(s, dict)]
+    _raw_history = load_history_strict()
+    if _raw_history is None:
+        st.error("⛔ `dynasty_history.json` exists but can't be read (likely a "
+                 "hand-edit typo, such as a trailing comma). Archiving is "
+                 "turned off until it's fixed, so the seasons in it aren't "
+                 "overwritten.")
+    history = [s for s in (_raw_history or []) if isinstance(s, dict)]
 
     # Timeline visualization
     st.markdown("#### 📅 Franchise Timeline")
@@ -1878,7 +1886,7 @@ with tabs[3]:
         # Season detail cards
         st.markdown("#### 📜 The Chronicles")
         for season in reversed(history):
-            era_label = season.get("era", "Unknown Era")
+            era_label = season.get("era") or "Unknown Era"
             trophy = " 🏆" if "Champion" in str(season.get(
                 "playoff_result", "")) else ""
             with st.expander(f"Season {season.get('season', '?')} — {era_label}{trophy}"):
@@ -1980,13 +1988,21 @@ with tabs[3]:
                 "rec_yards": 0,
                 "notes": new_notes,
             }
-            _hist, _saved = archive_and_save(season_data, load_history())
+            _current = load_history_strict()
+            _replacing = _current is not None and any(
+                isinstance(s, dict) and str(s.get("season")).split(".")[0]
+                == str(int(new_season)) for s in _current)
+            _, _saved = (archive_and_save(season_data, _current)
+                         if _current is not None else ([], False))
             st.session_state["dynasty_note"] = (
-                (True, f"✅ Season {new_season} archived under "
-                       f"\"{new_era or 'Unknown Era'}\".") if _saved else
-                (False, f"Season {new_season} could not be saved: this "
-                        "server's disk is read-only, so the archive won't "
-                        "keep it."))
+                (True, f"✅ Season {new_season} "
+                       f"{'updated (replaced the earlier entry)' if _replacing else 'archived'}"
+                       f" under \"{new_era or 'Unknown Era'}\".") if _saved else
+                (False, f"Season {new_season} wasn't saved: "
+                        + ("the history file can't be read (see above)."
+                           if _current is None else
+                           "the history file couldn't be written on this "
+                           "server, so the archive won't keep it.")))
             if _saved:
                 st.session_state.archive_form_ver += 1
             st.rerun()
@@ -2655,8 +2671,8 @@ with tabs[9]:
                     # read-only disk or a demo-data fallback nothing was
                     # written and the player vanished on the next restart.
                     notes.append(("warning", "Couldn't save to the roster CSV "
-                                             "(read-only disk, or the roster "
-                                             "file couldn't be read). The "
+                                             "(the file couldn't be read or "
+                                             "written on this server). The "
                                              "player is in this session only."))
                 st.session_state.ai_gm_form_version += 1
                 st.session_state.ai_gm_notes = notes

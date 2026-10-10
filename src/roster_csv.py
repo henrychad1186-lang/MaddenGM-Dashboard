@@ -108,7 +108,13 @@ def drop_unrated(df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
     bad = df[present].isna().any(axis=1)
     names = [str(n) for n in df.loc[bad, "Name"]] if "Name" in df.columns \
         else [f"row {i + 2}" for i in df.index[bad]]
-    return df[~bad].reset_index(drop=True), names
+    df = df[~bad].reset_index(drop=True)
+    # A blank cell makes the whole column float; the survivors are whole
+    # numbers, so hand back ints ("OVR 88", not "88.0").
+    for col in present:
+        if (df[col] % 1 == 0).all():
+            df[col] = df[col].astype(int)
+    return df, names
 
 
 def load_roster_csv(path: str) -> pd.DataFrame:

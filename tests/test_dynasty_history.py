@@ -188,3 +188,40 @@ class TestArchiveSeasonRobustness:
     def test_write_leaves_no_temp_file(self, history_file):
         dynasty.archive_season(_season(), [])
         assert not (history_file.parent / (history_file.name + ".tmp")).exists()
+
+
+class TestUnreadableHistory:
+    def test_strict_load_tells_corrupt_from_missing(self, history_file):
+        assert dynasty.load_history_strict() == []
+        history_file.write_text("{not json")
+        assert dynasty.load_history_strict() is None
+
+    def test_corrupt_file_is_not_overwritten(self, history_file):
+        # It used to read as [] and the next archive replaced every
+        # season on file with the one just entered.
+        history_file.write_text("{not json")
+        out, saved = dynasty.archive_and_save(_season())
+        assert (out, saved) == ([], False)
+        assert history_file.read_text() == "{not json"
+
+    def test_duplicate_entries_for_a_season_collapse(self, history_file):
+        out, _ = dynasty.archive_and_save(
+            _season(era="New"),
+            [_season(era="A"), _season(season=2028), _season(era="B")])
+        assert [(s["season"], s["era"]) for s in out] == [
+            (2027, "New"), (2028, "The Rebuild")]
+
+    def test_nan_season_sorts_after_numbered(self, history_file):
+        odd = _season(season=float("nan"), era="?")
+        out, _ = dynasty.archive_and_save(_season(), [odd])
+        assert out[0]["season"] == 2027 and out[1]["era"] == "?"
+
+
+class TestCareerLeadersCoercion:
+    def test_string_and_blank_yards_do_not_crash(self):
+        leaders = dynasty.get_career_leaders([
+            _season(rush_yards="1,100x", rec_yards="900"),
+            _season(season=2028, rush_yards=None, top_receiver=None),
+        ])
+        reed = leaders[leaders["Player"] == "J. Reed"].iloc[0]
+        assert reed["Rec Yds"] == 900
