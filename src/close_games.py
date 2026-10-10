@@ -79,7 +79,22 @@ def _group_stats(df: pd.DataFrame) -> dict:
     eff = efficiency_rates(df)
     out["third_down_pct"] = eff["third_down_pct"]
     out["rz_td_pct"] = eff["rz_td_pct"]
+    out["rz_games"] = eff["rz_games"]
+    out["third_down_conv_per_game"] = eff["third_down_conv_per_game"]
+    out["third_down_conv_games"] = eff["third_down_conv_games"]
     return out
+
+
+# The two stats this franchise's results track best, as rows of the
+# close-vs-decided table. Both come from real counts only: red zone TD %
+# from logged trips, and third downs as conversions per game rather than
+# a rate, because most logged attempts are estimates (#63 filled 12 for
+# every imported game) while conversions come from the box score.
+# (key, games key, label)
+_PREDICTOR_ROWS = [
+    ("rz_td_pct", "rz_games", "Red zone TD %"),
+    ("third_down_conv_per_game", "third_down_conv_games", "3rd-down conversions"),
+]
 
 
 def analyze(df: "pd.DataFrame | None", margin: int = CLOSE_MARGIN) -> "dict | None":
@@ -93,7 +108,9 @@ def analyze(df: "pd.DataFrame | None", margin: int = CLOSE_MARGIN) -> "dict | No
         fg:              record in games decided by <= 3
         one_score_4_8:   record in games decided by 4 to `margin`
         rows:            [{label, close, decided, higher_is_better}] for
-                         stats present in both groups
+                         stats present in both groups; red zone TD % and
+                         3rd-down conversions also carry
+                         games=(close, decided) since few games log them
         drivers:         rows where close games are worse by a margin
                          worth mentioning, biggest relative gap first
         games:           the close games, most recent last
@@ -120,6 +137,12 @@ def analyze(df: "pd.DataFrame | None", margin: int = CLOSE_MARGIN) -> "dict | No
     if c["turnover_margin"] is not None and d["turnover_margin"] is not None:
         rows.append({"label": "Turnover margin", "close": c["turnover_margin"],
                      "decided": d["turnover_margin"], "higher_is_better": True})
+
+    for key, n_key, label in _PREDICTOR_ROWS:
+        if c[key] is not None and d[key] is not None:
+            rows.append({"label": label, "close": c[key], "decided": d[key],
+                         "higher_is_better": True,
+                         "games": (c[n_key], d[n_key])})
 
     drivers = []
     for r in rows:
