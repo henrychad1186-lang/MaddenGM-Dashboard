@@ -55,17 +55,17 @@ _APP = str(pathlib.Path(__file__).resolve().parent.parent / "app.py")
 _TIMEOUT = 120
 
 EXPECTED_TABS = 13
-# `app.tabs` is flat: it returns nested tabs alongside the top-level
-# strip, so the count is not the number of tabs in the header. Scheme
-# Performance holds three (Performance / Offense / Defense).
-EXPECTED_NESTED_TABS = 3
+# `app.tabs` is flat: a nested tab is returned alongside the top-level
+# strip, so the count alone cannot tell the two apart and the labels
+# are what distinguish them. There are no nested tabs at present — the
+# Schemes tab briefly had three, and the scheme comparison that
+# replaced them is a single view driven by a "Compare by" radio.
 TOP_LEVEL_TAB_LABELS = (
     "🏠 Home", "📊 Schemes", "💪 Wear", "🏈 Trades", "🏛️ Dynasty",
     "📋 Roster", "🏆 Awards", "🎯 Coach DNA", "📈 Progression",
     "🗂️ Raw Data", "🤖 AI GM", "💬 Chat", "🔎 Draft",
 )
-# The sub-tabs inside Scheme Performance, which share the flat list.
-NESTED_TAB_LABELS = ("📈 Performance", "🏈 Offense", "🛡️ Defense")
+NESTED_TAB_LABELS = ()
 
 
 class _Collect(logging.Handler):
@@ -117,7 +117,7 @@ def test_every_tab_is_built(app):
     flat total hides which of the two changed: adding a sub-tab and
     dropping a tab from the strip would leave it unmoved.
     """
-    assert len(app.tabs) == EXPECTED_TABS + EXPECTED_NESTED_TABS
+    assert len(app.tabs) == EXPECTED_TABS + len(NESTED_TAB_LABELS)
 
 
 def test_the_top_level_strip_is_unchanged(app):

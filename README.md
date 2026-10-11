@@ -25,7 +25,7 @@ The app will open at `http://localhost:8501`
 | Tab | What It Does |
 |-----|-------------|
 | 🏠 **Home** | Record, cap exposure, top needs, actionable moves, and the **close-game panel**: record in games decided by ≤ 8 vs by more, split by ≤ 3 and 4–8, per-game stat comparison, and which stats get worse in close games |
-| 📊 **Scheme Performance** | Strategy map, scheme head-to-head breakdown, season momentum curve |
+| 📊 **Scheme Performance** | Ranked comparison of your offensive/defensive **schemes and playbooks** — record, margin and per-game stats for each, strategy map, season momentum curve |
 | 💪 **Wear & Tear** | Turnovers, defensive performance, rush/pass balance tracking |
 | 🏈 **Trade Machine** | AI trade finder, player radar charts, deal evaluator |
 | 🏛️ **Dynasty** | Season archiving, franchise timeline, career leaderboards |
@@ -71,7 +71,10 @@ leading dot allows subdomains, e.g. `SHEET_ALLOWED_HOSTS = "data.example.com, .c
 | `Points_Against` | 10 | Yes |
 | `Result` | W or WIN | Yes |
 | `TOP` | 27:45 | Optional — leave blank if unknown rather than estimating |
-| `Playbook` | WestCoast Zone Run | Optional |
+| `Playbook` | WestCoast Zone Run | Optional — the **offensive scheme**, despite the name. It is the column the log has always had; renaming it would break every existing CSV and Sheet |
+| `Off_Playbook` | Chiefs | Optional — the offensive playbook, a separate choice from the scheme |
+| `Def_Scheme` | Tampa 2 | Optional |
+| `Def_Playbook` | Nickel | Optional |
 | `Pass_Yards` | 285 | Optional |
 | `Rush_Yards` | 142 | Optional |
 | `Total_Yards` | 427 | Optional — pass + rush. Use Madden's **Off Yards Gained** row, not "Total Yards Gained", which adds return yards |

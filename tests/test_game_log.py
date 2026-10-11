@@ -371,9 +371,37 @@ class TestAgainstTheShippedLog:
     def test_every_entry_field_exists_in_the_real_file(self):
         # If the shipped log loses a column the form writes to, the value
         # is silently dropped by row_to_log_schema.
+        #
+        # LATE_FIELDS are exempt because `append_game` extends the header
+        # for them — that is what the columns exist for, and the shipped
+        # log genuinely predates the scheme/playbook ones. The exemption
+        # is only safe while the test below holds.
         df = pd.read_csv("data/game_logs.csv")
-        missing = [f for f in game_log.ENTRY_FIELDS if f not in df.columns]
+        missing = [f for f in game_log.ENTRY_FIELDS
+                   if f not in df.columns and f not in game_log.LATE_FIELDS]
         assert not missing, f"form writes columns the log lacks: {missing}"
+
+    def test_a_late_field_is_added_to_the_real_file_on_first_use(
+            self, real_log_copy):
+        # The exemption above in exchange for a proof. A scheme column
+        # the shipped log has never seen must appear, hold the value for
+        # the new game, and read blank for every game logged before it.
+        before = pd.read_csv(real_log_copy)
+        absent = [f for f in game_log.SCHEME_FIELDS
+                  if f not in before.columns]
+        assert absent, "pick a column the shipped log really lacks"
+        column = absent[0]
+
+        ok, _ = game_log.append_game(
+            real_log_copy, {**_entry(), column: "Base 3-4"}, "GB")
+        assert ok
+
+        after = pd.read_csv(real_log_copy)
+        assert column in after.columns
+        assert after.iloc[-1][column] == "Base 3-4"
+        assert after[column].iloc[:-1].isna().all(), (
+            "older games should read as not-recorded, not as the new value")
+        assert len(after) == len(before) + 1
 
     def test_point_differential_matches_the_score(self):
         # Four losses (games 27, 29, 30, 32) once shipped with a
@@ -763,6 +791,82 @@ class TestBackfillChanges:
     def test_a_genuine_nought_for_eleven_is_still_writable(self):
         out = game_log.backfill_changes({}, td_att=11, td_conv=0, rz_att=0)
         assert out == {"Third_Down_Att": 11, "Third_Down_Conv": 0}
+
+
+class TestSchemeChanges:
+    """Relabelling a game's scheme or playbook.
+
+    The text counterpart of `backfill_changes`, and the way out of the
+    gap that made it necessary: an append-only log meant a game logged
+    under the wrong scheme — or, for 14 shipped games, under none —
+    could only be fixed by hand-editing the CSV, while quietly skewing
+    the comparison it was recorded for.
+    """
+
+    def test_a_new_label_is_written(self):
+        assert game_log.scheme_changes(
+            {"Def_Scheme": "Base 4-3"}, {"Def_Scheme": "Base 3-4"}
+        ) == {"Def_Scheme": "Base 3-4"}
+
+    def test_resaving_an_unchanged_form_writes_nothing(self):
+        current = {"Playbook": "WestCoast Zone Run", "Def_Scheme": "Tampa 2"}
+        assert game_log.scheme_changes(current, dict(current)) == {}
+
+    def test_a_stray_trailing_space_is_not_an_edit(self):
+        # The prefill comes back through a text box; a legacy row
+        # carrying "Tampa 2 " must not rewrite itself on every save.
+        assert game_log.scheme_changes(
+            {"Def_Scheme": "Tampa 2 "}, {"Def_Scheme": "Tampa 2"}) == {}
+
+    def test_a_blank_clears_the_label(self):
+        # A game labelled with the wrong scheme has to be settable back
+        # to "not recorded", which is honest, rather than being stuck on
+        # a wrong answer because the form only takes non-empty ones.
+        assert game_log.scheme_changes(
+            {"Playbook": "Vertical Zone Run"}, {"Playbook": ""}
+        ) == {"Playbook": ""}
+
+    def test_an_unrecorded_label_is_filled_in(self):
+        assert game_log.scheme_changes(
+            {"Playbook": float("nan")}, {"Playbook": "Spread Zone Run"}
+        ) == {"Playbook": "Spread Zone Run"}
+
+    def test_columns_that_are_not_labels_are_ignored(self):
+        # Scores and yardage feed derived columns; this path must never
+        # become a way to reopen them.
+        assert game_log.scheme_changes({}, {"Points_For": 99}) == {}
+
+    def test_a_relabel_round_trips_through_the_file(self, tmp_path):
+        path = str(tmp_path / "log.csv")
+        game_log.append_game(path, _entry(Playbook="WestCoast Zone Run"), "GB")
+        gid = int(pd.read_csv(path)["GAME_ID"].iloc[0])
+
+        ok, _ = game_log.update_game(path, gid, {"Playbook": "Air Raid"})
+        assert ok
+        assert pd.read_csv(path)["Playbook"].iloc[0] == "Air Raid"
+
+    def test_a_relabel_can_add_a_column_the_file_never_had(self, tmp_path):
+        path = str(tmp_path / "log.csv")
+        game_log.append_game(path, _entry(), "GB")
+        gid = int(pd.read_csv(path)["GAME_ID"].iloc[0])
+
+        ok, _ = game_log.update_game(path, gid, {"Def_Scheme": "Tampa 2"})
+        assert ok, "a log predating the column must still accept a relabel"
+        assert pd.read_csv(path)["Def_Scheme"].iloc[0] == "Tampa 2"
+
+    def test_a_comma_in_a_playbook_survives_a_relabel(self, tmp_path):
+        # `_splice` works on raw text; an unquoted comma would shift
+        # every later column of that row by one.
+        path = str(tmp_path / "log.csv")
+        game_log.append_game(path, _entry(), "GB")
+        gid = int(pd.read_csv(path)["GAME_ID"].iloc[0])
+
+        ok, _ = game_log.update_game(
+            path, gid, {"Off_Playbook": "Shanahan, Wide Zone"})
+        assert ok
+        after = pd.read_csv(path)
+        assert after["Off_Playbook"].iloc[0] == "Shanahan, Wide Zone"
+        assert after["Points_For"].iloc[0] == _entry()["Points_For"]
 
 
 class TestTheWriteIsAtomic:
