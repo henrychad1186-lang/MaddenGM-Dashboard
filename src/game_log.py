@@ -359,7 +359,14 @@ def _splice(line: str, index: int, value: str) -> str:
 # yardage that `derive_fields` computes from each other. A wider set
 # would need the derived columns recomputed too, and this writer exists
 # precisely because recomputing a row is how rows get corrupted.
-BACKFILL_FIELDS = EFFICIENCY_FIELDS + ["RZ_TD_Made"]
+#
+# The scheme columns are safe to re-open for the opposite reason: no
+# derived column reads them, so correcting one cannot make a row
+# contradict itself. They also have to be re-openable. They are the one
+# thing on a row the user can only discover is wrong *later* — 14 of the
+# shipped games carry no scheme at all, and a game logged under the
+# wrong one silently skews the very comparison it was recorded for.
+BACKFILL_FIELDS = EFFICIENCY_FIELDS + ["RZ_TD_Made"] + SCHEME_FIELDS
 
 
 def _untracked(df: pd.DataFrame, column: str) -> pd.Series:
@@ -405,6 +412,33 @@ def backfill_changes(current: dict, td_att, td_conv, rz_att) -> dict:
         now = pd.to_numeric(current.get(column), errors="coerce")
         if pd.isna(now) or now != value:
             changes[column] = value
+    return changes
+
+
+def scheme_changes(current: dict, values: dict) -> dict:
+    """The scheme/playbook columns a relabel should actually write.
+
+    The text counterpart of `backfill_changes`: drops anything already
+    matching the row so re-saving a prefilled form writes nothing, and
+    compares on the stripped value so re-saving a legacy row carrying a
+    stray trailing space doesn't count as an edit.
+
+    A blank submission clears the column. That is deliberate — a game
+    labelled with the wrong scheme must be settable back to "not
+    recorded", which is honest, rather than being stuck on a wrong
+    answer because the form only accepts non-empty ones.
+    """
+    changes = {}
+    for column, value in values.items():
+        if column not in SCHEME_FIELDS:
+            continue
+        new = "" if value is None else " ".join(str(value).split())
+        now = current.get(column)
+        now = "" if now is None or (
+            isinstance(now, float) and pd.isna(now)) else " ".join(
+                str(now).split())
+        if new != now:
+            changes[column] = new
     return changes
 
 
