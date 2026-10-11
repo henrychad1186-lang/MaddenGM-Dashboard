@@ -29,6 +29,7 @@ from src import data_checks
 from src import draft_scout
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
+from src import schemes as schemes_mod
 from src import season as season_mod
 from src import sheet_fetch
 from src.roster import (
@@ -1044,6 +1045,106 @@ def render_close_games() -> None:
             f'</div>')
     with st.expander(f"Last {len(games)} close games", expanded=False):
         st.markdown(rows_html, unsafe_allow_html=True)
+
+
+def scheme_picker(label: str, options: "list[str]", value: str, key: str,
+                  help: str = None) -> str:
+    """A scheme/playbook box: pick from `options`, or type something else.
+
+    `accept_new_options` is what makes the built-in lists defaults
+    rather than a whitelist — this module cannot verify Madden's exact
+    in-game naming, so being wrong about a label has to cost a typed
+    correction, not a column the user can't fill.
+
+    `value` is pushed to the head of the list when the list doesn't
+    already have it, so a scheme the user invented last week still
+    prefills instead of silently resetting to whatever sorts first.
+
+    Works inside `st.form`, which is why this is a combo box and not a
+    picker plus a conditional "add new" field: a form batches its
+    widgets until submit, so nothing revealed by changing a selectbox
+    would appear until the game had already been logged.
+    """
+    opts = list(options)
+    if value and value not in opts:
+        opts = [value] + opts
+    chosen = st.selectbox(
+        label, opts, index=0 if value else None, key=key, help=help,
+        accept_new_options=True, placeholder="Choose or type a new one…")
+    return chosen or ""
+
+
+def scheme_inputs(existing: pd.DataFrame, key_prefix: str,
+                  current: dict = None) -> dict:
+    """The four scheme/playbook boxes. Returns {column: value}.
+
+    Shared by the entry form and the relabel form so the two cannot
+    drift into offering different vocabularies for the same column.
+    `current` prefills from a specific game (relabel); without it each
+    box prefills from the most recent game (entry), because the thing
+    you ran last week is overwhelmingly the thing you are running now.
+
+    The offensive scheme is asked for as a pass scheme and a run scheme
+    and stored joined, which is both how Madden presents it and how the
+    42 games already on file are spelled ("WestCoast Zone Run").
+    """
+    def _prefill(column):
+        if current is not None:
+            return schemes_mod.normalize(
+                current.get(column), column,
+                schemes_mod.logged_values(existing, column))
+        return schemes_mod.current(existing, column)
+
+    known_off = schemes_mod.logged_values(existing, schemes_mod.OFF_SCHEME)
+    pass_now, run_now = schemes_mod.split_off_scheme(
+        _prefill(schemes_mod.OFF_SCHEME), known_off)
+
+    st.markdown("**Scheme & playbook** — what you ran in this game")
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        pass_scheme = scheme_picker(
+            "Off. pass scheme", schemes_mod.PASS_SCHEMES, pass_now,
+            f"{key_prefix}_pass_scheme",
+            help="Madden's offensive scheme is a pass scheme plus a run "
+                 "scheme; they're stored together as one value.")
+    with s2:
+        run_scheme = scheme_picker(
+            "Off. run scheme", schemes_mod.RUN_SCHEMES, run_now,
+            f"{key_prefix}_run_scheme")
+    with s3:
+        off_playbook = scheme_picker(
+            "Offensive playbook",
+            schemes_mod.options(existing, schemes_mod.OFF_PLAYBOOK),
+            _prefill(schemes_mod.OFF_PLAYBOOK),
+            f"{key_prefix}_off_playbook",
+            help="The playbook itself, which is a separate choice from "
+                 "the scheme — the Schemes tab compares them separately.")
+    s4, s5, _s6 = st.columns(3)
+    with s4:
+        def_scheme = scheme_picker(
+            "Defensive scheme",
+            schemes_mod.options(existing, schemes_mod.DEF_SCHEME),
+            _prefill(schemes_mod.DEF_SCHEME), f"{key_prefix}_def_scheme")
+    with s5:
+        def_playbook = scheme_picker(
+            "Defensive playbook",
+            schemes_mod.options(existing, schemes_mod.DEF_PLAYBOOK),
+            _prefill(schemes_mod.DEF_PLAYBOOK),
+            f"{key_prefix}_def_playbook")
+
+    values = {
+        schemes_mod.OFF_SCHEME: schemes_mod.join_off_scheme(
+            pass_scheme, run_scheme),
+        schemes_mod.OFF_PLAYBOOK: off_playbook,
+        schemes_mod.DEF_SCHEME: def_scheme,
+        schemes_mod.DEF_PLAYBOOK: def_playbook,
+    }
+    # Normalising on the way in is what stops a typed "west coast zone
+    # run" starting a rival one-game scheme beside the 22 already logged
+    # under "WestCoast Zone Run".
+    return {column: schemes_mod.normalize(
+        value, column, schemes_mod.logged_values(existing, column))
+        for column, value in values.items()}
 
 
 def render_game_log_form() -> None:
