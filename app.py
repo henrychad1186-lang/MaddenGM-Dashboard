@@ -29,6 +29,7 @@ from src import data_checks
 from src import draft_scout
 from src.progression import snapshot_roster, get_progression, get_movers
 from src import game_log
+from src import playbooks
 from src import season as season_mod
 from src import sheet_fetch
 from src.roster import (
@@ -1275,6 +1276,172 @@ def _backfill_label(games: pd.DataFrame, gid: int) -> str:
             f"({str(r.get('Result', '') or '?')}{score})")
 
 
+def render_scheme_setup(side: str) -> None:
+    """Record the playbook and scheme this franchise actually runs.
+
+    The log carries a free-text `Playbook` per game, which answers
+    "what did I call last Sunday"; this answers "what do I run", which
+    nothing recorded before. Kept out of the game log because it is a
+    franchise setting, not a per-game measurement.
+
+    The pickers offer the built-in catalogue plus anything the user has
+    typed before or already logged, and `playbooks.CATALOGUE_NOTE` says
+    on screen where the list came from and that it is incomplete. A
+    list that silently lacks the book someone runs is worse than no
+    list, so "Other" is always there and what they type is kept.
+    """
+    offense = side == "off"
+    saved = playbooks.load_setup()
+    logged = (sorted(df["Playbook"].dropna().astype(str).unique())
+              if "Playbook" in df.columns else [])
+
+    if offense:
+        books = playbooks.options(
+            playbooks.TEAM_PLAYBOOKS + playbooks.ALTERNATE_OFFENSE,
+            logged, [saved["off_playbook"]])
+        schemes = playbooks.options(playbooks.OFFENSIVE_SCHEMES,
+                                    [saved["off_scheme"]])
+    else:
+        books = playbooks.options(
+            playbooks.TEAM_PLAYBOOKS + playbooks.ALTERNATE_DEFENSE,
+            [saved["def_playbook"]])
+        schemes = playbooks.options(playbooks.DEFENSIVE_SCHEMES,
+                                    [saved["def_scheme"]])
+
+    book_key, scheme_key = f"{side}_playbook", f"{side}_scheme"
+    st.caption(playbooks.CATALOGUE_NOTE)
+
+    def _picker(label: str, choices: "list[str]", current: str,
+                key: str) -> str:
+        """A select plus a free-text escape, returning the chosen name."""
+        menu = [""] + choices + [playbooks.OTHER]
+        known = current in choices
+        picked = st.selectbox(
+            label, menu, key=f"{key}_pick",
+            index=menu.index(current) if known else (
+                menu.index(playbooks.OTHER) if current else 0),
+            format_func=lambda v: "— not set —" if v == "" else v)
+        if picked != playbooks.OTHER:
+            return picked
+        # Prefilled with the saved value when that is what selected
+        # "Other", so re-saving a custom entry does not blank it.
+        return st.text_input(f"{label} — name it",
+                             value="" if known else current,
+                             key=f"{key}_other").strip()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        book = _picker("Playbook", books, saved[book_key], book_key)
+    with c2:
+        scheme = _picker("Scheme", schemes, saved[scheme_key], scheme_key)
+
+    if st.button("Save", type="primary", key=f"{side}_save"):
+        ok, message = playbooks.save_setup({**saved, book_key: book,
+                                            scheme_key: scheme})
+        if not ok:
+            st.error(message)
+        else:
+            st.success(f"Saved {'offense' if offense else 'defense'}: "
+                       f"{book or '—'} · {scheme or '—'}")
+
+
+def render_season_week_form() -> None:
+    """Place logged games in the franchise timeline.
+
+    Every shipped game has a blank Season and Week, which does not show
+    up as an error anywhere — it shows up as two features quietly doing
+    nothing. `duplicate_week` has no week to collide with, so re-logging
+    a game it already holds is never caught, and `next_season_week`
+    suggests the first week of the default season however many games
+    are on file.
+
+    The suggested numbering is consecutive from a game the user picks,
+    and it is shown in an editable table before anything is written.
+    Consecutive is a guess: the log has gaps in GAME_ID and a real
+    season carries a bye. Saving it unseen would be inventing a
+    timeline rather than recording one.
+    """
+    _note = st.session_state.pop("season_week_note", None)
+    if _note:
+        st.success(_note)
+
+    existing = game_log.read_log(_GAME_LOGS_CSV)
+    if existing.empty or "GAME_ID" not in existing.columns:
+        return
+    unplaced = game_log.games_missing_season_week(existing)
+    if unplaced.empty:
+        return
+
+    with st.expander(
+            f"📅 Season & week — {len(unplaced)} of {len(existing)} games "
+            "have none", expanded=False):
+        if _LOG_SOURCE != "local":
+            st.info("The dashboard is showing an uploaded file or a Google "
+                    "Sheet, so set the seasons there. Writing here would "
+                    "change the local file, which isn't what you are "
+                    "looking at.")
+            return
+        st.caption("Without these, **duplicate-week detection cannot catch "
+                   "anything** — a game with no week has no week to collide "
+                   "with — and the entry form keeps suggesting week 1. Pick "
+                   "where a season starts; the weeks below are a plain "
+                   "count from there, so **correct the bye** and anything "
+                   "else before saving.")
+
+        ids = [int(v) for v in pd.to_numeric(
+            existing["GAME_ID"], errors="coerce").dropna()]
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            first = st.selectbox(
+                "Season starts at", ids, key="sw_first",
+                format_func=lambda g: _backfill_label(existing, g))
+        with c2:
+            yr = st.number_input(
+                "Season", min_value=season_mod.SEASON_MIN,
+                max_value=season_mod.SEASON_MAX, value=season_mod.DEFAULT_SEASON,
+                step=1, key="sw_season")
+        with c3:
+            wk = st.number_input(
+                "First week", min_value=season_mod.WEEK_MIN,
+                max_value=season_mod.WEEK_MAX, value=season_mod.WEEK_MIN, step=1,
+                key="sw_week")
+
+        plan = game_log.plan_season_weeks(existing, first, yr, wk)
+        if not plan:
+            st.warning("Nothing to place from there.")
+            return
+
+        draft = pd.DataFrame(
+            [{"Game": gid, "Matchup": _backfill_label(existing, gid),
+              "Season": s, "Week": w} for gid, (s, w) in plan.items()])
+        edited = st.data_editor(
+            draft, hide_index=True, width="stretch",
+            key="sw_editor", disabled=["Game", "Matchup"],
+            column_config={
+                "Season": st.column_config.NumberColumn(
+                    min_value=season_mod.SEASON_MIN, max_value=season_mod.SEASON_MAX,
+                    step=1),
+                "Week": st.column_config.NumberColumn(
+                    min_value=season_mod.WEEK_MIN, max_value=season_mod.WEEK_MAX,
+                    step=1,
+                    help="A bye week means the weeks after it shift up by "
+                         "one. Set them here before saving."),
+            })
+
+        if not st.button("Save these weeks", type="primary",
+                         key="sw_save"):
+            return
+        mapping = {int(r["Game"]): (int(r["Season"]), int(r["Week"]))
+                   for r in edited.to_dict("records")
+                   if pd.notna(r["Season"]) and pd.notna(r["Week"])}
+        ok, message = game_log.assign_season_week(_GAME_LOGS_CSV, mapping)
+        if not ok:
+            st.error(message)
+            return
+        st.session_state["season_week_note"] = message
+        st.rerun()
+
+
 def render_backfill_form() -> None:
     """Add third-down and red-zone numbers to a game already logged.
 
@@ -1416,6 +1583,7 @@ with home_tab:
     render_tab_header("🏠", "Franchise Home",
                       f"Record, cap exposure, needs and moves for {MY_TEAM}")
     render_game_log_form()
+    render_season_week_form()
     render_backfill_form()
     render_franchise_home()
     render_close_games()
@@ -1424,233 +1592,242 @@ with home_tab:
 with tabs[0]:
     render_tab_header("📊", "Scheme Performance",
                       "Time of possession, score differential, and momentum by scheme")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.markdown("#### TOP vs Score Differential by Scheme")
-        if "TOP_Mins" in df.columns and "Score_Diff" in df.columns:
-            scatter_df = df.copy()
-            if "Points_For" in scatter_df.columns:
-                scatter_df["_size"] = pd.to_numeric(
-                    scatter_df["Points_For"], errors="coerce"
-                ).fillna(1).clip(lower=1)
-            fig = px.scatter(
-                scatter_df,
-                x="TOP_Mins",
-                y="Score_Diff",
-                color="Playbook" if "Playbook" in scatter_df.columns else None,
-                size="_size" if "Points_For" in scatter_df.columns else None,
-                hover_data=[
-                    "Opponent"] if "Opponent" in scatter_df.columns else None,
-                labels=_CHART_LABELS,
-                template="plotly_dark",
-                title="Madden 27 Strategy Map",
-            )
-            st.plotly_chart(fig, width="stretch")
-        else:
-            st.warning("Insufficient data for Strategy Map.")
-    with col2:
-        st.markdown("#### Scheme Efficiency")
-        if "Playbook" in df.columns and "Points_For" in df.columns:
-            # Games next to the average: one scheme here had 6 games to the
-            # other's 22, which a bare points column didn't show.
-            scheme_perf = (
-                df.groupby("Playbook")["Points_For"]
-                .agg(Games="count", PPG="mean")
-                .reset_index()
-            )
-            st.dataframe(
-                scheme_perf.style.format({"PPG": "{:.1f}"}),
-                hide_index=True,
-            )
-        else:
-            st.info("Playbook or Points_For data not found.")
-
-    # ── Scheme Head-to-Head Breakdown ──
-    if "Playbook" in df.columns and len(df["Playbook"].dropna().unique()) > 1:
-        st.markdown("---")
-        st.markdown("#### 📋 Scheme Head-to-Head Breakdown")
-
-        schemes = df["Playbook"].dropna().unique().tolist()
-        scheme_stats = {}
-        for scheme in schemes:
-            s_df = df[df["Playbook"] == scheme]
-            # close_games.record, so a tie is a tie (it was counted as a
-            # loss here) and Win% matches the Home tab and GM Chat.
-            rec = close_games.record(s_df)
-            scheme_stats[scheme] = {
-                "Games": len(s_df),
-                "Record": rec["record"],
-                "Win%": round(rec["win_pct"] or 0.0, 1),
-                "PPG": round(s_df["Points_For"].mean(), 1) if "Points_For" in s_df.columns else 0,
-                "Opp PPG": round(s_df["Points_Against"].mean(), 1) if "Points_Against" in s_df.columns else 0,
-                "Pass YPG": round(s_df["Pass_Yards"].mean(), 1) if "Pass_Yards" in s_df.columns else 0,
-                "Rush YPG": round(s_df["Rush_Yards"].mean(), 1) if "Rush_Yards" in s_df.columns else 0,
-                "Total YPG": round(s_df["Total_Yards"].mean(), 1) if "Total_Yards" in s_df.columns else 0,
-                "TO/G": round(s_df["Turnovers"].mean(), 2) if "Turnovers" in s_df.columns else 0,
-                "Takeaways/G": round(s_df["Takeaways"].mean(), 2) if "Takeaways" in s_df.columns else 0,
-                "Sacks/G": round(s_df["Sacks_For"].mean(), 1) if "Sacks_For" in s_df.columns else 0,
-                "Avg Margin": round(s_df["Score_Diff"].mean(), 1) if "Score_Diff" in s_df.columns else 0,
-            }
-
-        # Side-by-side scheme cards
-        scheme_cols = st.columns(len(schemes))
-        for i, scheme in enumerate(schemes):
-            s = scheme_stats[scheme]
-            win_color = "#00e676" if s["Win%"] >= 50 else "#ff5252"
-            margin_color = "#00e676" if s["Avg Margin"] > 0 else "#ff5252"
-            with scheme_cols[i]:
-                st.markdown(f"""
-                <div style="background: linear-gradient(135deg, rgba(25,25,55,0.9), rgba(45,45,75,0.7));
-                    border: 1px solid rgba(99,102,241,0.3); border-radius: 16px; padding: 1.2rem;">
-                    <div style="font-size:1.2rem; font-weight:800; color:#6366f1; margin-bottom:0.8rem;">
-                        {scheme}</div>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.4rem;">
-                        <div style="color:#aaa;">Record</div>
-                        <div style="color:{win_color}; font-weight:700;">{s['Record']} ({s['Win%']}%)</div>
-                        <div style="color:#aaa;">PPG</div>
-                        <div style="color:white; font-weight:700;">{s['PPG']}</div>
-                        <div style="color:#aaa;">Opp PPG</div>
-                        <div style="color:white; font-weight:700;">{s['Opp PPG']}</div>
-                        <div style="color:#aaa;">Avg Margin</div>
-                        <div style="color:{margin_color}; font-weight:700;">{s['Avg Margin']:+.1f}</div>
-                        <div style="color:#aaa;">Pass YPG</div>
-                        <div style="color:white;">{s['Pass YPG']}</div>
-                        <div style="color:#aaa;">Rush YPG</div>
-                        <div style="color:white;">{s['Rush YPG']}</div>
-                        <div style="color:#aaa;">Total YPG</div>
-                        <div style="color:white; font-weight:700;">{s['Total YPG']}</div>
-                        <div style="color:#aaa;">TO/Game</div>
-                        <div style="color:{'#ff5252' if s['TO/G'] > 1 else '#00e676'};">{s['TO/G']}</div>
-                        <div style="color:#aaa;">Takeaways/G</div>
-                        <div style="color:{'#00e676' if s['Takeaways/G'] >= 1.5 else 'white'};">{s['Takeaways/G']}</div>
-                        <div style="color:#aaa;">Sacks/G</div>
-                        <div style="color:white;">{s['Sacks/G']}</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        # Grouped bar charts. Points (~25) and yards (~380) used to share
-        # one axis, which flattened the points bars to a sliver; they get
-        # a chart each.
-        def _compare_chart(metrics, title, y_title):
-            rows = [{"Scheme": scheme, "Metric": m,
-                     "Value": scheme_stats[scheme][m]}
-                    for scheme in schemes for m in metrics]
-            fig = px.bar(
-                pd.DataFrame(rows), x="Metric", y="Value", color="Scheme",
-                barmode="group", template="plotly_dark", title=title,
-                color_discrete_sequence=["#6366f1", "#10b981"],
-            )
-            fig.update_layout(yaxis_title=y_title, xaxis_title="")
-            return fig
-
-        cmp_pts, cmp_yds = st.columns(2)
-        with cmp_pts:
-            st.plotly_chart(_compare_chart(
-                ["PPG", "Opp PPG"], "Scheme Comparison — Points",
-                "Points per game"), width="stretch")
-        with cmp_yds:
-            st.plotly_chart(_compare_chart(
-                ["Pass YPG", "Rush YPG", "Total YPG"],
-                "Scheme Comparison — Yards", "Yards per game"),
-                width="stretch")
-
-        # GM Text Analysis
-        st.markdown("#### 🧠 GM Analysis")
-        best_scheme = max(scheme_stats, key=lambda s: scheme_stats[s]["Win%"])
-        best = scheme_stats[best_scheme]
-        other_scheme = [s for s in schemes if s != best_scheme][0]
-        other = scheme_stats[other_scheme]
-        st.markdown(f"""
-        > **{best_scheme}** is your stronger scheme at **{best['Win%']}% win rate**
-        > with a **{best['Avg Margin']:+.1f}** avg margin across {best['Games']} games.
-        > It averages **{best['PPG']} PPG** on **{best['Total YPG']} total YPG**.
-        >
-        > **{other_scheme}** runs a **{other['Win%']}% win rate** ({other['Record']})
-        > with **{other['Avg Margin']:+.1f}** avg margin.
-        > {'⚠️ The turnover rate is higher at ' + str(other['TO/G']) + '/game.' if other['TO/G'] > best['TO/G'] else ''}
-        > {'✅ Better ball security at ' + str(other['TO/G']) + ' TO/game.' if other['TO/G'] <= best['TO/G'] else ''}
-        """)
-
-    # ── Win Probability / Momentum Curve ──
-    _PEAK_FROM = 5
-    if "Result" in df.columns and len(df) > 1:
-        st.markdown("---")
-        st.markdown("#### 📈 Season Momentum Tracker")
-        momentum_df = df.copy()
-        momentum_df = momentum_df.reset_index(drop=True)
-        momentum_df["Game_Num"] = range(1, len(momentum_df) + 1)
-        momentum_df["Win"] = (momentum_df["Result"] == "WIN").astype(int)
-        momentum_df["Cum_Wins"] = momentum_df["Win"].cumsum()
-        momentum_df["Win_Pct"] = (
-            momentum_df["Cum_Wins"] / momentum_df["Game_Num"] * 100
-        ).round(1)
-        if "Score_Diff" in momentum_df.columns:
-            momentum_df["Rolling_Margin"] = (
-                momentum_df["Score_Diff"].rolling(
-                    3, min_periods=1).mean().round(1)
-            )
-
-        fig_momentum = go.Figure()
-        # Win % line
-        fig_momentum.add_trace(go.Scatter(
-            x=momentum_df["Game_Num"], y=momentum_df["Win_Pct"],
-            name="Win %", mode="lines+markers",
-            line=dict(color="#6366f1", width=3),
-            marker=dict(
-                size=10,
-                color=["#00e676" if r == "WIN" else "#ff5252"
-                       for r in momentum_df["Result"]],
-                line=dict(width=1, color="white"),
-            ),
-            hovertemplate="Game %{x}: %{y:.1f}% win rate<br>vs %{customdata}",
-            customdata=momentum_df.get(
-                "Opponent", pd.Series(["?"] * len(momentum_df))),
-        ))
-        # Rolling margin line (secondary y-axis)
-        if "Rolling_Margin" in momentum_df.columns:
-            fig_momentum.add_trace(go.Scatter(
-                x=momentum_df["Game_Num"],
-                y=momentum_df["Rolling_Margin"],
-                name="Rolling Avg Margin (3-game)",
-                mode="lines",
-                line=dict(color="#10b981", width=2, dash="dot"),
-                yaxis="y2",
-            ))
-        fig_momentum.update_layout(
-            template="plotly_dark",
-            title="Win % & Rolling Point Margin Over the Season",
-            xaxis_title="Game #",
-            yaxis=dict(title="Cumulative Win %", range=[0, 100]),
-            yaxis2=dict(title="Avg Margin (3-game)", overlaying="y",
-                        side="right"),
-            legend=dict(x=0.01, y=0.99),
-            hovermode="x unified",
-        )
-        st.plotly_chart(fig_momentum, width="stretch")
-
-        # Quick insights
-        best_streak = 0
-        curr_streak = 0
-        for w in momentum_df["Win"]:
-            curr_streak = curr_streak + 1 if w else 0
-            best_streak = max(best_streak, curr_streak)
-        final_pct = momentum_df["Win_Pct"].iloc[-1]
-        ins1, ins2, ins3 = st.columns(3)
-        with ins1:
-            st.metric("Final Win %", f"{final_pct:.1f}%")
-        with ins2:
-            st.metric("Best Win Streak", f"{best_streak} games")
-        with ins3:
-            # Over every game this was 100% for any team that won its
-            # opener. Measured from game _PEAK_FROM on once there are that
-            # many games.
-            settled = momentum_df[momentum_df["Game_Num"] >= _PEAK_FROM]
-            if settled.empty:
-                st.metric("Peak Win %", f"{momentum_df['Win_Pct'].max():.1f}%")
+    _perf_tab, _off_tab, _def_tab = st.tabs(
+        ["📈 Performance", "🏈 Offense", "🛡️ Defense"])
+    # Offense and defense first: what the franchise runs is the
+    # setting, and the charts below are its consequence.
+    with _off_tab:
+        render_scheme_setup("off")
+    with _def_tab:
+        render_scheme_setup("def")
+    with _perf_tab:
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.markdown("#### TOP vs Score Differential by Scheme")
+            if "TOP_Mins" in df.columns and "Score_Diff" in df.columns:
+                scatter_df = df.copy()
+                if "Points_For" in scatter_df.columns:
+                    scatter_df["_size"] = pd.to_numeric(
+                        scatter_df["Points_For"], errors="coerce"
+                    ).fillna(1).clip(lower=1)
+                fig = px.scatter(
+                    scatter_df,
+                    x="TOP_Mins",
+                    y="Score_Diff",
+                    color="Playbook" if "Playbook" in scatter_df.columns else None,
+                    size="_size" if "Points_For" in scatter_df.columns else None,
+                    hover_data=[
+                        "Opponent"] if "Opponent" in scatter_df.columns else None,
+                    labels=_CHART_LABELS,
+                    template="plotly_dark",
+                    title="Madden 27 Strategy Map",
+                )
+                st.plotly_chart(fig, width="stretch")
             else:
-                st.metric(f"Peak Win % (game {_PEAK_FROM}+)",
-                          f"{settled['Win_Pct'].max():.1f}%")
+                st.warning("Insufficient data for Strategy Map.")
+        with col2:
+            st.markdown("#### Scheme Efficiency")
+            if "Playbook" in df.columns and "Points_For" in df.columns:
+                # Games next to the average: one scheme here had 6 games to the
+                # other's 22, which a bare points column didn't show.
+                scheme_perf = (
+                    df.groupby("Playbook")["Points_For"]
+                    .agg(Games="count", PPG="mean")
+                    .reset_index()
+                )
+                st.dataframe(
+                    scheme_perf.style.format({"PPG": "{:.1f}"}),
+                    hide_index=True,
+                )
+            else:
+                st.info("Playbook or Points_For data not found.")
+
+        # ── Scheme Head-to-Head Breakdown ──
+        if "Playbook" in df.columns and len(df["Playbook"].dropna().unique()) > 1:
+            st.markdown("---")
+            st.markdown("#### 📋 Scheme Head-to-Head Breakdown")
+
+            schemes = df["Playbook"].dropna().unique().tolist()
+            scheme_stats = {}
+            for scheme in schemes:
+                s_df = df[df["Playbook"] == scheme]
+                # close_games.record, so a tie is a tie (it was counted as a
+                # loss here) and Win% matches the Home tab and GM Chat.
+                rec = close_games.record(s_df)
+                scheme_stats[scheme] = {
+                    "Games": len(s_df),
+                    "Record": rec["record"],
+                    "Win%": round(rec["win_pct"] or 0.0, 1),
+                    "PPG": round(s_df["Points_For"].mean(), 1) if "Points_For" in s_df.columns else 0,
+                    "Opp PPG": round(s_df["Points_Against"].mean(), 1) if "Points_Against" in s_df.columns else 0,
+                    "Pass YPG": round(s_df["Pass_Yards"].mean(), 1) if "Pass_Yards" in s_df.columns else 0,
+                    "Rush YPG": round(s_df["Rush_Yards"].mean(), 1) if "Rush_Yards" in s_df.columns else 0,
+                    "Total YPG": round(s_df["Total_Yards"].mean(), 1) if "Total_Yards" in s_df.columns else 0,
+                    "TO/G": round(s_df["Turnovers"].mean(), 2) if "Turnovers" in s_df.columns else 0,
+                    "Takeaways/G": round(s_df["Takeaways"].mean(), 2) if "Takeaways" in s_df.columns else 0,
+                    "Sacks/G": round(s_df["Sacks_For"].mean(), 1) if "Sacks_For" in s_df.columns else 0,
+                    "Avg Margin": round(s_df["Score_Diff"].mean(), 1) if "Score_Diff" in s_df.columns else 0,
+                }
+
+            # Side-by-side scheme cards
+            scheme_cols = st.columns(len(schemes))
+            for i, scheme in enumerate(schemes):
+                s = scheme_stats[scheme]
+                win_color = "#00e676" if s["Win%"] >= 50 else "#ff5252"
+                margin_color = "#00e676" if s["Avg Margin"] > 0 else "#ff5252"
+                with scheme_cols[i]:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, rgba(25,25,55,0.9), rgba(45,45,75,0.7));
+                        border: 1px solid rgba(99,102,241,0.3); border-radius: 16px; padding: 1.2rem;">
+                        <div style="font-size:1.2rem; font-weight:800; color:#6366f1; margin-bottom:0.8rem;">
+                            {scheme}</div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.4rem;">
+                            <div style="color:#aaa;">Record</div>
+                            <div style="color:{win_color}; font-weight:700;">{s['Record']} ({s['Win%']}%)</div>
+                            <div style="color:#aaa;">PPG</div>
+                            <div style="color:white; font-weight:700;">{s['PPG']}</div>
+                            <div style="color:#aaa;">Opp PPG</div>
+                            <div style="color:white; font-weight:700;">{s['Opp PPG']}</div>
+                            <div style="color:#aaa;">Avg Margin</div>
+                            <div style="color:{margin_color}; font-weight:700;">{s['Avg Margin']:+.1f}</div>
+                            <div style="color:#aaa;">Pass YPG</div>
+                            <div style="color:white;">{s['Pass YPG']}</div>
+                            <div style="color:#aaa;">Rush YPG</div>
+                            <div style="color:white;">{s['Rush YPG']}</div>
+                            <div style="color:#aaa;">Total YPG</div>
+                            <div style="color:white; font-weight:700;">{s['Total YPG']}</div>
+                            <div style="color:#aaa;">TO/Game</div>
+                            <div style="color:{'#ff5252' if s['TO/G'] > 1 else '#00e676'};">{s['TO/G']}</div>
+                            <div style="color:#aaa;">Takeaways/G</div>
+                            <div style="color:{'#00e676' if s['Takeaways/G'] >= 1.5 else 'white'};">{s['Takeaways/G']}</div>
+                            <div style="color:#aaa;">Sacks/G</div>
+                            <div style="color:white;">{s['Sacks/G']}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            # Grouped bar charts. Points (~25) and yards (~380) used to share
+            # one axis, which flattened the points bars to a sliver; they get
+            # a chart each.
+            def _compare_chart(metrics, title, y_title):
+                rows = [{"Scheme": scheme, "Metric": m,
+                         "Value": scheme_stats[scheme][m]}
+                        for scheme in schemes for m in metrics]
+                fig = px.bar(
+                    pd.DataFrame(rows), x="Metric", y="Value", color="Scheme",
+                    barmode="group", template="plotly_dark", title=title,
+                    color_discrete_sequence=["#6366f1", "#10b981"],
+                )
+                fig.update_layout(yaxis_title=y_title, xaxis_title="")
+                return fig
+
+            cmp_pts, cmp_yds = st.columns(2)
+            with cmp_pts:
+                st.plotly_chart(_compare_chart(
+                    ["PPG", "Opp PPG"], "Scheme Comparison — Points",
+                    "Points per game"), width="stretch")
+            with cmp_yds:
+                st.plotly_chart(_compare_chart(
+                    ["Pass YPG", "Rush YPG", "Total YPG"],
+                    "Scheme Comparison — Yards", "Yards per game"),
+                    width="stretch")
+
+            # GM Text Analysis
+            st.markdown("#### 🧠 GM Analysis")
+            best_scheme = max(scheme_stats, key=lambda s: scheme_stats[s]["Win%"])
+            best = scheme_stats[best_scheme]
+            other_scheme = [s for s in schemes if s != best_scheme][0]
+            other = scheme_stats[other_scheme]
+            st.markdown(f"""
+            > **{best_scheme}** is your stronger scheme at **{best['Win%']}% win rate**
+            > with a **{best['Avg Margin']:+.1f}** avg margin across {best['Games']} games.
+            > It averages **{best['PPG']} PPG** on **{best['Total YPG']} total YPG**.
+            >
+            > **{other_scheme}** runs a **{other['Win%']}% win rate** ({other['Record']})
+            > with **{other['Avg Margin']:+.1f}** avg margin.
+            > {'⚠️ The turnover rate is higher at ' + str(other['TO/G']) + '/game.' if other['TO/G'] > best['TO/G'] else ''}
+            > {'✅ Better ball security at ' + str(other['TO/G']) + ' TO/game.' if other['TO/G'] <= best['TO/G'] else ''}
+            """)
+
+        # ── Win Probability / Momentum Curve ──
+        _PEAK_FROM = 5
+        if "Result" in df.columns and len(df) > 1:
+            st.markdown("---")
+            st.markdown("#### 📈 Season Momentum Tracker")
+            momentum_df = df.copy()
+            momentum_df = momentum_df.reset_index(drop=True)
+            momentum_df["Game_Num"] = range(1, len(momentum_df) + 1)
+            momentum_df["Win"] = (momentum_df["Result"] == "WIN").astype(int)
+            momentum_df["Cum_Wins"] = momentum_df["Win"].cumsum()
+            momentum_df["Win_Pct"] = (
+                momentum_df["Cum_Wins"] / momentum_df["Game_Num"] * 100
+            ).round(1)
+            if "Score_Diff" in momentum_df.columns:
+                momentum_df["Rolling_Margin"] = (
+                    momentum_df["Score_Diff"].rolling(
+                        3, min_periods=1).mean().round(1)
+                )
+
+            fig_momentum = go.Figure()
+            # Win % line
+            fig_momentum.add_trace(go.Scatter(
+                x=momentum_df["Game_Num"], y=momentum_df["Win_Pct"],
+                name="Win %", mode="lines+markers",
+                line=dict(color="#6366f1", width=3),
+                marker=dict(
+                    size=10,
+                    color=["#00e676" if r == "WIN" else "#ff5252"
+                           for r in momentum_df["Result"]],
+                    line=dict(width=1, color="white"),
+                ),
+                hovertemplate="Game %{x}: %{y:.1f}% win rate<br>vs %{customdata}",
+                customdata=momentum_df.get(
+                    "Opponent", pd.Series(["?"] * len(momentum_df))),
+            ))
+            # Rolling margin line (secondary y-axis)
+            if "Rolling_Margin" in momentum_df.columns:
+                fig_momentum.add_trace(go.Scatter(
+                    x=momentum_df["Game_Num"],
+                    y=momentum_df["Rolling_Margin"],
+                    name="Rolling Avg Margin (3-game)",
+                    mode="lines",
+                    line=dict(color="#10b981", width=2, dash="dot"),
+                    yaxis="y2",
+                ))
+            fig_momentum.update_layout(
+                template="plotly_dark",
+                title="Win % & Rolling Point Margin Over the Season",
+                xaxis_title="Game #",
+                yaxis=dict(title="Cumulative Win %", range=[0, 100]),
+                yaxis2=dict(title="Avg Margin (3-game)", overlaying="y",
+                            side="right"),
+                legend=dict(x=0.01, y=0.99),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_momentum, width="stretch")
+
+            # Quick insights
+            best_streak = 0
+            curr_streak = 0
+            for w in momentum_df["Win"]:
+                curr_streak = curr_streak + 1 if w else 0
+                best_streak = max(best_streak, curr_streak)
+            final_pct = momentum_df["Win_Pct"].iloc[-1]
+            ins1, ins2, ins3 = st.columns(3)
+            with ins1:
+                st.metric("Final Win %", f"{final_pct:.1f}%")
+            with ins2:
+                st.metric("Best Win Streak", f"{best_streak} games")
+            with ins3:
+                # Over every game this was 100% for any team that won its
+                # opener. Measured from game _PEAK_FROM on once there are that
+                # many games.
+                settled = momentum_df[momentum_df["Game_Num"] >= _PEAK_FROM]
+                if settled.empty:
+                    st.metric("Peak Win %", f"{momentum_df['Win_Pct'].max():.1f}%")
+                else:
+                    st.metric(f"Peak Win % (game {_PEAK_FROM}+)",
+                              f"{settled['Win_Pct'].max():.1f}%")
 
 # ── TAB 2: Wear & Tear Impact ──
 with tabs[1]:

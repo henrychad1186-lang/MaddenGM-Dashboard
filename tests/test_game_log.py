@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from src import game_log
+from src import season
 
 
 def _entry(**overrides):
@@ -840,3 +841,202 @@ class TestTheWriteIsAtomic:
         ok, _ = game_log.update_game(str(path), 1, {"RZ_Att": 4})
         assert ok
         assert [p.name for p in tmp_path.iterdir()] == ["game_logs.csv"]
+
+
+class TestGamesMissingSeasonWeek:
+    """Which games have no place in the franchise timeline.
+
+    Every one of the 42 shipped games has a blank Season and Week, so
+    `duplicate_week` protects nothing (there is no week to collide
+    with) and `next_season_week` suggests Week 1 forever.
+    """
+
+    def test_blank_season_or_week_is_missing(self):
+        df = pd.DataFrame({"GAME_ID": [1, 2, 3],
+                           "Season": [2026, None, 2026],
+                           "Week": [1, 2, None]})
+        assert len(game_log.games_missing_season_week(df)) == 2
+
+    def test_absent_columns_do_not_raise(self):
+        df = pd.DataFrame({"GAME_ID": [1, 2]})
+        assert len(game_log.games_missing_season_week(df)) == 2
+
+    def test_a_fully_placed_game_is_not_missing(self):
+        df = pd.DataFrame({"GAME_ID": [1], "Season": [2026], "Week": [5]})
+        assert game_log.games_missing_season_week(df).empty
+
+    def test_the_shipped_log_is_entirely_unplaced(self):
+        log = pd.read_csv("data/game_logs.csv")
+        assert len(game_log.games_missing_season_week(log)) == len(log), (
+            "if this starts failing the log has gained a timeline")
+
+
+class TestPlanSeasonWeeks:
+    """The suggested numbering, which writes nothing.
+
+    A suggestion, not a derivation: the log has gaps in GAME_ID (7, 8,
+    9, 28, 34 are absent) and a real season carries a bye, so
+    consecutive numbering is a starting point the user corrects, never
+    something to save unseen.
+    """
+
+    def _games(self, ids):
+        return pd.DataFrame({"GAME_ID": ids, "Opponent": ["X"] * len(ids)})
+
+    def test_it_numbers_consecutively_from_the_chosen_game(self):
+        plan = game_log.plan_season_weeks(
+            self._games([1, 2, 3, 4]), first_game_id=2, season=2026,
+            start_week=1)
+        assert plan == {2: (2026, 1), 3: (2026, 2), 4: (2026, 3)}
+
+    def test_games_before_the_chosen_one_are_left_alone(self):
+        plan = game_log.plan_season_weeks(
+            self._games([1, 2, 3]), first_game_id=3, season=2027,
+            start_week=9)
+        assert plan == {3: (2027, 9)}
+
+    def test_a_gap_in_game_ids_does_not_skip_a_week(self):
+        # GAME_ID 7-9 are absent from the shipped log. Weeks follow the
+        # games that exist, not the numbering of the ones that do not.
+        plan = game_log.plan_season_weeks(
+            self._games([5, 6, 10, 11]), first_game_id=5, season=2026,
+            start_week=1)
+        assert plan == {5: (2026, 1), 6: (2026, 2),
+                        10: (2026, 3), 11: (2026, 4)}
+
+    def test_it_stops_at_the_last_week_rather_than_running_past(self):
+        ids = list(range(1, 6))
+        plan = game_log.plan_season_weeks(
+            self._games(ids), first_game_id=1, season=2026,
+            start_week=season.WEEK_MAX - 1)
+        assert sorted(plan) == [1, 2]
+        assert plan[2][1] == season.WEEK_MAX
+
+    def test_an_unknown_first_game_plans_nothing(self):
+        assert game_log.plan_season_weeks(
+            self._games([1, 2]), first_game_id=99, season=2026,
+            start_week=1) == {}
+
+
+class TestAssignSeasonWeek:
+    """Writing a whole season's numbering in one pass."""
+
+    @pytest.fixture
+    def log(self, tmp_path):
+        path = tmp_path / "game_logs.csv"
+        path.write_text(
+            "GAME_ID,Season,Week,Team,Opponent,Result\n"
+            "1,,,GB,IND,W\n2,,,GB,LAR,W\n3,,,GB,DET,L\n")
+        return str(path)
+
+    def test_it_writes_every_assignment(self, log):
+        ok, msg = game_log.assign_season_week(
+            log, {1: (2026, 1), 2: (2026, 2), 3: (2026, 3)})
+        assert ok, msg
+        out = pd.read_csv(log).set_index("GAME_ID")
+        assert list(out["Season"]) == [2026, 2026, 2026]
+        assert list(out["Week"]) == [1, 2, 3]
+
+    def test_it_is_one_write_not_one_per_game(self, log, monkeypatch):
+        calls = []
+        real = game_log._write_atomically
+        monkeypatch.setattr(game_log, "_write_atomically",
+                            lambda p, t: (calls.append(p), real(p, t))[1])
+        game_log.assign_season_week(log, {1: (2026, 1), 2: (2026, 2)})
+        assert len(calls) == 1, f"{len(calls)} writes for 2 games"
+
+    def test_untouched_games_and_columns_survive(self, log):
+        before = open(log).read().splitlines()
+        game_log.assign_season_week(log, {2: (2026, 5)})
+        after = open(log).read().splitlines()
+        assert after[0] == before[0] and after[1] == before[1]
+        assert after[3] == before[3]
+        assert pd.read_csv(log).set_index("GAME_ID").loc[2, "Opponent"] == "LAR"
+
+    def test_a_week_outside_the_season_is_refused(self, log):
+        before = open(log, "rb").read()
+        ok, msg = game_log.assign_season_week(log, {1: (2026, 99)})
+        assert not ok and "99" in msg
+        assert open(log, "rb").read() == before
+
+    def test_a_season_outside_the_range_is_refused(self, log):
+        before = open(log, "rb").read()
+        ok, msg = game_log.assign_season_week(log, {1: (1999, 1)})
+        assert not ok and "1999" in msg
+        assert open(log, "rb").read() == before
+
+    def test_two_games_in_the_same_week_are_refused(self, log):
+        before = open(log, "rb").read()
+        ok, msg = game_log.assign_season_week(
+            log, {1: (2026, 3), 2: (2026, 3)})
+        assert not ok, msg
+        assert "week" in msg.lower()
+        assert open(log, "rb").read() == before
+
+    def test_a_clash_with_a_week_already_on_file_is_refused(self, tmp_path):
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team\n1,2026,4,GB\n2,,,GB\n")
+        before = path.read_bytes()
+        ok, msg = game_log.assign_season_week(str(path), {2: (2026, 4)})
+        assert not ok, msg
+        assert path.read_bytes() == before
+
+    def test_rewriting_a_games_own_week_is_not_a_clash(self, tmp_path):
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team\n1,2026,4,GB\n")
+        ok, msg = game_log.assign_season_week(str(path), {1: (2026, 4)})
+        assert ok, msg
+
+    def test_an_unknown_game_is_refused(self, log):
+        before = open(log, "rb").read()
+        ok, msg = game_log.assign_season_week(log, {99: (2026, 1)})
+        assert not ok and "99" in msg
+        assert open(log, "rb").read() == before
+
+    def test_an_empty_mapping_writes_nothing(self, log):
+        before = open(log, "rb").read()
+        ok, _ = game_log.assign_season_week(log, {})
+        assert not ok
+        assert open(log, "rb").read() == before
+
+
+class TestSeasonWeekOnTheShippedLog:
+
+    @pytest.fixture
+    def real_log_copy(self, tmp_path):
+        path = tmp_path / "game_logs.csv"
+        path.write_bytes(open("data/game_logs.csv", "rb").read())
+        return str(path)
+
+    def test_numbering_a_season_changes_only_those_lines(self, real_log_copy):
+        before = open(real_log_copy, "rb").read().split(b"\n")
+        games = pd.read_csv(real_log_copy)
+        plan = game_log.plan_season_weeks(
+            games, first_game_id=int(games["GAME_ID"].iloc[0]),
+            season=2026, start_week=1)
+        ok, msg = game_log.assign_season_week(real_log_copy, plan)
+        assert ok, msg
+        after = open(real_log_copy, "rb").read().split(b"\n")
+        assert len(before) == len(after)
+        changed = sum(1 for a, b in zip(before, after) if a != b)
+        assert changed == len(plan), f"{changed} lines changed for {len(plan)}"
+
+    def test_no_integer_becomes_a_float(self, real_log_copy):
+        before = open(real_log_copy).read().count(".0")
+        games = pd.read_csv(real_log_copy)
+        game_log.assign_season_week(real_log_copy, {
+            int(games["GAME_ID"].iloc[0]): (2026, 1)})
+        assert open(real_log_copy).read().count(".0") == before
+
+    def test_the_timeline_becomes_usable(self, real_log_copy):
+        games = pd.read_csv(real_log_copy)
+        plan = game_log.plan_season_weeks(
+            games, first_game_id=int(games["GAME_ID"].iloc[0]),
+            season=2026, start_week=1)
+        game_log.assign_season_week(real_log_copy, plan)
+        placed = pd.read_csv(real_log_copy)
+        # The point of the exercise: duplicate detection now has
+        # something to detect, where before every week was free.
+        assert game_log.duplicate_week(placed, 2026, 1, "GB")
+        assert len(game_log.games_missing_season_week(placed)) == (
+            len(games) - len(plan))
