@@ -1168,9 +1168,6 @@ def render_game_log_form() -> None:
     existing = game_log.read_log(_GAME_LOGS_CSV)
     default_season, default_week = game_log.next_season_week(
         existing, MY_TEAM)
-    known_playbooks = (
-        sorted(existing["Playbook"].dropna().astype(str).unique().tolist())
-        if "Playbook" in existing.columns else [])
 
     with st.expander("➕ Log this week's game", expanded=False):
         if _LOG_SOURCE == "sheet":
@@ -1280,16 +1277,12 @@ def render_game_log_form() -> None:
                 sacks = st.number_input("Sacks", min_value=0, max_value=25,
                                         value=0, step=1)
 
-            play1, play2 = st.columns(2)
+            play1, _play2 = st.columns(2)
             with play1:
                 takeaways = st.number_input("Takeaways", min_value=0,
                                             max_value=15, value=0, step=1)
-            with play2:
-                playbook = st.text_input(
-                    "Playbook",
-                    value=known_playbooks[-1] if known_playbooks else "",
-                    help="Free text — used to group games in Scheme "
-                         "Performance, so keep the spelling consistent.")
+
+            scheme_values = scheme_inputs(existing, "log")
 
             also_snapshot = st.checkbox(
                 "Also save a roster OVR snapshot for this week", value=True,
@@ -1331,7 +1324,7 @@ def render_game_log_form() -> None:
             "Pass_Yards_Allowed": int(pass_allowed),
             "Rush_Yards_Allowed": int(rush_allowed),
             "Sacks_For": int(sacks), "Takeaways": int(takeaways),
-            "Playbook": playbook,
+            **scheme_values,
             # 0 attempts means "not tracked this game", written blank so
             # it's left out of the rates instead of counting as 0-for-0.
             "Third_Down_Att": int(td_att) if td_att else "",
