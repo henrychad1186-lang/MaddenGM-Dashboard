@@ -27,7 +27,7 @@ ENTRY_FIELDS = [
     "Pass_Yards", "Rush_Yards", "First_Downs", "Turnovers",
     "TOP", "RZ_TD_Made",
     "Pass_Yards_Allowed", "Rush_Yards_Allowed", "Sacks_For", "Takeaways",
-    "Playbook",
+    "Playbook", "Off_Playbook", "Def_Scheme", "Def_Playbook",
     "Third_Down_Att", "Third_Down_Conv", "RZ_Att",
 ]
 
@@ -36,6 +36,25 @@ ENTRY_FIELDS = [
 # franchise's results track best — could not be computed at all:
 # RZ_TD_Made alone says how many, not out of how many.
 EFFICIENCY_FIELDS = ["Third_Down_Att", "Third_Down_Conv", "RZ_Att"]
+
+# What a game was run with. `Playbook` is the odd name out: it predates
+# the other three and holds the *offensive scheme* ("WestCoast Zone
+# Run"), which is what the 42 shipped games put in it. Renaming it would
+# mean rewriting every row of the user's CSV — the operation this module
+# exists to avoid — so the name stays and `src/schemes.py` owns the
+# vocabulary, the canonical spellings and the comparison.
+#
+# Listed as plain strings rather than imported from `schemes` on
+# purpose: `schemes` imports this module, and the dependency only makes
+# sense in that direction. This module owns the CSV schema.
+SCHEME_FIELDS = ["Playbook", "Off_Playbook", "Def_Scheme", "Def_Playbook"]
+
+# Columns that arrived after games had already been logged, so an
+# existing file may not have them. `append_game` adds any of these the
+# user actually supplies; everything else must already be in the header,
+# because inventing a column from a stray key is how a typo becomes
+# schema.
+LATE_FIELDS = EFFICIENCY_FIELDS + SCHEME_FIELDS
 
 
 def derive_fields(entry: dict) -> dict:
@@ -258,7 +277,7 @@ def append_game(path: str, entry: dict, team: str) -> "tuple[bool, str]":
                        "whatever is in it. Check data/game_logs.csv.")
     try:
         if has_header:
-            new_cols = [c for c in EFFICIENCY_FIELDS
+            new_cols = [c for c in LATE_FIELDS
                         if c not in existing.columns
                         and entry.get(c) not in (None, "")]
             if new_cols:
