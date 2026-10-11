@@ -156,6 +156,21 @@ def logged_values(df: pd.DataFrame, column: str) -> "list[str]":
     return out
 
 
+def unlabelled(df: pd.DataFrame, column: str) -> int:
+    """How many games have no value recorded for `column`.
+
+    Counts a missing column as every game, which is the truth for a log
+    that predates it. Don't be tempted by `str(value).strip()` as the
+    blank test: a NaN stringifies to "nan", which is truthy, so a log
+    where nothing is recorded counts as fully labelled.
+    """
+    if df is None or df.empty:
+        return 0
+    if column not in df.columns:
+        return len(df)
+    return int(sum(1 for value in df[column] if not _clean(value)))
+
+
 def options(df: pd.DataFrame, column: str) -> "list[str]":
     """Pick-list for `column`: what's been used, then the defaults.
 

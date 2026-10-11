@@ -600,7 +600,9 @@ with st.sidebar.expander("🎚️ Dashboard Filters", expanded=False):
     )
     selected_playbooks = (
         st.multiselect(
-            "Playbooks",
+            # The column is named Playbook for history's sake but holds
+            # the offensive scheme; see src/schemes.py.
+            "Offensive scheme",
             playbook_options,
             default=playbook_options,
         )
@@ -889,6 +891,23 @@ def render_franchise_home() -> None:
 
 # Display names for game-log columns on chart axes, legends and hovers.
 # Without them plotly prints the CSV headings ("TOP_Mins", "Score_Diff").
+# How each scheme-comparison metric is rendered. A missing value is an
+# em dash rather than 0: "no third-down attempts recorded" and "never
+# converted one" are different facts, and the second is much worse.
+_SCHEME_FMT = {
+    "win_pct": "{:.1f}%",
+    "third_down_pct": "{:.1f}%",
+    "rz_td_pct": "{:.1f}%",
+    "margin": "{:+.1f}",
+    "turnovers": "{:.2f}",
+    "takeaways": "{:.2f}",
+}
+
+
+def _scheme_cell(key: str, value) -> str:
+    return "—" if value is None else _SCHEME_FMT.get(key, "{:.1f}").format(value)
+
+
 _CHART_LABELS = {
     "TOP_Mins": "Time of possession (min)",
     "Score_Diff": "Score margin",
@@ -1370,17 +1389,26 @@ def _backfill_label(games: pd.DataFrame, gid: int) -> str:
 
 
 def render_backfill_form() -> None:
-    """Add third-down and red-zone numbers to a game already logged.
+    """Correct a game already logged: efficiency stats, scheme, playbook.
 
-    These columns arrived after the first 28 games, and the log was
-    append-only, so a game logged without them could never acquire them
-    — leaving the two rates the KPI row calls this franchise's strongest
-    predictors computed over a couple of games out of thirty.
+    The efficiency columns arrived after the first 28 games, and the log
+    was append-only, so a game logged without them could never acquire
+    them — leaving the two rates the KPI row calls this franchise's
+    strongest predictors computed over a couple of games out of thirty.
 
-    Deliberately narrow: it writes only the efficiency columns. Scores
-    and yardage feed derived columns that `derive_fields` computes from
-    each other, and reopening those would mean recomputing a row, which
-    is the operation `game_log` exists to avoid.
+    Scheme and playbook are editable here for a related but distinct
+    reason: they are the only things on a row the user routinely cannot
+    know are wrong until later. 14 shipped games carry no scheme at all,
+    and a game logged under the wrong one doesn't just sit there being
+    wrong — it skews the Schemes-tab comparison it was recorded for. An
+    append-only log with no way back meant the fix was to hand-edit the
+    CSV.
+
+    Still deliberately narrow on everything else: scores and yardage
+    feed derived columns that `derive_fields` computes from each other,
+    and reopening those would mean recomputing a row, which is the
+    operation `game_log` exists to avoid. No derived column reads the
+    scheme columns, which is what makes them safe to re-open.
     """
     _note = st.session_state.pop("backfill_note", None)
     if _note:
@@ -1391,24 +1419,30 @@ def render_backfill_form() -> None:
         return
 
     missing = game_log.games_missing_efficiency(existing)
+    no_scheme = schemes_mod.unlabelled(existing, schemes_mod.OFF_SCHEME)
+    gaps = [f"{len(missing)} missing 3rd down / red zone"] if len(
+        missing) else []
+    if no_scheme:
+        gaps.append(f"{no_scheme} with no scheme")
     # Every game is offered, missing ones first. Offering only the
     # missing ones hid the games this form most needs to reach: the 13
     # imported in #63 carry an estimated 12 third-down attempts, which
     # reads as "tracked", so 11 of them could never be corrected.
-    label = ("🧮 Backfill / correct 3rd down & red zone"
-             + (f" — {len(missing)} of {len(existing)} games are missing them"
-                if len(missing) else ""))
+    label = ("🧮 Correct a logged game"
+             + (f" — {', '.join(gaps)}, of {len(existing)}" if gaps else ""))
     with st.expander(label, expanded=False):
         if _LOG_SOURCE != "local":
             st.info("The dashboard is showing an uploaded file or a Google "
-                    "Sheet, so edit the numbers there. Backfilling here "
-                    "would write to the local file, which isn't what you "
-                    "are looking at.")
+                    "Sheet, so edit the numbers there. Correcting a game "
+                    "here would write to the local file, which isn't what "
+                    "you are looking at.")
             return
-        st.caption("From Madden's post-game **Team Stats** tab: "
-                   "`3rd Down Conv. 7/11` and the red zone row. Leave a "
-                   "field at 0 to skip it — 0 attempts reads as *not "
-                   "tracked*, not as a game with none.")
+        st.caption("Efficiency numbers come from Madden's post-game **Team "
+                   "Stats** tab: `3rd Down Conv. 7/11` and the red zone "
+                   "row. Leave a field at 0 to skip it — 0 attempts reads "
+                   "as *not tracked*, not as a game with none. Scheme and "
+                   "playbook can be set or changed on any game; clearing "
+                   "one records it as not known.")
 
         missing_ids = [int(v) for v in pd.to_numeric(
             missing["GAME_ID"], errors="coerce").dropna()]
@@ -1458,6 +1492,14 @@ def render_backfill_form() -> None:
                     "Red zone trips", min_value=0, max_value=20,
                     value=_prefill("RZ_Att"), step=1,
                     key=f"backfill_rz_att_{gid}")
+
+            # Same reason the number inputs key on the game: a keyed
+            # widget keeps its state and ignores a new prefill, so a
+            # single key per box would carry the previous game's scheme
+            # over and relabel this one with it on Save.
+            scheme_values = scheme_inputs(
+                existing, f"relabel_{gid}", current=current)
+
             saved = st.form_submit_button("Save to this game",
                                           type="primary")
 
@@ -1465,9 +1507,11 @@ def render_backfill_form() -> None:
             return
 
         fields = game_log.backfill_changes(current, td_att, td_conv, rz_att)
+        fields.update(game_log.scheme_changes(current, scheme_values))
         if not fields:
             st.warning("Nothing to change — set attempts or trips above 0, "
-                       "or enter a different number. Nothing was written.")
+                       "or pick a different scheme, playbook or number. "
+                       "Nothing was written.")
             return
 
         ok, message = game_log.update_game(_GAME_LOGS_CSV, gid, fields)
@@ -1515,156 +1559,152 @@ with home_tab:
     render_close_games()
 
 # ── TAB 1: Scheme Performance ──
+# Four dimensions, one at a time. Comparing an offensive scheme and a
+# defensive playbook in the same table would invite reading one against
+# the other, and they are not alternatives — every game ran one of each.
 with tabs[0]:
     render_tab_header("📊", "Scheme Performance",
-                      "Time of possession, score differential, and momentum by scheme")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.markdown("#### TOP vs Score Differential by Scheme")
-        if "TOP_Mins" in df.columns and "Score_Diff" in df.columns:
-            scatter_df = df.copy()
-            if "Points_For" in scatter_df.columns:
-                scatter_df["_size"] = pd.to_numeric(
-                    scatter_df["Points_For"], errors="coerce"
-                ).fillna(1).clip(lower=1)
-            fig = px.scatter(
-                scatter_df,
-                x="TOP_Mins",
-                y="Score_Diff",
-                color="Playbook" if "Playbook" in scatter_df.columns else None,
-                size="_size" if "Points_For" in scatter_df.columns else None,
-                hover_data=[
-                    "Opponent"] if "Opponent" in scatter_df.columns else None,
-                labels=_CHART_LABELS,
-                template="plotly_dark",
-                title="Madden 27 Strategy Map",
-            )
-            st.plotly_chart(fig, width="stretch")
-        else:
-            st.warning("Insufficient data for Strategy Map.")
-    with col2:
-        st.markdown("#### Scheme Efficiency")
-        if "Playbook" in df.columns and "Points_For" in df.columns:
-            # Games next to the average: one scheme here had 6 games to the
-            # other's 22, which a bare points column didn't show.
-            scheme_perf = (
-                df.groupby("Playbook")["Points_For"]
-                .agg(Games="count", PPG="mean")
-                .reset_index()
-            )
-            st.dataframe(
-                scheme_perf.style.format({"PPG": "{:.1f}"}),
-                hide_index=True,
-            )
-        else:
-            st.info("Playbook or Points_For data not found.")
+                      "Which scheme and playbook are actually winning games")
 
-    # ── Scheme Head-to-Head Breakdown ──
-    if "Playbook" in df.columns and len(df["Playbook"].dropna().unique()) > 1:
-        st.markdown("---")
-        st.markdown("#### 📋 Scheme Head-to-Head Breakdown")
+    _available = [c for c in schemes_mod.SCHEME_COLUMNS
+                  if schemes_mod.logged_values(df, c)]
+    if not _available:
+        st.info(
+            "No scheme or playbook is recorded on these games yet. Set them "
+            "on the **Home** tab — *➕ Log this week's game* for new games, "
+            "*🧮 Correct a logged game* for ones already in the log — and "
+            "this tab will compare them."
+        )
+    else:
+        _dimension = st.radio(
+            "Compare by", _available, horizontal=True,
+            format_func=lambda c: schemes_mod.LABELS[c],
+            key="scheme_dimension",
+            help="Each game records an offensive scheme and playbook and a "
+                 "defensive scheme and playbook. A defensive dimension is "
+                 "graded on points and yards allowed, not on your offence.")
+        _rows = schemes_mod.compare(df, _dimension)
+        _metrics = schemes_mod.metrics_for(_dimension)
+        _label = schemes_mod.LABELS[_dimension]
 
-        schemes = df["Playbook"].dropna().unique().tolist()
-        scheme_stats = {}
-        for scheme in schemes:
-            s_df = df[df["Playbook"] == scheme]
-            # close_games.record, so a tie is a tie (it was counted as a
-            # loss here) and Win% matches the Home tab and GM Chat.
-            rec = close_games.record(s_df)
-            scheme_stats[scheme] = {
-                "Games": len(s_df),
-                "Record": rec["record"],
-                "Win%": round(rec["win_pct"] or 0.0, 1),
-                "PPG": round(s_df["Points_For"].mean(), 1) if "Points_For" in s_df.columns else 0,
-                "Opp PPG": round(s_df["Points_Against"].mean(), 1) if "Points_Against" in s_df.columns else 0,
-                "Pass YPG": round(s_df["Pass_Yards"].mean(), 1) if "Pass_Yards" in s_df.columns else 0,
-                "Rush YPG": round(s_df["Rush_Yards"].mean(), 1) if "Rush_Yards" in s_df.columns else 0,
-                "Total YPG": round(s_df["Total_Yards"].mean(), 1) if "Total_Yards" in s_df.columns else 0,
-                "TO/G": round(s_df["Turnovers"].mean(), 2) if "Turnovers" in s_df.columns else 0,
-                "Takeaways/G": round(s_df["Takeaways"].mean(), 2) if "Takeaways" in s_df.columns else 0,
-                "Sacks/G": round(s_df["Sacks_For"].mean(), 1) if "Sacks_For" in s_df.columns else 0,
-                "Avg Margin": round(s_df["Score_Diff"].mean(), 1) if "Score_Diff" in s_df.columns else 0,
-            }
+        # How much of the log this answer actually rests on.
+        _labelled = sum(r["games"] for r in _rows)
+        if _labelled < len(df):
+            st.caption(
+                f"⚠️ {len(df) - _labelled} of {len(df)} games in view have no "
+                f"{_label.lower()} recorded and are left out below. Set them "
+                "under *🧮 Correct a logged game* on the Home tab.")
 
-        # Side-by-side scheme cards
-        scheme_cols = st.columns(len(schemes))
-        for i, scheme in enumerate(schemes):
-            s = scheme_stats[scheme]
-            win_color = "#00e676" if s["Win%"] >= 50 else "#ff5252"
-            margin_color = "#00e676" if s["Avg Margin"] > 0 else "#ff5252"
-            with scheme_cols[i]:
+        _verdict = schemes_mod.verdict(_rows, _dimension)
+        if _verdict:
+            st.markdown(f"#### 🧠 GM Analysis\n> {_verdict}")
+
+        # ── Ranked comparison ──
+        st.markdown(f"#### 📋 {_label} — ranked")
+        st.caption(
+            f"Ordered by average point margin, not win %. Win % is the "
+            f"thing you care about, but over a handful of games it moves in "
+            f"big steps and one close game reorders the table; margin uses "
+            f"every point of every game. Anything under "
+            f"{schemes_mod.MIN_GAMES} games is marked and sorted last.")
+        _table = pd.DataFrame([
+            {_label: (r["value"] if r["ranked"]
+                      else f"{r['value']} (small sample)"),
+             "Games": r["games"], "Record": r["record"],
+             **{m[1]: _scheme_cell(m[0], r[m[0]]) for m in _metrics}}
+            for r in _rows])
+        st.dataframe(_table, hide_index=True, width="stretch")
+
+        # ── Cards ──
+        _CARD_LIMIT = 4
+        _shown = _rows[:_CARD_LIMIT]
+        if len(_rows) > _CARD_LIMIT:
+            st.caption(f"Cards show the top {_CARD_LIMIT} of {len(_rows)}; "
+                       "the table above has all of them.")
+        # st.columns(0) raises, and a filter that excludes every labelled
+        # game reaches here with nothing to show.
+        _card_cols = st.columns(len(_shown)) if _shown else []
+        for _i, _r in enumerate(_shown):
+            _win = _r["win_pct"]
+            _win_color = ("#00e676" if _win is not None and _win >= 50
+                          else "#ff5252")
+            _margin_color = ("#00e676" if (_r["margin"] or 0) > 0
+                             else "#ff5252")
+            _grid = "".join(
+                f'<div style="color:#aaa;">{m[1]}</div>'
+                f'<div style="color:white; font-weight:600;">'
+                f'{_scheme_cell(m[0], _r[m[0]])}</div>'
+                for m in _metrics if m[0] not in ("win_pct", "margin"))
+            with _card_cols[_i]:
                 st.markdown(f"""
                 <div style="background: linear-gradient(135deg, rgba(25,25,55,0.9), rgba(45,45,75,0.7));
                     border: 1px solid rgba(99,102,241,0.3); border-radius: 16px; padding: 1.2rem;">
-                    <div style="font-size:1.2rem; font-weight:800; color:#6366f1; margin-bottom:0.8rem;">
-                        {scheme}</div>
+                    <div style="font-size:1.1rem; font-weight:800; color:#6366f1; margin-bottom:0.2rem;">
+                        {_r['value']}</div>
+                    <div style="font-size:0.75rem; color:#888; margin-bottom:0.8rem;">
+                        {_r['games']} games{'' if _r['ranked'] else ' — small sample'}</div>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.4rem;">
                         <div style="color:#aaa;">Record</div>
-                        <div style="color:{win_color}; font-weight:700;">{s['Record']} ({s['Win%']}%)</div>
-                        <div style="color:#aaa;">PPG</div>
-                        <div style="color:white; font-weight:700;">{s['PPG']}</div>
-                        <div style="color:#aaa;">Opp PPG</div>
-                        <div style="color:white; font-weight:700;">{s['Opp PPG']}</div>
-                        <div style="color:#aaa;">Avg Margin</div>
-                        <div style="color:{margin_color}; font-weight:700;">{s['Avg Margin']:+.1f}</div>
-                        <div style="color:#aaa;">Pass YPG</div>
-                        <div style="color:white;">{s['Pass YPG']}</div>
-                        <div style="color:#aaa;">Rush YPG</div>
-                        <div style="color:white;">{s['Rush YPG']}</div>
-                        <div style="color:#aaa;">Total YPG</div>
-                        <div style="color:white; font-weight:700;">{s['Total YPG']}</div>
-                        <div style="color:#aaa;">TO/Game</div>
-                        <div style="color:{'#ff5252' if s['TO/G'] > 1 else '#00e676'};">{s['TO/G']}</div>
-                        <div style="color:#aaa;">Takeaways/G</div>
-                        <div style="color:{'#00e676' if s['Takeaways/G'] >= 1.5 else 'white'};">{s['Takeaways/G']}</div>
-                        <div style="color:#aaa;">Sacks/G</div>
-                        <div style="color:white;">{s['Sacks/G']}</div>
+                        <div style="color:{_win_color}; font-weight:700;">
+                            {_r['record']} ({_scheme_cell('win_pct', _win)})</div>
+                        <div style="color:#aaa;">Avg margin</div>
+                        <div style="color:{_margin_color}; font-weight:700;">
+                            {_scheme_cell('margin', _r['margin'])}</div>
+                        {_grid}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-        # Grouped bar charts. Points (~25) and yards (~380) used to share
-        # one axis, which flattened the points bars to a sliver; they get
-        # a chart each.
-        def _compare_chart(metrics, title, y_title):
-            rows = [{"Scheme": scheme, "Metric": m,
-                     "Value": scheme_stats[scheme][m]}
-                    for scheme in schemes for m in metrics]
-            fig = px.bar(
-                pd.DataFrame(rows), x="Metric", y="Value", color="Scheme",
-                barmode="group", template="plotly_dark", title=title,
-                color_discrete_sequence=["#6366f1", "#10b981"],
-            )
-            fig.update_layout(yaxis_title=y_title, xaxis_title="")
-            return fig
-
-        cmp_pts, cmp_yds = st.columns(2)
-        with cmp_pts:
-            st.plotly_chart(_compare_chart(
-                ["PPG", "Opp PPG"], "Scheme Comparison — Points",
-                "Points per game"), width="stretch")
-        with cmp_yds:
-            st.plotly_chart(_compare_chart(
-                ["Pass YPG", "Rush YPG", "Total YPG"],
-                "Scheme Comparison — Yards", "Yards per game"),
-                width="stretch")
-
-        # GM Text Analysis
-        st.markdown("#### 🧠 GM Analysis")
-        best_scheme = max(scheme_stats, key=lambda s: scheme_stats[s]["Win%"])
-        best = scheme_stats[best_scheme]
-        other_scheme = [s for s in schemes if s != best_scheme][0]
-        other = scheme_stats[other_scheme]
-        st.markdown(f"""
-        > **{best_scheme}** is your stronger scheme at **{best['Win%']}% win rate**
-        > with a **{best['Avg Margin']:+.1f}** avg margin across {best['Games']} games.
-        > It averages **{best['PPG']} PPG** on **{best['Total YPG']} total YPG**.
-        >
-        > **{other_scheme}** runs a **{other['Win%']}% win rate** ({other['Record']})
-        > with **{other['Avg Margin']:+.1f}** avg margin.
-        > {'⚠️ The turnover rate is higher at ' + str(other['TO/G']) + '/game.' if other['TO/G'] > best['TO/G'] else ''}
-        > {'✅ Better ball security at ' + str(other['TO/G']) + ' TO/game.' if other['TO/G'] <= best['TO/G'] else ''}
-        """)
+        # ── Charts ──
+        _chart1, _chart2 = st.columns([2, 1])
+        with _chart1:
+            st.markdown("#### TOP vs Score Differential")
+            if "TOP_Mins" in df.columns and "Score_Diff" in df.columns:
+                scatter_df = df[df[_dimension].map(
+                    lambda v: bool(str(v or "").strip()))].copy()
+                if "Points_For" in scatter_df.columns:
+                    scatter_df["_size"] = pd.to_numeric(
+                        scatter_df["Points_For"], errors="coerce"
+                    ).fillna(1).clip(lower=1)
+                fig = px.scatter(
+                    scatter_df,
+                    x="TOP_Mins",
+                    y="Score_Diff",
+                    color=_dimension,
+                    size="_size" if "Points_For" in scatter_df.columns else None,
+                    hover_data=["Opponent"] if "Opponent" in scatter_df.columns else None,
+                    labels={**_CHART_LABELS, _dimension: _label},
+                    template="plotly_dark",
+                    title="Madden 27 Strategy Map",
+                )
+                st.plotly_chart(fig, width="stretch")
+            else:
+                st.warning("Insufficient data for Strategy Map.")
+        with _chart2:
+            st.markdown("#### Per-game averages")
+            # Points (~25) and yards (~380) on one axis flattened the
+            # points bars to a sliver, so each metric gets its own
+            # normalised facet row instead of a shared scale.
+            _bar_metrics = [m for m in _metrics
+                            if m[0] not in ("win_pct", "margin")]
+            _bar_rows = [
+                {"Scheme": r["value"], "Metric": m[1], "Value": r[m[0]]}
+                for r in _rows for m in _bar_metrics
+                if r[m[0]] is not None]
+            if _bar_rows:
+                fig_cmp = px.bar(
+                    pd.DataFrame(_bar_rows), x="Value", y="Metric",
+                    color="Scheme", barmode="group", orientation="h",
+                    template="plotly_dark",
+                    color_discrete_sequence=["#6366f1", "#10b981", "#f59e0b",
+                                             "#ef4444", "#8b5cf6"])
+                fig_cmp.update_layout(
+                    xaxis_title="", yaxis_title="",
+                    legend=dict(orientation="h", y=-0.2),
+                    margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_cmp, width="stretch")
+            else:
+                st.info("No comparable averages recorded yet.")
 
     # ── Win Probability / Momentum Curve ──
     _PEAK_FROM = 5
