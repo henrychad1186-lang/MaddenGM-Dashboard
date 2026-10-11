@@ -85,6 +85,10 @@ def _load_trade_rosters() -> pd.DataFrame:
         # CSV made both raise KeyError: 'Pos' at import.
         gb_df = roster_csv.load_roster_csv(_ROSTER_CSV)
 
+        # Same rows roster.py leaves out (and reports): int(OVR) on a
+        # blank cell crashed the Trades tab.
+        gb_df, _ = roster_csv.drop_unrated(gb_df)
+
         if roster_csv.missing_required_columns(gb_df):
             # roster.py reports this to the user; trading against a roster
             # we can't read is not possible, so fall back to CPU teams only.
@@ -286,6 +290,14 @@ def _ensure_trade_values() -> None:
     _TRADE_VALUES_READY = True
 
 
+# A 53-man roster missing a position has a hole; a 6-player sketch
+# missing one simply does not go that deep. Below this size, absence of a
+# position is treated as unknown rather than as evidence of need. If real
+# full rosters are ever imported, gaps in them become informative again
+# and the original behaviour returns on its own.
+_FULL_ENOUGH_TO_HAVE_GAPS = 20
+
+
 def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
     """
     Scan CPU teams for potential trade partners interested in the offered player.
@@ -309,9 +321,25 @@ def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
         same_pos = team_roster[team_roster["Pos"] == offered_pos]
 
         if same_pos.empty:
-            # Team has no one at this position — high interest
-            interest = 90
-            reason = f"No {offered_pos} on roster — fills critical need"
+            if len(team_roster) < _FULL_ENOUGH_TO_HAVE_GAPS:
+                # A partial roster that lists no one here tells us
+                # nothing. _CPU_DEMO carries 6-8 players covering only
+                # QB/HB/WR/TE/EDGE/CB, so reading those gaps as a need
+                # made 52 of 111 partner readings (47%) the maximum
+                # signal the system can emit — a punter drew the same
+                # 90 as a genuine franchise upgrade.
+                #
+                # 45 sits deliberately between "Depth move" (40) and
+                # "Moderate upgrade" (65): above a measured downgrade,
+                # below any measured upgrade, so an unknown can never
+                # outrank something actually observed.
+                interest = 45
+                reason = (f"No {offered_pos} listed on {team}'s "
+                          f"{len(team_roster)}-player roster — interest unknown")
+            else:
+                # A squad deep enough to have a real hole at the position.
+                interest = 90
+                reason = f"No {offered_pos} on roster — fills critical need"
         else:
             best_on_team = same_pos["OVR"].max()
             gap = offered_ovr - best_on_team

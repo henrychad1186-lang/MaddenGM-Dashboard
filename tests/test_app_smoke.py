@@ -137,3 +137,29 @@ def test_no_streamlit_deprecations(app):
             fh.write("### ⚠️ Streamlit deprecation notices\n\n"
                      + "".join(f"- {m.splitlines()[0]}\n" for m in app.deprecations)
                      + "\nWarning only here; the dependency canary fails on these.\n")
+
+
+def test_empty_position_rooms_get_a_grade_card(app):
+    """get_position_grades skips empty rooms, so the Roster grid dropped
+    exactly the positions Home lists as top needs (FB, LG, MLB on the
+    shipped roster). They now render as empty cards."""
+    html = " ".join(str(m.value) for m in app.markdown)
+    for pos in ("FB", "LG", "MLB"):
+        assert f">{pos}</div>" in html and "No starter" in html, pos
+
+
+def test_cap_what_if_is_not_called_a_cap_position(app):
+    """Savings minus dead cap if everyone were released was shown as
+    "Net Cap Position" with a Healthy/Tight badge and printed "$-400.1M"."""
+    labels = {m.label: m.value for m in app.metric}
+    assert "Net Cap Position" not in labels
+    value = labels["Net if All Released"]
+    assert value.startswith(("−$", "+$")), value
+
+
+def test_peak_win_pct_skips_the_opening_games(app):
+    """Over every game the peak was 100% for any team that won its opener."""
+    labels = {m.label: m.value for m in app.metric}
+    assert "Peak Win %" not in labels
+    peak = next(v for k, v in labels.items() if k.startswith("Peak Win % (game"))
+    assert peak != "100.0%"

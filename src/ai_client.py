@@ -40,9 +40,28 @@ def _effort_kwargs() -> dict:
     is swallowed into "Claude unavailable" — so an ANTHROPIC_MODEL
     override to one of them would silently disable the AI features.
     """
-    if "haiku" in _MODEL or re.search(r"-(3|4-[015])(-|$)", _MODEL):
-        return {}
-    return {"output_config": _OUTPUT_CONFIG}
+    return {"output_config": _OUTPUT_CONFIG} if _supports_effort(_MODEL) else {}
+
+
+def _supports_effort(model: str) -> bool:
+    """True for models that accept `effort`: 4.6 and later, plus Opus 4.5.
+
+    Reads the version from the ID rather than pattern-matching, because
+    IDs come with and without a date suffix: the old regex missed
+    `claude-sonnet-4-20250514`, sent it `effort`, and the 400 that
+    followed was swallowed into "Claude unavailable".
+    """
+    m = model.lower()
+    if "haiku" in m or re.search(r"claude-3\b|claude-3-", m):
+        return False
+    v = re.search(r"(opus|sonnet|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?!\d)", m)
+    if not v:
+        return True  # an unrecognised name: assume current
+    family, major = v.group(1), int(v.group(2))
+    minor = int(v.group(3)) if v.group(3) else 0
+    if (major, minor) >= (4, 6):
+        return True
+    return family == "opus" and (major, minor) == (4, 5)
 
 
 _MAX_TOKENS = 2000

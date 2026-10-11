@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -16,8 +17,8 @@ from src.trade_engine import (
     evaluate_trade,
     parse_salary,
 )
-from src.dynasty import load_history, archive_season, get_career_leaders
-from src.theme import RANK_COLORS, VERDICT_COLORS, rank_color
+from src.dynasty import load_history_strict, archive_and_save, get_career_leaders
+from src.theme import NEED_COLORS, RANK_COLORS, VERDICT_COLORS, rank_color
 from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
@@ -37,6 +38,7 @@ from src.roster import (
     ovr_label,
     get_position_grades,
     get_cap_summary,
+    POSITION_ORDER,
     TEAMS,
     POSITION_GROUPS,
     ROSTER_WARNINGS,
@@ -431,6 +433,20 @@ def _result_from_margin(diff: pd.Series) -> pd.Series:
         index=diff.index, dtype="object")
 
 
+_RESULT_LABELS = {"W": "WIN", "L": "LOSS", "T": "TIE",
+                  "WIN": "WIN", "LOSS": "LOSS", "TIE": "TIE"}
+
+
+def _normalize_result(col: pd.Series) -> pd.Series:
+    """W/L/T (any case) -> WIN/LOSS/TIE; anything else -> blank.
+
+    "T" is carried through rather than folded into LOSS: a 20-20 game is
+    a real outcome. Every consumer tests for "WIN"/"LOSS" explicitly, so
+    a tie counts as neither.
+    """
+    return col.astype(str).str.strip().str.upper().map(_RESULT_LABELS)
+
+
 def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
     """Derive Points_For/Points_Against/Score_Diff/Result/TOP_Mins.
 
@@ -457,36 +473,29 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
         df["Points_For"] = pd.to_numeric(df["Points_For"], errors="coerce")
         df["Points_Against"] = pd.to_numeric(df["Points_Against"], errors="coerce")
         df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
-        # Normalize Result: W → WIN, L → LOSS
         if "Result" in df.columns:
-            # "T" is carried through rather than folded into LOSS: a
-            # 20-20 game is a real outcome, and the entry form can now
-            # produce one. Every consumer tests for "WIN"/"LOSS"
-            # explicitly, so a tie counts as neither.
             # An unrecognised or blank Result falls back to the score
             # rather than to "LOSS", which recorded a blank cell on a
             # 31-10 win as a defeat.
-            df["Result"] = (
-                df["Result"].astype(str).str.strip().str.upper().map(
-                    {"W": "WIN", "L": "LOSS", "T": "TIE",
-                     "WIN": "WIN", "LOSS": "LOSS", "TIE": "TIE"})
-                .fillna(_result_from_margin(df["Score_Diff"])))
+            df["Result"] = (_normalize_result(df["Result"])
+                            .fillna(_result_from_margin(df["Score_Diff"])))
         else:
             df["Result"] = _result_from_margin(df["Score_Diff"])
+    if "Result" in df.columns and "Score_Diff" not in df.columns:
+        # No score to derive from, so the Result column is all there is.
+        # Left as "W"/"L" it matched none of the WIN/LOSS/TIE filter
+        # options, and the Results filter then hid every game.
+        df["Result"] = _normalize_result(df["Result"])
 
     if "TOP" in df.columns:
-        def parse_top(x):
-            if isinstance(x, str) and ":" in x:
-                parts = x.split(":")
-                try:
-                    return int(parts[0]) + int(parts[1]) / 60
-                except ValueError:
-                    return None
-            return x
-        try:
-            df["TOP_Mins"] = df["TOP"].apply(parse_top)
-        except Exception:
-            pass
+        # game_log.parse_top: None for anything that isn't MM:SS or a
+        # number. The local parser this replaces handed back any other
+        # string unchanged ("N/A", "28"), which made TOP_Mins a text
+        # column and crashed the sidebar's .sub() for the whole app.
+        # A bare "28" read as text is minutes too, as it is for a number.
+        df["TOP_Mins"] = pd.to_numeric(
+            df["TOP"].apply(game_log.parse_top), errors="coerce").fillna(
+            pd.to_numeric(df["TOP"], errors="coerce"))
 
     # Season/Week are optional: the 28 games already on file predate the
     # columns and there is no real season boundary to infer (19 distinct
@@ -604,11 +613,15 @@ with st.sidebar.expander("🎚️ Dashboard Filters", expanded=False):
     )
 
     filtered_df = df.copy()
-    if "Result" in filtered_df.columns:
-        filtered_df = (
-            filtered_df[filtered_df["Result"].isin(selected_results)]
-            if selected_results else filtered_df.iloc[0:0]
-        )
+    if "Result" in filtered_df.columns and result_options:
+        # Same rule as the playbook filter: a game with no result
+        # recorded stays in while every result is selected (the
+        # default), and drops out once the selection is narrowed. A
+        # plain isin() hid it from every tab with nothing filtered.
+        keep = filtered_df["Result"].isin(selected_results)
+        if set(selected_results) >= set(result_options):
+            keep |= filtered_df["Result"].isna()
+        filtered_df = filtered_df[keep]
     filtered_df = game_log.filter_by_playbook(
         filtered_df, selected_playbooks, playbook_options)
     if games_window != "All Games" and not filtered_df.empty:
@@ -771,8 +784,8 @@ def _games_note(n: int) -> str:
 
 with kpi5:
     if _eff["third_down_pct"] is None and _eff["third_down_conv_per_game"] is not None:
-        # Conversions without attempts: Madden's box score shows only
-        # conversions, so a per-game count is the best the log supports.
+        # Conversions without attempts (games logged before attempts were
+        # recorded): a per-game count is the best the log supports.
         st.markdown(_kpi_card_html(
             "3rd Down Conv", f"{_eff['third_down_conv_per_game']:.1f}/g",
             note=f"conversions, {_games_note(_eff['third_down_conv_games'])}"),
@@ -873,7 +886,25 @@ def render_franchise_home() -> None:
         """, unsafe_allow_html=True)
 
 
+# Display names for game-log columns on chart axes, legends and hovers.
+# Without them plotly prints the CSV headings ("TOP_Mins", "Score_Diff").
+_CHART_LABELS = {
+    "TOP_Mins": "Time of possession (min)",
+    "Score_Diff": "Score margin",
+    "Points_For": "Points scored",
+    "Total_Yards": "Total yards",
+    "Total_Yards_Allowed": "Yards allowed",
+    "Pass_Yards": "Pass yards",
+    "Rush_Yards": "Rush yards",
+    "Takeaways": "Takeaways",
+    "Turnovers": "Turnovers",
+    "_size": "Points scored",
+}
+
+
 def _fmt_stat(label: str, value: float) -> str:
+    if label.endswith("%"):
+        return f"{value:.0f}%"
     if "Yards" in label:
         return f"{value:.0f}"
     if label == "Turnover margin":
@@ -943,8 +974,12 @@ def render_close_games() -> None:
             else:
                 sign_gap = (("+" if gap > 0 else "−")
                             + _fmt_stat(r["label"], abs(gap)).lstrip("+"))
+            # Rates from a handful of games say so next to the label.
+            n_note = (f' <span style="color:var(--text-muted); font-size:0.72rem;">'
+                      f'({r["games"][0]} / {r["games"][1]} games)</span>'
+                      if "games" in r else "")
             body += (
-                f'<tr><td style="color:var(--text-dim); padding:4px 8px;">{r["label"]}</td>'
+                f'<tr><td style="color:var(--text-dim); padding:4px 8px;">{r["label"]}{n_note}</td>'
                 f'<td style="text-align:right; padding:4px 8px; color:#f1f5f9;">{_fmt_stat(r["label"], r["close"])}</td>'
                 f'<td style="text-align:right; padding:4px 8px; color:#f1f5f9;">{_fmt_stat(r["label"], r["decided"])}</td>'
                 f'<td style="text-align:right; padding:4px 8px; color:{color}; font-weight:700;">{sign_gap}</td></tr>')
@@ -1104,20 +1139,25 @@ def render_game_log_form() -> None:
                 rz_att = st.number_input(
                     "Red zone trips", min_value=0, max_value=15, value=0,
                     step=1, help="Drives that reached the opponent's 20. "
-                                 "Needed for red zone TD%. Leave 0 if not tracked.")
+                                 "From Madden's post-game Team Stats tab, "
+                                 "'Red Zone TD|FG|%' is scores per trip, so "
+                                 "trips = (TDs + FGs) / % - e.g. 1|1|66% is "
+                                 "3 trips. Leave 0 if not tracked.")
 
             eff1, eff2, _eff3, _eff4 = st.columns(4)
             with eff1:
                 td_att = st.number_input(
                     "3rd down attempts", min_value=0, max_value=30, value=0,
-                    step=1, help="Leave 0 if not shown; Madden's post-game "
-                                 "box score lists conversions only.")
+                    step=1, help="From Madden's post-game Team Stats tab: "
+                                 "'3rd Down Conv. 7/11 (63%)' is 11 attempts. "
+                                 "Leave 0 if not recorded.")
             with eff2:
                 td_conv = st.number_input(
                     "3rd down conversions", min_value=0, max_value=30,
                     value=0, step=1,
-                    help="From the box score. With attempts at 0 this is "
-                         "tracked as conversions per game.")
+                    help="Team Stats tab: '3rd Down Conv. 7/11' is 7. "
+                         "With attempts at 0 this is tracked as "
+                         "conversions per game.")
 
             st.markdown("**Your defense**")
             def1, def2, def3, def4 = st.columns(4)
@@ -1194,8 +1234,8 @@ def render_game_log_form() -> None:
             # 0 attempts means "not tracked this game", written blank so
             # it's left out of the rates instead of counting as 0-for-0.
             "Third_Down_Att": int(td_att) if td_att else "",
-            # Conversions alone are kept (box scores omit attempts); both
-            # at 0 means untracked, not a 0-for-0 game.
+            # Conversions alone are kept (some games were logged without
+            # attempts); both at 0 means untracked, not a 0-for-0 game.
             "Third_Down_Conv": int(td_conv) if (td_att or td_conv) else "",
             "RZ_Att": int(rz_att) if rz_att else "",
         }, MY_TEAM)
@@ -1219,6 +1259,116 @@ def render_game_log_form() -> None:
         # this interaction rather than the next one. The note is stashed
         # because the rerun would discard a banner rendered here.
         st.session_state["game_log_note"] = note
+        st.rerun()
+
+
+def _backfill_label(games: pd.DataFrame, gid: int) -> str:
+    """"#12 vs CHI (WIN 27-20)" — enough to pick the right box score."""
+    row = games[pd.to_numeric(games["GAME_ID"], errors="coerce") == gid]
+    if row.empty:
+        return f"#{gid}"
+    r = row.iloc[0]
+    pf, pa = pd.to_numeric(r.get("Points_For"), errors="coerce"), \
+        pd.to_numeric(r.get("Points_Against"), errors="coerce")
+    score = f" {pf:.0f}-{pa:.0f}" if pd.notna(pf) and pd.notna(pa) else ""
+    return (f"#{gid} vs {r.get('Opponent', '?')} "
+            f"({str(r.get('Result', '') or '?')}{score})")
+
+
+def render_backfill_form() -> None:
+    """Add third-down and red-zone numbers to a game already logged.
+
+    These columns arrived after the first 28 games, and the log was
+    append-only, so a game logged without them could never acquire them
+    — leaving the two rates the KPI row calls this franchise's strongest
+    predictors computed over a couple of games out of thirty.
+
+    Deliberately narrow: it writes only the efficiency columns. Scores
+    and yardage feed derived columns that `derive_fields` computes from
+    each other, and reopening those would mean recomputing a row, which
+    is the operation `game_log` exists to avoid.
+    """
+    _note = st.session_state.pop("backfill_note", None)
+    if _note:
+        st.success(_note)
+
+    existing = game_log.read_log(_GAME_LOGS_CSV)
+    if existing.empty or "GAME_ID" not in existing.columns:
+        return
+
+    missing = game_log.games_missing_efficiency(existing)
+    if missing.empty:
+        return
+
+    label = (f"🧮 Backfill 3rd down / red zone — {len(missing)} of "
+             f"{len(existing)} games are missing them")
+    with st.expander(label, expanded=False):
+        if _LOG_SOURCE != "local":
+            st.info("The dashboard is showing an uploaded file or a Google "
+                    "Sheet, so edit the numbers there. Backfilling here "
+                    "would write to the local file, which isn't what you "
+                    "are looking at.")
+            return
+        st.caption("From Madden's post-game **Team Stats** tab: "
+                   "`3rd Down Conv. 7/11` and the red zone row. Leave a "
+                   "field at 0 to skip it — 0 attempts reads as *not "
+                   "tracked*, not as a game with none.")
+
+        ids = [int(v) for v in pd.to_numeric(
+            missing["GAME_ID"], errors="coerce").dropna()]
+        # Outside the form on purpose. A form batches its widgets until
+        # submit, so a picker inside it could not prefill the inputs
+        # from the chosen game — and a conversion count already on the
+        # row would be submitted away as the 0 default.
+        gid = st.selectbox("Game", ids, key="backfill_game",
+                           format_func=lambda g: _backfill_label(missing, g))
+        current = game_log.row_for_game(missing, gid)
+
+        def _prefill(column: str) -> int:
+            value = pd.to_numeric(current.get(column), errors="coerce")
+            return 0 if pd.isna(value) else int(value)
+
+        with st.form("backfill_form"):
+            b1, b2, b3 = st.columns(3)
+            with b1:
+                # Explicit keys: the entry form above carries the same
+                # three labels, and only its differing max_value keeps
+                # the auto-generated widget IDs apart. Aligning the
+                # ranges would take the tab down with DuplicateWidgetID.
+                td_att = st.number_input(
+                    "3rd down attempts", min_value=0, max_value=40,
+                    value=_prefill("Third_Down_Att"), step=1,
+                    key="backfill_td_att")
+            with b2:
+                td_conv = st.number_input(
+                    "3rd down conversions", min_value=0, max_value=40,
+                    value=_prefill("Third_Down_Conv"), step=1,
+                    key="backfill_td_conv",
+                    help="Prefilled from the log where it is already "
+                         "recorded, so supplying attempts cannot write "
+                         "an existing count away.")
+            with b3:
+                rz_att = st.number_input(
+                    "Red zone trips", min_value=0, max_value=20,
+                    value=_prefill("RZ_Att"), step=1,
+                    key="backfill_rz_att")
+            saved = st.form_submit_button("Save to this game",
+                                          type="primary")
+
+        if not saved:
+            return
+
+        fields = game_log.backfill_changes(current, td_att, td_conv, rz_att)
+        if not fields:
+            st.warning("Nothing to change — set attempts or trips above 0, "
+                       "or enter a different number. Nothing was written.")
+            return
+
+        ok, message = game_log.update_game(_GAME_LOGS_CSV, gid, fields)
+        if not ok:
+            st.error(message)
+            return
+        st.session_state["backfill_note"] = message
         st.rerun()
 
 
@@ -1254,6 +1404,7 @@ with home_tab:
     render_tab_header("🏠", "Franchise Home",
                       f"Record, cap exposure, needs and moves for {MY_TEAM}")
     render_game_log_form()
+    render_backfill_form()
     render_franchise_home()
     render_close_games()
 
@@ -1278,6 +1429,7 @@ with tabs[0]:
                 size="_size" if "Points_For" in scatter_df.columns else None,
                 hover_data=[
                     "Opponent"] if "Opponent" in scatter_df.columns else None,
+                labels=_CHART_LABELS,
                 template="plotly_dark",
                 title="Madden 27 Strategy Map",
             )
@@ -1287,13 +1439,15 @@ with tabs[0]:
     with col2:
         st.markdown("#### Scheme Efficiency")
         if "Playbook" in df.columns and "Points_For" in df.columns:
+            # Games next to the average: one scheme here had 6 games to the
+            # other's 22, which a bare points column didn't show.
             scheme_perf = (
                 df.groupby("Playbook")["Points_For"]
-                .mean()
+                .agg(Games="count", PPG="mean")
                 .reset_index()
             )
             st.dataframe(
-                scheme_perf.style.format({"Points_For": "{:.1f}"}),
+                scheme_perf.style.format({"PPG": "{:.1f}"}),
                 hide_index=True,
             )
         else:
@@ -1363,26 +1517,31 @@ with tabs[0]:
                 </div>
                 """, unsafe_allow_html=True)
 
-        # Grouped bar chart comparison
-        compare_metrics = ["PPG", "Opp PPG",
-                           "Pass YPG", "Rush YPG", "Total YPG"]
-        compare_rows = []
-        for scheme in schemes:
-            for metric in compare_metrics:
-                compare_rows.append({
-                    "Scheme": scheme, "Metric": metric,
-                    "Value": scheme_stats[scheme][metric],
-                })
-        compare_df = pd.DataFrame(compare_rows)
-        fig_compare = px.bar(
-            compare_df, x="Metric", y="Value", color="Scheme",
-            barmode="group", template="plotly_dark",
-            title="Scheme Comparison — Key Averages",
-            color_discrete_sequence=["#6366f1", "#10b981"],
-        )
-        fig_compare.update_layout(yaxis_title="Per Game Average",
-                                  xaxis_title="")
-        st.plotly_chart(fig_compare, width="stretch")
+        # Grouped bar charts. Points (~25) and yards (~380) used to share
+        # one axis, which flattened the points bars to a sliver; they get
+        # a chart each.
+        def _compare_chart(metrics, title, y_title):
+            rows = [{"Scheme": scheme, "Metric": m,
+                     "Value": scheme_stats[scheme][m]}
+                    for scheme in schemes for m in metrics]
+            fig = px.bar(
+                pd.DataFrame(rows), x="Metric", y="Value", color="Scheme",
+                barmode="group", template="plotly_dark", title=title,
+                color_discrete_sequence=["#6366f1", "#10b981"],
+            )
+            fig.update_layout(yaxis_title=y_title, xaxis_title="")
+            return fig
+
+        cmp_pts, cmp_yds = st.columns(2)
+        with cmp_pts:
+            st.plotly_chart(_compare_chart(
+                ["PPG", "Opp PPG"], "Scheme Comparison — Points",
+                "Points per game"), width="stretch")
+        with cmp_yds:
+            st.plotly_chart(_compare_chart(
+                ["Pass YPG", "Rush YPG", "Total YPG"],
+                "Scheme Comparison — Yards", "Yards per game"),
+                width="stretch")
 
         # GM Text Analysis
         st.markdown("#### 🧠 GM Analysis")
@@ -1402,6 +1561,7 @@ with tabs[0]:
         """)
 
     # ── Win Probability / Momentum Curve ──
+    _PEAK_FROM = 5
     if "Result" in df.columns and len(df) > 1:
         st.markdown("---")
         st.markdown("#### 📈 Season Momentum Tracker")
@@ -1470,8 +1630,15 @@ with tabs[0]:
         with ins2:
             st.metric("Best Win Streak", f"{best_streak} games")
         with ins3:
-            peak = momentum_df["Win_Pct"].max()
-            st.metric("Peak Win %", f"{peak:.1f}%")
+            # Over every game this was 100% for any team that won its
+            # opener. Measured from game _PEAK_FROM on once there are that
+            # many games.
+            settled = momentum_df[momentum_df["Game_Num"] >= _PEAK_FROM]
+            if settled.empty:
+                st.metric("Peak Win %", f"{momentum_df['Win_Pct'].max():.1f}%")
+            else:
+                st.metric(f"Peak Win % (game {_PEAK_FROM}+)",
+                          f"{settled['Win_Pct'].max():.1f}%")
 
 # ── TAB 2: Wear & Tear Impact ──
 with tabs[1]:
@@ -1503,6 +1670,7 @@ with tabs[1]:
                 color_discrete_map={"WIN": "#00e676", "LOSS": "#ff5252"},
                 size="Total_Yards" if "Total_Yards" in df.columns else None,
                 hover_data=_opponent_hover,
+                labels=_CHART_LABELS,
                 title="Turnovers vs Points Scored",
                 template="plotly_dark",
             )
@@ -1514,6 +1682,7 @@ with tabs[1]:
                     color="Result" if "Result" in df.columns else None,
                     color_discrete_map={"WIN": "#00e676", "LOSS": "#ff5252"},
                     hover_data=_opponent_hover,
+                    labels=_CHART_LABELS,
                     title="Yards Allowed vs Takeaways",
                     template="plotly_dark",
                 )
@@ -1539,6 +1708,8 @@ with tabs[1]:
         fig_bal.update_layout(legend_title="Yard Type",
                               yaxis_title="Yards",
                               xaxis_title="Game")
+        fig_bal.for_each_trace(
+            lambda t: t.update(name=_CHART_LABELS.get(t.name, t.name)))
         st.plotly_chart(fig_bal, width="stretch")
 
 # ── TAB 3: Trade Machine ──
@@ -1679,6 +1850,12 @@ def render_trade_machine() -> None:
         # ── Interested Teams ──
         st.markdown('<div class="section-glow"></div>', unsafe_allow_html=True)
         st.markdown("#### 🎯 Interested Teams")
+        # The player being shopped is real; the teams reading him are not.
+        # Saying so once here stops the CPU side being read as league data.
+        st.caption(
+            "CPU teams are demo rosters of 6–8 players, not full squads. "
+            "A position none of them lists reads as *interest unknown* "
+            "rather than as a need.")
         partners = find_trade_partners(selected_player, user_team=MY_TEAM)
         for p in partners:
             fit_badge = ' <span style="color:#10b981; font-size:0.75rem;">✅ SCHEME FIT</span>' if p[
@@ -1708,9 +1885,11 @@ def render_trade_machine() -> None:
                     unsafe_allow_html=True)
 
         # Offered player(s) — user's side
-        st.markdown('<div class="trade-card">', unsafe_allow_html=True)
-        st.markdown("**🟢 You Send:**")
-        offer_names = st.multiselect(
+        # A <div> opened in one st.markdown and closed in another doesn't
+        # wrap the widgets between them; it rendered as an empty box.
+        _send_box = st.container(border=True)
+        _send_box.markdown("**🟢 You Send:**")
+        offer_names = _send_box.multiselect(
             "Players to offer:",
             user_roster["Name"].tolist(),
             default=[selected_player_name],
@@ -1721,18 +1900,17 @@ def render_trade_machine() -> None:
             for n in offer_names
             if n in user_roster["Name"].values
         ]
-        st.markdown('</div>', unsafe_allow_html=True)
 
         # Requested player(s) — CPU side
-        st.markdown('<div class="trade-card">', unsafe_allow_html=True)
-        st.markdown("**🔴 You Receive:**")
-        cpu_team = st.selectbox(
+        _recv_box = st.container(border=True)
+        _recv_box.markdown("**🔴 You Receive:**")
+        cpu_team = _recv_box.selectbox(
             "From team:", [
                 t for t in TRADE_ROSTERS["Team"].unique() if t != MY_TEAM],
             key="trade_cpu_team",
         )
         cpu_roster = TRADE_ROSTERS[TRADE_ROSTERS["Team"] == cpu_team]
-        request_names = st.multiselect(
+        request_names = _recv_box.multiselect(
             "Players to request:",
             cpu_roster["Name"].tolist(),
             key="trade_request_select",
@@ -1742,7 +1920,6 @@ def render_trade_machine() -> None:
             for n in request_names
             if n in cpu_roster["Name"].values
         ]
-        st.markdown('</div>', unsafe_allow_html=True)
 
         if st.button("📋 Evaluate Trade", key="eval_trade_btn", width="stretch"):
             if not offered or not requested:
@@ -1816,12 +1993,34 @@ with tabs[3]:
     render_tab_header("🏛️", "Dynasty — Franchise Legacy",
                       "Season archives, era tracking, and career leaderboards")
 
-    history = load_history()
+    # Shown after the rerun that follows an archive: a banner rendered
+    # before st.rerun() is discarded with the run that drew it.
+    _dyn_note = st.session_state.pop("dynasty_note", None)
+    if _dyn_note:
+        (st.success if _dyn_note[0] else st.warning)(_dyn_note[1])
+
+    # The file is hand-editable, so an entry may be missing any field;
+    # indexing one that isn't there stopped the script, blanking every
+    # later tab. Display reads defaults; the file itself is untouched.
+    _raw_history = load_history_strict()
+    if _raw_history is None:
+        st.error("⛔ `dynasty_history.json` exists but can't be read (likely a "
+                 "hand-edit typo, such as a trailing comma). Archiving is "
+                 "turned off until it's fixed, so the seasons in it aren't "
+                 "overwritten.")
+    history = [s for s in (_raw_history or []) if isinstance(s, dict)]
 
     # Timeline visualization
     st.markdown("#### 📅 Franchise Timeline")
     if history:
-        hist_df = pd.DataFrame(history)
+        hist_df = pd.DataFrame([{
+            "season": pd.to_numeric(s.get("season"), errors="coerce"),
+            "wins": pd.to_numeric(s.get("wins"), errors="coerce"),
+            "era": s.get("era") or "Unknown Era",
+            "record": s.get("record", "N/A"),
+            "playoff_result": s.get("playoff_result", "N/A"),
+            "mvp": s.get("mvp", "N/A"),
+        } for s in history]).dropna(subset=["season", "wins"])
         fig_timeline = px.scatter(
             hist_df,
             x="season",
@@ -1841,10 +2040,10 @@ with tabs[3]:
         # Season detail cards
         st.markdown("#### 📜 The Chronicles")
         for season in reversed(history):
-            era_label = season.get("era", "Unknown Era")
-            trophy = " 🏆" if "Champion" in season.get(
-                "playoff_result", "") else ""
-            with st.expander(f"Season {season['season']} — {era_label}{trophy}"):
+            era_label = season.get("era") or "Unknown Era"
+            trophy = " 🏆" if "Champion" in str(season.get(
+                "playoff_result", "")) else ""
+            with st.expander(f"Season {season.get('season', '?')} — {era_label}{trophy}"):
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     st.metric("Record", season.get("record", "N/A"))
@@ -1893,7 +2092,11 @@ with tabs[3]:
 
     # Archive new season form
     st.markdown("#### 📝 Archive a Season")
-    with st.form("archive_season_form", clear_on_submit=True):
+    # Keyed on a counter bumped only after a successful archive, so a
+    # rejected submission keeps what was typed (clear_on_submit wiped it
+    # even when nothing was saved).
+    st.session_state.setdefault("archive_form_ver", 0)
+    with st.form(f"archive_season_form_{st.session_state.archive_form_ver}"):
         acol1, acol2 = st.columns(2)
         with acol1:
             new_season = st.number_input(
@@ -1913,12 +2116,16 @@ with tabs[3]:
             "Season Notes", placeholder="Brief summary of the season...")
 
         submitted = st.form_submit_button("💾 Archive Season")
-        if submitted and new_record:
-            try:
-                wins = int(new_record.split("-")[0])
-                losses = int(new_record.split("-")[1])
-            except Exception:
-                wins, losses = 0, 0
+        # W-L or W-L-T, with a hyphen or the en/em dashes phones and
+        # word processors substitute. A record that didn't parse used to
+        # be saved as 0-0 without a word, and a blank one did nothing.
+        _rec = re.fullmatch(r"\s*(\d+)\s*[-–—]\s*(\d+)(?:\s*[-–—]\s*\d+)?\s*",
+                            new_record or "")
+        if submitted and not _rec:
+            st.error("Enter the record as wins-losses, e.g. 11-6 "
+                     "(or 10-6-1 with ties). Nothing was archived.")
+        if submitted and _rec:
+            wins, losses = int(_rec.group(1)), int(_rec.group(2))
 
             season_data = {
                 "season": int(new_season),
@@ -1935,8 +2142,23 @@ with tabs[3]:
                 "rec_yards": 0,
                 "notes": new_notes,
             }
-            archive_season(season_data, history)
-            st.success(f"✅ Season {new_season} archived under \"{new_era}\"!")
+            _current = load_history_strict()
+            _replacing = _current is not None and any(
+                isinstance(s, dict) and str(s.get("season")).split(".")[0]
+                == str(int(new_season)) for s in _current)
+            _, _saved = (archive_and_save(season_data, _current)
+                         if _current is not None else ([], False))
+            st.session_state["dynasty_note"] = (
+                (True, f"✅ Season {new_season} "
+                       f"{'updated (replaced the earlier entry)' if _replacing else 'archived'}"
+                       f" under \"{new_era or 'Unknown Era'}\".") if _saved else
+                (False, f"Season {new_season} wasn't saved: "
+                        + ("the history file can't be read (see above)."
+                           if _current is None else
+                           "the history file couldn't be written on this "
+                           "server, so the archive won't keep it.")))
+            if _saved:
+                st.session_state.archive_form_ver += 1
             st.rerun()
 
 # ── TAB 5: Roster Explorer ──
@@ -2074,9 +2296,30 @@ with tabs[4]:
     st.markdown("#### 📊 Position Group Grades")
     grades = roster_view("grades", selected_team, AI_GM_EXTRA)
     if grades:
+        # get_position_grades skips rooms with nobody in them, so the
+        # positions Home lists as top needs (an empty FB/LG/MLB) were the
+        # ones missing from this grid. Show them as empty, in grid order.
+        _graded = {g["pos"]: g for g in grades}
         grade_cols = st.columns(4)
-        for i, g in enumerate(grades):
+        for i, pos in enumerate(POSITION_ORDER):
+            g = _graded.get(pos)
             with grade_cols[i % 4]:
+                if g is None:
+                    st.markdown(f"""
+                <div style="background: linear-gradient(135deg, rgba(30,30,60,0.9), rgba(50,50,80,0.7));
+                    border: 1px dashed {NEED_COLORS['Critical']}80; border-radius: 14px; padding: 1rem;
+                    text-align: center; margin-bottom: 0.8rem;">
+                    <div style="font-size: 2.2rem; font-weight: 900; color: {NEED_COLORS['Critical']}; line-height: 1.1;">—</div>
+                    <div style="font-size: 1.15rem; font-weight: 700; color: white; margin-top: 0.2rem;">{pos}</div>
+                    <div style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0; margin-top: 0.25rem;">
+                        No starter
+                    </div>
+                    <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.1rem;">
+                        0 players on roster
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                    continue
                 st.markdown(f"""
                 <div style="background: linear-gradient(135deg, rgba(30,30,60,0.9), rgba(50,50,80,0.7));
                     border: 1px solid {g['color']}40; border-radius: 14px; padding: 1rem;
@@ -2103,13 +2346,17 @@ with tabs[4]:
         with cap_c1:
             st.metric("Total Cap Savings", f"${cap['total_savings']:.1f}M")
         with cap_c2:
-            st.metric("Total Dead Cap", f"${cap['total_penalty']:.1f}M",
-                      delta=f"-${cap['total_penalty']:.1f}M", delta_color="inverse")
+            # The delta used to repeat the value as "-$482.4M" in green.
+            st.metric("Total Dead Cap", f"${cap['total_penalty']:.1f}M")
         with cap_c3:
+            # Savings minus dead cap if the whole roster were released: a
+            # what-if, not the team's cap space, which the roster file
+            # doesn't carry. It was labelled "Net Cap Position" with a
+            # Healthy/Tight badge, and printed "$-400.1M".
             net = cap['total_savings'] - cap['total_penalty']
-            st.metric("Net Cap Position", f"${net:+.1f}M",
-                      delta="Healthy" if net > 0 else "Tight",
-                      delta_color="normal" if net > 0 else "inverse")
+            st.metric("Net if All Released", f"{'−' if net < 0 else '+'}${abs(net):.1f}M",
+                      help="Cap savings minus dead cap if every player were "
+                           "released. Not your current cap space.")
 
         st.markdown("##### 🔴 Top 5 Dead Cap Hits")
         top_dead = [p for p in cap["players"] if p["Penalty"] > 0][:5]
@@ -2413,8 +2660,14 @@ with tabs[7]:
     with snap_c3:
         if st.button("📸 Save Current OVR Snapshot", type="primary"):
             count = snapshot_roster(MY_TEAM, snap_season, snap_week)
-            st.success(
-                f"Saved {count} player OVRs for Season {snap_season}, Week {snap_week}!")
+            # 0 is a failed write, not an empty save; it used to read
+            # "Saved 0 player OVRs!" as a success.
+            if count:
+                st.success(
+                    f"Saved {count} player OVRs for Season {snap_season}, Week {snap_week}!")
+            else:
+                st.error("Snapshot not saved: data/progression_log.csv couldn't be "
+                         "read or written. Nothing in it was changed.")
 
     # Show movers
     movers = get_movers(MY_TEAM)
@@ -2469,8 +2722,8 @@ with tabs[8]:
                 "game": "Game", "opponent": "Opp", "check": "Check",
                 "detail": "Detail"}), hide_index=True, width="stretch")
     else:
-        st.caption("✅ Data checks: yards, scores and time of possession "
-                   "are consistent.")
+        st.caption("✅ Data checks: yards, scores, efficiency and time of "
+                   "possession are consistent.")
     st.dataframe(df)
     if os.path.exists(_GAME_LOGS_CSV) and _LOG_SOURCE == "local":
         with open(_GAME_LOGS_CSV, "rb") as _fh:
@@ -2499,6 +2752,12 @@ with tabs[9]:
                     'font-weight:600; border:1px solid #ffffff20;">'
                     '⚪ Heuristic scouting (set ANTHROPIC_API_KEY for live Claude writeups)</span>',
                     unsafe_allow_html=True)
+
+    # Banners from the last action, shown after the rerun that follows
+    # it. Rendered before st.rerun() they were discarded unseen, so a
+    # failed Claude call or CSV save looked exactly like success.
+    for _kind, _msg in st.session_state.pop("ai_gm_notes", []):
+        (st.success if _kind == "success" else st.warning)(_msg)
 
     if "ai_gm_log" not in st.session_state:
         st.session_state.ai_gm_log = []
@@ -2553,6 +2812,7 @@ with tabs[9]:
                 "🔮 Scout & Add to Roster", width="stretch")
 
         if submitted:
+            notes = []
             new_player = {
                 "Name": f_name, "Pos": f_pos, "Age": f_age, "OVR": f_ovr,
                 "Dev": f_dev, "SPD": f_spd, "ACC": f_acc, "AGI": f_agi,
@@ -2581,18 +2841,26 @@ with tabs[9]:
                         report["ai_generated"] = True
                     else:
                         report["ai_generated"] = False
-                        st.warning(
-                            "Claude request failed — showing heuristic scouting report instead.")
+                        notes.append(("warning", "Claude request failed — showing "
+                                                 "the heuristic scouting report instead."))
                 else:
                     report["ai_generated"] = False
 
                 st.session_state.ai_gm_players.append(result["player"])
                 st.session_state.ai_gm_log.insert(0, report)
-                if f_persist:
-                    ai_gm.persist_roster(MY_TEAM, st.session_state.ai_gm_players)
+                notes.insert(0, ("success", f"✅ **{result['player']['Name']}** added "
+                                            f"to the {MY_TEAM} roster."))
+                if f_persist and not ai_gm.persist_roster(
+                        MY_TEAM, st.session_state.ai_gm_players):
+                    # It used to report success here regardless; on a
+                    # read-only disk or a demo-data fallback nothing was
+                    # written and the player vanished on the next restart.
+                    notes.append(("warning", "Couldn't save to the roster CSV "
+                                             "(the file couldn't be read or "
+                                             "written on this server). The "
+                                             "player is in this session only."))
                 st.session_state.ai_gm_form_version += 1
-                st.success(
-                    f"✅ **{result['player']['Name']}** added to the {MY_TEAM} roster.")
+                st.session_state.ai_gm_notes = notes
                 st.rerun()
 
         st.markdown("---")
@@ -2664,8 +2932,9 @@ with tabs[9]:
                                     rep["blurb"] = new_blurb
                                     rep["ai_generated"] = True
                                 else:
-                                    st.warning(
-                                        "Regeneration failed — keeping the previous version.")
+                                    st.session_state.ai_gm_notes = [(
+                                        "warning", "Regeneration failed — "
+                                                   "keeping the previous version.")]
                             st.rerun()
 
     st.markdown("---")

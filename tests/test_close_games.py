@@ -68,5 +68,80 @@ def test_shipped_log_close_record():
     df = pd.read_csv("data/game_logs.csv")
     df["Result"] = df["Result"].map({"W": "WIN", "L": "LOSS", "T": "TIE"})
     r = close_games.analyze(df)
-    assert r["close"]["record"] == "4-9"
-    assert r["decided"]["record"] == "13-4"
+    assert r["close"]["record"] == "6-12"
+    assert r["decided"]["record"] == "14-10"
+
+
+def test_predictor_rows_use_real_counts_and_carry_game_counts():
+    # RZ TD % from logged trips; third downs as conversions per game, not
+    # a rate over attempts (most logged attempts are estimates).
+    df = _log().assign(RZ_TD_Made=[1, 0, 1, 2, 3, 1], RZ_Att=[4, 2, 4, 3, 3, None],
+                       Third_Down_Conv=[3, 2, 4, 6, 5, 4],
+                       Third_Down_Att=[12] * 6)
+    rows = {x["label"]: x for x in close_games.analyze(df)["rows"]}
+    rz = rows["Red zone TD %"]
+    assert rz["close"] == pytest.approx(2 / 10 * 100)   # tie has no trips logged
+    assert rz["decided"] == pytest.approx(5 / 6 * 100)
+    assert rz["games"] == (3, 2)
+    td = rows["3rd-down conversions"]
+    assert td["close"] == pytest.approx(13 / 4) and td["games"] == (4, 2)
+    assert "Red zone TD %" in [d["label"] for d in close_games.analyze(df)["drivers"]]
+
+
+def test_predictor_rows_absent_without_the_columns():
+    labels = [x["label"] for x in close_games.analyze(_log())["rows"]]
+    assert "Red zone TD %" not in labels and "3rd-down conversions" not in labels
+
+
+class TestNoUnreadSplitRates:
+    """No rate leaves `_group_stats` without the count it rests on.
+
+    These were computed and unread when this guard was written — one
+    game per side on the log of the day, reading 20.0% close against
+    100.0% decided, sitting on the dict looking authoritative. #66 has
+    since put them on screen, which is the case the guard was for: a
+    rate that nothing renders is only a latent problem, a rendered one
+    is a claim to the user.
+    """
+
+    # Spelled out rather than derived from the key: efficiency_rates
+    # pairs third_down_pct with third_down_games but rz_td_pct with
+    # rz_games, and renaming a published key to make a test tidier is
+    # the wrong way round.
+    _COUNT_FOR = {"third_down_pct": "third_down_games",
+                  "rz_td_pct": "rz_games"}
+
+    def test_a_rate_is_never_published_without_its_sample_size(self):
+        df = pd.read_csv("data/game_logs.csv")
+        df["Result"] = df["Result"].map({"W": "WIN", "L": "LOSS", "T": "TIE"})
+        result = close_games.analyze(df)
+        for side in ("close", "decided"):
+            rates = [k for k in result[side]
+                     if k.endswith("_pct") and k != "win_pct"]
+            assert rates, f"{side} publishes no rates; did they move?"
+            for key in rates:
+                assert key in self._COUNT_FOR, (
+                    f"{side}.{key} is a new rate — pair it with a count")
+                assert self._COUNT_FOR[key] in result[side], (
+                    f"{side}.{key} is published without a game count")
+
+
+class TestRecordReadsEitherSpelling:
+    """`derive_fields` writes "W"; `app._prepare_game_log` expands it to
+    "WIN" before the panel sees it. record() matched only the long form,
+    so a caller that skipped that normalisation got a silent 0-0 rather
+    than an error — which is exactly how a reader gets fooled."""
+
+    @pytest.mark.parametrize("spelling", [
+        ["W", "W", "L"], ["WIN", "WIN", "LOSS"], ["win", "Win", "loss"],
+    ])
+    def test_short_and_long_forms_agree(self, spelling):
+        df = pd.DataFrame({"Result": spelling})
+        rec = close_games.record(df)
+        assert (rec["wins"], rec["losses"]) == (2, 1), rec
+
+    def test_a_tie_is_still_a_tie_either_way(self):
+        assert close_games.record(
+            pd.DataFrame({"Result": ["T"]}))["ties"] == 1
+        assert close_games.record(
+            pd.DataFrame({"Result": ["TIE"]}))["ties"] == 1

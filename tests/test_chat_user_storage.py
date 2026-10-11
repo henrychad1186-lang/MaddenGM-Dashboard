@@ -193,3 +193,11 @@ def test_failed_sheets_write_keeps_the_previous_history():
     ss.tabs["chats_k"].fail_update = True
     assert backend.save(_big_store(30)) is False
     assert sum(len(c["messages"]) for c in backend.load()["GB"]) == 20
+
+
+def test_corrupt_file_is_unknown_not_empty(tmp_path):
+    # {} would let the next save overwrite every saved conversation.
+    p = tmp_path / "chats.json"
+    p.write_text('{"GB": [ ,]}')
+    assert cs.FileBackend(str(p), "x").load() is None
+    assert cs.FileBackend(str(tmp_path / "none.json"), "x").load() == {}

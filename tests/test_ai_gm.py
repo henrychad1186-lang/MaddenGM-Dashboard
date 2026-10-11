@@ -197,3 +197,49 @@ class TestBuildContextSummary:
     def test_no_note_when_no_additions(self):
         summary = ai_gm.build_context_summary(TEAM, [])
         assert "AI GM Assistant" not in summary
+
+
+class TestBlurbDoesNotInventFindings:
+    """The blurb must not report on attributes it never saw.
+
+    `_write_blurb` receives only the strengths/weaknesses lists, so an
+    attribute-free player and a thoroughly average one both arrive as two
+    empty lists. Both used to produce "Athletic testing is unremarkable"
+    and "No glaring athletic red flags" — a judgement the code did not
+    make, and a clean bill of health it cannot issue.
+    """
+
+    # The two strings that assert a finding rather than report data.
+    INVENTED = ("unremarkable", "no glaring", "No glaring")
+
+    def test_no_attributes_yields_no_athletic_verdict(self):
+        # _player() carries Name/Pos/Age/OVR/Dev and no attributes at all.
+        report = ai_gm.scout_player(_player(), TEAM, [])
+        blurb = report["blurb"]
+        found = [s for s in self.INVENTED if s in blurb]
+        assert not found, (
+            f"blurb claims {found} for a player with no attribute data:\n{blurb}")
+
+    def test_it_says_plainly_that_there_is_no_data(self):
+        report = ai_gm.scout_player(_player(), TEAM, [])
+        blurb = report["blurb"].lower()
+        assert "no athletic data" in blurb, report["blurb"]
+
+    def test_average_attributes_still_read_as_unremarkable(self):
+        """Guard against over-correcting.
+
+        A player whose six attributes are all present and all middling
+        genuinely is unremarkable — that conclusion is earned, and must
+        survive the fix.
+        """
+        mid = _player(SPD=75, ACC=75, AGI=75, COD=75, STR=75, AWR=75)
+        report = ai_gm.scout_player(mid, TEAM, [])
+        assert not report["strengths"] and not report["weaknesses"]
+        assert "no athletic data" not in report["blurb"].lower()
+        assert "unremarkable" in report["blurb"]
+
+    def test_a_partial_profile_does_not_speak_for_missing_attributes(self):
+        """Two of six on file cannot clear the other four."""
+        partial = _player(SPD=75, ACC=75)
+        blurb = ai_gm.scout_player(partial, TEAM, [])["blurb"]
+        assert "No glaring athletic red flags in the profile." not in blurb, blurb
