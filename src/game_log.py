@@ -17,7 +17,8 @@ import tempfile
 
 import pandas as pd
 
-from src.season import DEFAULT_SEASON, WEEK_MIN
+from src.season import (DEFAULT_SEASON, SEASON_MAX, SEASON_MIN, WEEK_MAX,
+                        WEEK_MIN)
 
 # What the entry form asks for. Everything else in the file is either
 # derived (see `derive_fields`) or bookkeeping (`GAME_ID`, `Team`).
@@ -498,6 +499,177 @@ def _why_not(existing: pd.DataFrame, game_id, fields: dict) -> "str | None":
         return (f"Game #{game_id} appears {len(rows)} times, so the one to "
                 "edit is ambiguous.")
     return _impossible_pair({**row_for_game(existing, game_id), **fields})
+
+
+def games_missing_season_week(df: pd.DataFrame) -> pd.DataFrame:
+    """Games with no place in the franchise timeline.
+
+    Season and Week are blank on every shipped row, which makes two
+    features inert rather than wrong: `duplicate_week` has no week to
+    collide with, so it protects nothing, and `next_season_week` keeps
+    suggesting the first week of the default season however many games
+    are on file.
+    """
+    if df is None or df.empty:
+        return df if df is not None else pd.DataFrame()
+    return df[_untracked_label(df, "Season") | _untracked_label(df, "Week")]
+
+
+def _untracked_label(df: pd.DataFrame, column: str) -> pd.Series:
+    """Rows with no value in `column`, as an aligned boolean Series.
+
+    Unlike `_untracked`, 0 is not a sentinel here — it is simply out of
+    range for both a season and a week, and `_valid_placement` refuses
+    it with a message rather than treating it as "not recorded".
+    """
+    if column not in df.columns:
+        return pd.Series(True, index=df.index, dtype=bool)
+    return pd.to_numeric(df[column], errors="coerce").isna()
+
+
+def plan_season_weeks(existing: pd.DataFrame, first_game_id, season,
+                      start_week) -> dict:
+    """Suggest consecutive weeks for the games from `first_game_id` on.
+
+    A suggestion, never a derivation, and nothing is written. The log
+    has gaps in GAME_ID (7, 8, 9, 28 and 34 are absent from the shipped
+    file) and a real season carries a bye, so consecutive numbering is
+    a starting point for the user to correct — which is why the form
+    shows the whole plan in an editable table before saving any of it.
+
+    Weeks follow the games that exist, not the numbering of the ones
+    that do not: a missing GAME_ID does not consume a week.
+    """
+    if existing is None or existing.empty or "GAME_ID" not in existing.columns:
+        return {}
+    ids = pd.to_numeric(existing["GAME_ID"], errors="coerce").dropna()
+    ordered = [int(v) for v in ids]
+    wanted = pd.to_numeric(first_game_id, errors="coerce")
+    if pd.isna(wanted) or int(wanted) not in ordered:
+        return {}
+
+    season = int(pd.to_numeric(season, errors="coerce"))
+    week = int(pd.to_numeric(start_week, errors="coerce"))
+    plan = {}
+    for game_id in ordered[ordered.index(int(wanted)):]:
+        if week > WEEK_MAX:
+            break
+        plan[game_id] = (season, week)
+        week += 1
+    return plan
+
+
+def _in_range(mapping: dict, known: set) -> "str | None":
+    """Every game real and every slot inside the season's bounds."""
+    for game_id, (season, week) in mapping.items():
+        if int(game_id) not in known:
+            return f"No game #{game_id} in the log."
+        if not SEASON_MIN <= int(season) <= SEASON_MAX:
+            return f"Season {season} is outside {SEASON_MIN}-{SEASON_MAX}."
+        if not WEEK_MIN <= int(week) <= WEEK_MAX:
+            return f"Week {week} is outside {WEEK_MIN}-{WEEK_MAX}."
+    return None
+
+
+def _week_already_taken(mapping: dict, existing: pd.DataFrame) -> "str | None":
+    """Two games in one week, whether both are new or one is on file.
+
+    This is the protection `duplicate_week` was written to give and
+    never has, because no game has ever carried a week to collide with.
+    """
+    seen = {}
+    for game_id, slot in mapping.items():
+        if slot in seen:
+            return (f"Games #{seen[slot]} and #{game_id} would both be "
+                    f"season {slot[0]} week {slot[1]}.")
+        seen[slot] = game_id
+    if not {"Season", "Week"} <= set(existing.columns):
+        return None
+    on_file = zip(pd.to_numeric(existing["GAME_ID"], errors="coerce"),
+                  pd.to_numeric(existing["Season"], errors="coerce"),
+                  pd.to_numeric(existing["Week"], errors="coerce"))
+    for game_id, season, week in on_file:
+        if pd.isna(season) or pd.isna(week):
+            continue
+        slot = (int(season), int(week))
+        # A game keeping its own week is not a clash with itself.
+        if slot in seen and seen[slot] != int(game_id):
+            return (f"Game #{int(game_id)} is already season "
+                    f"{slot[0]} week {slot[1]}.")
+    return None
+
+
+def _valid_placement(mapping: dict, existing: pd.DataFrame) -> "str | None":
+    """Why this season/week assignment cannot be written, or None."""
+    if not mapping:
+        return "No games to place."
+    return (_in_range(mapping, set(_row_numbers_by_id(existing)))
+            or _week_already_taken(mapping, existing))
+
+
+def _row_numbers_by_id(existing: pd.DataFrame) -> dict:
+    """{GAME_ID: row position}, for locating lines to splice."""
+    if existing is None or existing.empty or "GAME_ID" not in existing.columns:
+        return {}
+    ids = pd.to_numeric(existing["GAME_ID"], errors="coerce")
+    return {int(v): i for i, v in enumerate(ids) if pd.notna(v)}
+
+
+def assign_season_week(path: str, mapping: dict) -> "tuple[bool, str]":
+    """Place games in the franchise timeline. `{game_id: (season, week)}`.
+
+    One atomic write for the whole mapping rather than a call to
+    `update_game` per game: 42 rewrites would be 42 chances to fail
+    partway, and a half-numbered season is worse than an unnumbered one.
+    """
+    existing = read_log(path)
+    if not looks_like_a_log(existing):
+        return False, ("The game log could not be read, so nothing was "
+                       "written — overwriting it would lose whatever is "
+                       "in it. Check the CSV.")
+    if "GAME_ID" not in existing.columns:
+        return False, ("This log has no GAME_ID column, so there is no way "
+                       "to say which game to place. Nothing was written.")
+    refusal = _valid_placement(mapping, existing)
+    if refusal:
+        return False, refusal + " Nothing was written."
+
+    try:
+        with open(path, "r", newline="") as handle:
+            lines = handle.read().splitlines(keepends=True)
+        if len(lines) - 1 != len(existing):
+            return False, ("A field in this log spans more than one line, "
+                           "so the rows to edit cannot be located safely. "
+                           "Nothing was written.")
+
+        columns = list(existing.columns)
+        new_columns = [c for c in ("Season", "Week") if c not in columns]
+        if new_columns:
+            _extend_header(path, new_columns)
+            with open(path, "r", newline="") as handle:
+                lines = handle.read().splitlines(keepends=True)
+            columns += new_columns
+
+        positions = _row_numbers_by_id(existing)
+        for game_id, (season, week) in mapping.items():
+            index = positions[int(game_id)] + 1  # the header is line 0
+            raw = lines[index]
+            body = raw.rstrip("\r\n")
+            ending = raw[len(body):]
+            body = _splice(body, columns.index("Season"), _format(int(season)))
+            body = _splice(body, columns.index("Week"), _format(int(week)))
+            lines[index] = body + ending
+
+        _write_atomically(path, "".join(lines))
+    except OSError:
+        return False, ("Could not write the game log — the filesystem is "
+                       "read-only. Download the CSV and edit locally.")
+    except Exception as exc:
+        return False, f"Could not update the game log: {exc}"
+
+    seasons = sorted({int(s) for s, _ in mapping.values()})
+    return True, (f"Placed {len(mapping)} game(s) in "
+                  f"season {', '.join(str(s) for s in seasons)}.")
 
 
 def row_for_game(existing: pd.DataFrame, game_id) -> dict:

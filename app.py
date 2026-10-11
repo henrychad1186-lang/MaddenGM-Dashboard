@@ -1275,6 +1275,103 @@ def _backfill_label(games: pd.DataFrame, gid: int) -> str:
             f"({str(r.get('Result', '') or '?')}{score})")
 
 
+def render_season_week_form() -> None:
+    """Place logged games in the franchise timeline.
+
+    Every shipped game has a blank Season and Week, which does not show
+    up as an error anywhere — it shows up as two features quietly doing
+    nothing. `duplicate_week` has no week to collide with, so re-logging
+    a game it already holds is never caught, and `next_season_week`
+    suggests the first week of the default season however many games
+    are on file.
+
+    The suggested numbering is consecutive from a game the user picks,
+    and it is shown in an editable table before anything is written.
+    Consecutive is a guess: the log has gaps in GAME_ID and a real
+    season carries a bye. Saving it unseen would be inventing a
+    timeline rather than recording one.
+    """
+    _note = st.session_state.pop("season_week_note", None)
+    if _note:
+        st.success(_note)
+
+    existing = game_log.read_log(_GAME_LOGS_CSV)
+    if existing.empty or "GAME_ID" not in existing.columns:
+        return
+    unplaced = game_log.games_missing_season_week(existing)
+    if unplaced.empty:
+        return
+
+    with st.expander(
+            f"📅 Season & week — {len(unplaced)} of {len(existing)} games "
+            "have none", expanded=False):
+        if _LOG_SOURCE != "local":
+            st.info("The dashboard is showing an uploaded file or a Google "
+                    "Sheet, so set the seasons there. Writing here would "
+                    "change the local file, which isn't what you are "
+                    "looking at.")
+            return
+        st.caption("Without these, **duplicate-week detection cannot catch "
+                   "anything** — a game with no week has no week to collide "
+                   "with — and the entry form keeps suggesting week 1. Pick "
+                   "where a season starts; the weeks below are a plain "
+                   "count from there, so **correct the bye** and anything "
+                   "else before saving.")
+
+        ids = [int(v) for v in pd.to_numeric(
+            existing["GAME_ID"], errors="coerce").dropna()]
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            first = st.selectbox(
+                "Season starts at", ids, key="sw_first",
+                format_func=lambda g: _backfill_label(existing, g))
+        with c2:
+            yr = st.number_input(
+                "Season", min_value=season_mod.SEASON_MIN,
+                max_value=season_mod.SEASON_MAX, value=season_mod.DEFAULT_SEASON,
+                step=1, key="sw_season")
+        with c3:
+            wk = st.number_input(
+                "First week", min_value=season_mod.WEEK_MIN,
+                max_value=season_mod.WEEK_MAX, value=season_mod.WEEK_MIN, step=1,
+                key="sw_week")
+
+        plan = game_log.plan_season_weeks(existing, first, yr, wk)
+        if not plan:
+            st.warning("Nothing to place from there.")
+            return
+
+        draft = pd.DataFrame(
+            [{"Game": gid, "Matchup": _backfill_label(existing, gid),
+              "Season": s, "Week": w} for gid, (s, w) in plan.items()])
+        edited = st.data_editor(
+            draft, hide_index=True, width="stretch",
+            key="sw_editor", disabled=["Game", "Matchup"],
+            column_config={
+                "Season": st.column_config.NumberColumn(
+                    min_value=season_mod.SEASON_MIN, max_value=season_mod.SEASON_MAX,
+                    step=1),
+                "Week": st.column_config.NumberColumn(
+                    min_value=season_mod.WEEK_MIN, max_value=season_mod.WEEK_MAX,
+                    step=1,
+                    help="A bye week means the weeks after it shift up by "
+                         "one. Set them here before saving."),
+            })
+
+        if not st.button("Save these weeks", type="primary",
+                         key="sw_save"):
+            return
+        mapping = {int(r["Game"]): (int(r["Season"]), int(r["Week"]))
+                   for r in edited.to_dict("records")
+                   if pd.notna(r["Season"]) and pd.notna(r["Week"])}
+        ok, message = game_log.assign_season_week(_GAME_LOGS_CSV, mapping)
+        if not ok:
+            st.error(message)
+            return
+        st.session_state["season_week_note"] = message
+        st.rerun()
+
+
 def render_backfill_form() -> None:
     """Add third-down and red-zone numbers to a game already logged.
 
@@ -1416,6 +1513,7 @@ with home_tab:
     render_tab_header("🏠", "Franchise Home",
                       f"Record, cap exposure, needs and moves for {MY_TEAM}")
     render_game_log_form()
+    render_season_week_form()
     render_backfill_form()
     render_franchise_home()
     render_close_games()
