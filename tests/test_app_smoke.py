@@ -55,6 +55,17 @@ _APP = str(pathlib.Path(__file__).resolve().parent.parent / "app.py")
 _TIMEOUT = 120
 
 EXPECTED_TABS = 13
+# `app.tabs` is flat: a nested tab is returned alongside the top-level
+# strip, so the count alone cannot tell the two apart and the labels
+# are what distinguish them. There are no nested tabs at present — the
+# Schemes tab briefly had three, and the scheme comparison that
+# replaced them is a single view driven by a "Compare by" radio.
+TOP_LEVEL_TAB_LABELS = (
+    "🏠 Home", "📊 Schemes", "💪 Wear", "🏈 Trades", "🏛️ Dynasty",
+    "📋 Roster", "🏆 Awards", "🎯 Coach DNA", "📈 Progression",
+    "🗂️ Raw Data", "🤖 AI GM", "💬 Chat", "🔎 Draft",
+)
+NESTED_TAB_LABELS = ()
 
 
 class _Collect(logging.Handler):
@@ -101,8 +112,28 @@ def test_every_tab_is_built(app):
 
     So this covers every tab's worth of Streamlit calls — which is where
     a removed or renamed kwarg would surface.
+
+    Counted as top-level plus nested rather than one total, because a
+    flat total hides which of the two changed: adding a sub-tab and
+    dropping a tab from the strip would leave it unmoved.
     """
-    assert len(app.tabs) == EXPECTED_TABS
+    assert len(app.tabs) == EXPECTED_TABS + len(NESTED_TAB_LABELS)
+
+
+def test_the_top_level_strip_is_unchanged(app):
+    """Nested tabs must not quietly alter the main strip.
+
+    `app.tabs` is flat, so the labels are what distinguish the header
+    from anything nested inside a tab body.
+    """
+    labels = [str(t.label) for t in app.tabs]
+    missing = [t for t in TOP_LEVEL_TAB_LABELS if t not in labels]
+    assert not missing, f"top-level tabs missing: {missing}"
+    nested_missing = [t for t in NESTED_TAB_LABELS if t not in labels]
+    assert not nested_missing, f"nested tabs missing: {nested_missing}"
+    # Nothing unaccounted for: a tab added without updating either
+    # tuple would otherwise slip through both checks above.
+    assert set(labels) == set(TOP_LEVEL_TAB_LABELS) | set(NESTED_TAB_LABELS)
 
 
 def test_the_page_rendered_content(app):
