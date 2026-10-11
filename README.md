@@ -95,6 +95,11 @@ how often you face 3rd down, not only how well you convert). Logging a game with
 these stats through **➕ Log this week's game** adds the columns to an older
 CSV's header automatically; existing rows are not rewritten.
 
+To add or correct them on a game already logged, use **🧮 Backfill / correct
+3rd down & red zone** on Home. Games missing the numbers are listed first,
+but any game can be picked, so an estimated attempt count can be replaced
+with the box-score one. Only that game's line in the CSV is changed.
+
 ### Roster Data (packers_roster.csv)
 
 Place your roster CSV in `data/packers_roster.csv` with columns: `Name, Pos, Age, OVR, SPD, ACC, AGI, COD, STR, AWR, Team, Dev, Savings, Penalty`
@@ -284,3 +289,10 @@ Deploy for free on [Streamlit Community Cloud](https://share.streamlit.io):
 1. Push to GitHub
 2. Go to share.streamlit.io → New app
 3. Select this repo → Set main file to `app.py` → Deploy
+
+Or on [Posit Connect Cloud](https://connect.posit.cloud) with Posit
+Publisher, using `.posit/publish/MaddenGM-Dashboard-2MLU.toml`. Its
+`files` list must include `/src` and the two CSVs under `data/` as well as
+`app.py`; a config regenerated from the Publisher UI lists only `app.py`
+and `requirements.txt`, and that deploy stops at the first import.
+`tests/test_posit_publish.py` fails if those entries go missing.
