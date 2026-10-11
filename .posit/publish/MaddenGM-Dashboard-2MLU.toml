@@ -6,9 +6,15 @@ type = "python-streamlit"
 entrypoint = "app.py"
 title = "MaddenGM-Dashboard"
 files = [
-    
     "/app.py",
     "/requirements.txt",
+    # app.py imports the src package at startup; without it the deployed
+    # app stops at the first import. The two CSVs are the shipped
+    # roster and game log; every other data file is created at runtime.
+    "/src",
+    "/data/game_logs.csv",
+    "/data/packers_roster.csv",
+    "/.streamlit/config.toml",
     "/.posit/publish/MaddenGM-Dashboard-2MLU.toml",
     "/.posit/publish/deployments/deployment-3NVV.toml",
 ]
@@ -16,3 +22,6 @@ validate = true
 product_type = "connect_cloud"
 
 [python]
+# CI tests 3.10 and 3.11; the last publish picked 3.14, which nothing
+# here has been run on.
+version = "3.11"
