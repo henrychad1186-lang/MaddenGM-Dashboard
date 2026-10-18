@@ -126,6 +126,24 @@ running for anything visual; `AppTest` cannot see layout.
   drive it with the Playwright script and `wait_for_selector` on real
   content (e.g. `"text=Franchise Key Performance Indicators"`), not just a
   200 from `curl`.
+- **Main-column content is not enough to screenshot on, and the sidebar is
+  the thing that catches you out.** Waiting only on "Franchise Key
+  Performance Indicators" captured the sidebar as empty grey boxes — no
+  "Google Sheet CSV URL", no team picker — which reads as a UI regression
+  rather than a capture artifact. At that moment `stStatusWidget` was still
+  visible, `stTextInput` and `stSelectbox` were not, and `document.fonts`
+  was `"loading"`. `driver.py`'s `_settle` now blocks on all four and
+  **raises rather than shooting a half-painted page**, naming which signal
+  never arrived. It is also faster than the fixed sleeps it replaced
+  (~5.5s for a one-tab run, versus 1.5s blind per tab plus an unknown
+  initial wait).
+- **Picking a settle probe: it has to be one that is *expected* to be
+  visible.** `[data-testid="stSidebar"] [data-testid="stSelectbox"]` looks
+  like the obvious sidebar probe and never settles — the first selectbox in
+  DOM order lives inside the collapsed "Dashboard Filters" expander, so it
+  is hidden by design and `state="visible"` waits forever. The driver uses
+  `stTextInputField` inside the sidebar, which sits in the expander that
+  opens by default.
 - **IPv6 bind warning is harmless** — `streamlit run` logs "Could not bind
   IPv6 wildcard address :::8501; falling back to 0.0.0.0:8501" on startup in
   this container; the server still comes up fine on `localhost:8501`.
