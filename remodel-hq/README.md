@@ -5,13 +5,13 @@ Single-file, offline web app for running a remodeling business. Open `index.html
 - **Dashboard** — open quote value, booked YTD, win rate, avg margin on won jobs, active projects, receivables, tasks due this week.
 - **Quotes** — client info, scope, line items from the price book or trade hourly rates, markup, tax on materials, discount, deposit. Shows internal cost and margin. Prints a client proposal (line prices with markup built in, category totals only, or lump sum) with exclusions, terms and signature lines. Convert an accepted quote to a project.
 - **Projects** — kanban board (drag between Lead → Scheduled → In Progress → Punch List → Complete / On Hold) or table. Tasks with due dates, change orders, job costs by category, payments, budget vs. actual, amount owed, projected profit.
-- **Templates** — reusable quote templates (seeded: bath, kitchen, basement, deck, paint). Price-book lines pick up current prices when a quote is created.
+- **Templates** — reusable quote templates (seeded from C&B quote sheets: kitchen & bath fixtures, concrete slab & retaining wall, handyman multi-item visit, room repaint). Price-book lines pick up current prices when a quote is created.
 - **Price List** — trade labor rates and a unit price book (material + labor per unit), editable inline, CSV import/export.
 - **Settings** — company info, default markup/tax/deposit/terms, JSON backup/restore, quotes/projects CSV export.
 
 Shortcuts: `1`–`6` tabs · `N` new · `/` search · `Ctrl+S` save · `Esc` close.
 
-**Limits:** data lives in this browser's localStorage (~5 MB). It does not sync across devices or users — download a backup regularly. Seeded prices are generic placeholders, not sourced; replace them with your own bids and rates.
+**Limits:** data lives in this browser's localStorage (~5 MB). It does not sync across devices or users — download a backup regularly. Starter prices are C&B's client rates from the Pricing & Estimating Guide and Quick Price List (Oct 2026); default markup is 0% because they are already sell prices.
 
 ## Hosted version (`hosted.html`)
 
