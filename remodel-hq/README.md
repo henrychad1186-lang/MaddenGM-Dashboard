@@ -5,7 +5,7 @@ Single-file, offline web app for running a remodeling business. Open `index.html
 - **Dashboard** — open quote value, booked YTD, win rate, avg margin on won jobs, active projects, receivables, tasks due this week.
 - **Quotes** — client info, scope, line items from the price book or trade hourly rates, markup, tax on materials, discount, deposit. Shows internal cost and margin. Prints a client proposal (line prices with markup built in, category totals only, or lump sum) with exclusions, terms and signature lines. Convert an accepted quote to a project.
 - **Projects** — kanban board (drag between Lead → Scheduled → In Progress → Punch List → Complete / On Hold) or table. Tasks with due dates, change orders, job costs by category, payments, budget vs. actual, amount owed, projected profit.
-- **Templates** — reusable quote templates (seeded from C&B quote sheets: kitchen & bath fixtures, concrete slab & retaining wall, handyman multi-item visit, room repaint). Price-book lines pick up current prices when a quote is created.
+- **Templates** — reusable quote templates (seeded from C&B quote sheets and price list: 4 project packages plus 26 small-job quotes such as toilet, sink & disposal, ceiling fan, TV mount, doors, windows, LVP room, backsplash, deck restain, curb-appeal wash and handyman service call). Price-book lines pick up current prices when a quote is created.
 - **Price List** — trade labor rates and a unit price book (material + labor per unit), editable inline, CSV import/export.
 - **Settings** — company info, default markup/tax/deposit/terms, JSON backup/restore, quotes/projects CSV export.
 
