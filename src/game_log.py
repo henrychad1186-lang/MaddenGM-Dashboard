@@ -687,8 +687,14 @@ def _week_already_taken(mapping: dict, existing: pd.DataFrame) -> "str | None":
             continue
         slot = (int(season), int(week))
         if slot in seen:
-            return (f"Game #{int(game_id)} is already season "
-                    f"{slot[0]} week {slot[1]}.")
+            # A row with no readable GAME_ID still holds its week, so it
+            # still blocks the slot — it just cannot be named. Naming it
+            # anyway raised `ValueError: cannot convert float NaN to
+            # integer` from inside the refusal, turning a message the
+            # user could act on into a crash that took the tab down.
+            who = (f"Game #{int(game_id)}" if pd.notna(game_id)
+                   else "Another game")
+            return f"{who} is already season {slot[0]} week {slot[1]}."
     return None
 
 
