@@ -554,6 +554,40 @@ def _why_not(existing: pd.DataFrame, game_id, fields: dict) -> "str | None":
     return _impossible_pair({**row_for_game(existing, game_id), **fields})
 
 
+def unreadable_placements(df: pd.DataFrame) -> "list[str]":
+    """Season/Week cells holding text that loading is about to discard.
+
+    The loader coerces both columns with `errors="coerce"`, so "Wk 3"
+    and an empty cell arrive as the same `<NA>`. A game whose placement
+    was typed rather than numbered then reads as *not placed yet*:
+    `data_checks._check_placement` has nothing left to object to — by
+    design, since an unplaced game is not an error — and
+    `games_missing_season_week` offers it for backfill as though the
+    cell had always been empty.
+
+    Nothing downstream can tell the two apart, because by then the
+    original text is gone. So it has to be said here, while it is still
+    readable, or a Sheet column of "Wk 1".."Wk 18" vanishes in silence.
+    """
+    if df is None or df.empty:
+        return []
+    notes = []
+    for column in ("Season", "Week"):
+        if column not in df.columns:
+            continue
+        text = df[column].astype("string").str.strip()
+        lost = text.notna() & (text != "") \
+            & pd.to_numeric(df[column], errors="coerce").isna()
+        if not lost.any():
+            continue
+        shown = sorted(set(text[lost]))[:3]
+        notes.append(
+            f"{int(lost.sum())} row(s) have a {column} that is not a number "
+            f"({', '.join(repr(v) for v in shown)}). Those games will read "
+            f"as unplaced until the cell holds a plain number.")
+    return notes
+
+
 def games_missing_season_week(df: pd.DataFrame) -> pd.DataFrame:
     """Games with no place in the franchise timeline.
 

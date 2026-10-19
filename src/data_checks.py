@@ -8,6 +8,11 @@ breaks total = pass + rush; time of possession copied as a template
 increments by exactly a minute a game. Every check reads only columns
 that are present, so a partial log gets the checks it can support.
 
+Several of these guard a rule the entry form already enforces, because
+a row pasted from a CSV or synced from a Google Sheet never passes
+through the form — made-above-attempted and season/week placement are
+both here for that reason.
+
 Nothing here edits data. The checks point at rows to verify against the
 box score; which of the disagreeing numbers is wrong is for the person
 holding the box score to decide.
@@ -16,6 +21,7 @@ holding the box score to decide.
 import pandas as pd
 
 from src.game_log import parse_top
+from src.season import SEASON_MAX, SEASON_MIN, WEEK_MAX, WEEK_MIN
 
 # Madden's default quarter is 11 minutes (44-minute game). A side
 # holding the ball under a quarter of that (or over three quarters)
@@ -62,7 +68,14 @@ def _opp(df: pd.DataFrame, i) -> str:
 def check_log(df: "pd.DataFrame | None",
               game_minutes: int = DEFAULT_GAME_MINUTES) -> "list[dict]":
     """Issues found in the log: [{game, opponent, check, detail}], in
-    log order within each check."""
+    log order within each check.
+
+    One function per family of check, run in a fixed order so the panel
+    groups the way the reader expects. Each takes the whole frame and
+    the `add` callback, and each is responsible for skipping itself when
+    the columns it reads are absent — a partial log gets the checks it
+    can support.
+    """
     if df is None or df.empty:
         return []
     df = df.reset_index(drop=True)
@@ -72,6 +85,16 @@ def check_log(df: "pd.DataFrame | None",
         issues.append({"game": _game(df, i), "opponent": _opp(df, i),
                        "check": check, "detail": detail})
 
+    _check_sums(df, add)
+    _check_rates(df, add)
+    _check_scoring(df, add)
+    _check_placement(df, add)
+    _check_time_of_possession(df, add, game_minutes)
+    return issues
+
+
+def _check_sums(df, add):
+    """Total yards against its pass and rush components."""
     for total, (a, b), side in _SUM_CHECKS:
         if not {total, a, b} <= set(df.columns):
             continue
@@ -92,18 +115,23 @@ def check_log(df: "pd.DataFrame | None",
                     f"{total} {t[i]:.0f} vs pass {x[i]:.0f} + rush {y[i]:.0f} "
                     f"= {x[i] + y[i]:.0f} ({gap:+.0f}){hint}")
 
-    # Made can't exceed attempted. The entry form enforces this, but rows
-    # from a CSV or a Sheet never pass through the form, and one bad row
-    # skews the 3rd-down / red-zone rates on the KPI row and in the chat.
-    #
-    # Only rows with attempts above zero can do that skewing:
-    # `game_log._rate` filters on `a > 0`, so a zero-attempt row never
-    # reaches the rates. Zero also means "not tracked" everywhere else —
-    # the form writes `int(td_att) if td_att else ""` and
-    # `efficiency_rates` carries a `(conv == 0) & (att == 0)` sentinel —
-    # and a spreadsheet exporting an untracked cell as 0 rather than
-    # blank is the ordinary case on exactly this input path. Flagging it
-    # would send the user to the box score over a number nothing reads.
+
+def _check_rates(df, add):
+    """Made can't exceed attempted.
+
+    The entry form enforces this, but rows from a CSV or a Sheet never
+    pass through the form, and one bad row skews the 3rd-down /
+    red-zone rates on the KPI row and in the chat.
+
+    Only rows with attempts above zero can do that skewing:
+    `game_log._rate` filters on `a > 0`, so a zero-attempt row never
+    reaches the rates. Zero also means "not tracked" everywhere else —
+    the form writes `int(td_att) if td_att else ""` and
+    `efficiency_rates` carries a `(conv == 0) & (att == 0)` sentinel —
+    and a spreadsheet exporting an untracked cell as 0 rather than
+    blank is the ordinary case on exactly this input path. Flagging it
+    would send the user to the box score over a number nothing reads.
+    """
     for made, att, label, denom in _RATE_CHECKS:
         if not {made, att} <= set(df.columns):
             continue
@@ -113,51 +141,134 @@ def check_log(df: "pd.DataFrame | None",
                 add(i, f"{label} exceed {denom}",
                     f"{made} {m[i]:.0f} > {att} {a[i]:.0f}")
 
-    if {"Points_For", "Points_Against"} <= set(df.columns):
-        pf, pa = _num(df, "Points_For"), _num(df, "Points_Against")
-        if "Point_Differential" in df.columns:
-            pdiff = _num(df, "Point_Differential")
-            for i in df.index:
-                if pd.notna(pdiff[i]) and pd.notna(pf[i]) and pd.notna(pa[i]) \
-                        and pdiff[i] != pf[i] - pa[i]:
-                    add(i, "Point differential wrong",
-                        f"{pdiff[i]:+.0f} recorded, score {pf[i]:.0f}-{pa[i]:.0f} "
-                        f"is {pf[i] - pa[i]:+.0f}")
-        if "Result" in df.columns:
-            res = df["Result"].astype(str).str.strip().str.upper().str[0]
-            for i in df.index:
-                if pd.isna(pf[i]) or pd.isna(pa[i]) or res[i] not in ("W", "L", "T"):
-                    continue
-                want = "W" if pf[i] > pa[i] else "L" if pf[i] < pa[i] else "T"
-                if res[i] != want:
-                    add(i, "Result doesn't match score",
-                        f"{df.at[i, 'Result']} recorded, score {pf[i]:.0f}-{pa[i]:.0f}")
 
-    if "TOP" in df.columns:
-        # A list, not a Series: Series.apply turns the None for a blank
-        # or unparseable cell into NaN, which passes `is not None` and
-        # fails every range comparison, flagging blanks as implausible.
-        mins = [parse_top(v) for v in df["TOP"]]
-        lo, hi = game_minutes * _TOP_LOW_SHARE, game_minutes * _TOP_HIGH_SHARE
+def _check_scoring(df, add):
+    """Point differential and W/L/T against the score they describe."""
+    if not {"Points_For", "Points_Against"} <= set(df.columns):
+        return
+    pf, pa = _num(df, "Points_For"), _num(df, "Points_Against")
+    if "Point_Differential" in df.columns:
+        pdiff = _num(df, "Point_Differential")
         for i in df.index:
-            m = mins[i]
-            if m is not None and not lo <= m <= hi:
-                add(i, "Time of possession implausible",
-                    f"{df.at[i, 'TOP']} in a {game_minutes}-minute game "
-                    f"(expected {int(lo)}:00-{int(hi)}:00)")
-        # Runs of exactly +1:00 per game.
-        run = [0]
-        for i in range(1, len(df)):
-            a, b = mins[i - 1], mins[i]
-            if a is not None and b is not None and abs(b - a - 1) < 1e-9:
-                run.append(i)
+            if pd.notna(pdiff[i]) and pd.notna(pf[i]) and pd.notna(pa[i]) \
+                    and pdiff[i] != pf[i] - pa[i]:
+                add(i, "Point differential wrong",
+                    f"{pdiff[i]:+.0f} recorded, score {pf[i]:.0f}-{pa[i]:.0f} "
+                    f"is {pf[i] - pa[i]:+.0f}")
+    if "Result" in df.columns:
+        res = df["Result"].astype(str).str.strip().str.upper().str[0]
+        for i in df.index:
+            if pd.isna(pf[i]) or pd.isna(pa[i]) or res[i] not in ("W", "L", "T"):
                 continue
-            if len(run) >= _PLACEHOLDER_RUN:
-                _flag_run(df, run, add)
-            run = [i]
+            want = "W" if pf[i] > pa[i] else "L" if pf[i] < pa[i] else "T"
+            if res[i] != want:
+                add(i, "Result doesn't match score",
+                    f"{df.at[i, 'Result']} recorded, score {pf[i]:.0f}-{pa[i]:.0f}")
+
+
+def _check_time_of_possession(df, add, game_minutes):
+    """TOP against a plausible share of the game, and against itself."""
+    if "TOP" not in df.columns:
+        return
+    # A list, not a Series: Series.apply turns the None for a blank
+    # or unparseable cell into NaN, which passes `is not None` and
+    # fails every range comparison, flagging blanks as implausible.
+    mins = [parse_top(v) for v in df["TOP"]]
+    lo, hi = game_minutes * _TOP_LOW_SHARE, game_minutes * _TOP_HIGH_SHARE
+    for i in df.index:
+        m = mins[i]
+        if m is not None and not lo <= m <= hi:
+            add(i, "Time of possession implausible",
+                f"{df.at[i, 'TOP']} in a {game_minutes}-minute game "
+                f"(expected {int(lo)}:00-{int(hi)}:00)")
+    # Runs of exactly +1:00 per game.
+    run = [0]
+    for i in range(1, len(df)):
+        a, b = mins[i - 1], mins[i]
+        if a is not None and b is not None and abs(b - a - 1) < 1e-9:
+            run.append(i)
+            continue
         if len(run) >= _PLACEHOLDER_RUN:
             _flag_run(df, run, add)
-    return issues
+        run = [i]
+    if len(run) >= _PLACEHOLDER_RUN:
+        _flag_run(df, run, add)
+
+
+def _check_placement(df, add):
+    """Where each game sits in the franchise timeline.
+
+    `game_log.assign_season_week` already refuses an out-of-range slot,
+    a double-booked week and a half-filled placement on the way in. A
+    row pasted from a CSV or synced from a Google Sheet never reaches
+    it, so until now nothing read Season or Week at all — the same gap
+    `_check_rates` exists to close for made-above-attempted.
+
+    What is deliberately *not* flagged: a game with neither a season nor
+    a week. Every shipped row is in exactly that state, which makes it
+    the ordinary case rather than a mistake, and the season/week form
+    (fed by `game_log.games_missing_season_week`) is what fills it in.
+    An unplaced game is incomplete, not contradictory, and reporting it
+    here would bury the real findings under one item per game.
+    """
+    if not {"Season", "Week"} <= set(df.columns):
+        return
+    season, week = _num(df, "Season"), _num(df, "Week")
+    seen: "dict[tuple, str]" = {}
+    for i in df.index:
+        s, w = season[i], week[i]
+        if pd.isna(s) and pd.isna(w):
+            continue
+        if pd.isna(s) or pd.isna(w):
+            _flag_half_placed(df, i, s, w, add)
+            continue
+        _flag_out_of_range(i, s, w, add)
+        slot = (s, w)
+        if slot in seen:
+            # Worded as `game_log._week_already_taken` words it, so the
+            # checker and the entry form describe one problem one way.
+            add(i, "Two games in the same week",
+                f"Game #{seen[slot]} is already season {s:.0f} week {w:.0f}")
+        else:
+            seen[slot] = _game(df, i)
+
+
+def _flag_half_placed(df, i, season, week, add):
+    """One half of a placement with nothing to pair it to.
+
+    A week with no season cannot be ordered against any other game, and
+    a season with no week leaves `duplicate_week` nothing to collide
+    with — so half a placement buys none of what a placement is for.
+    """
+    if pd.isna(week):
+        add(i, "Game has a season but no week",
+            f"Season {season:.0f} recorded, Week is {_unreadable(df, i, 'Week')}")
+    else:
+        add(i, "Game has a week but no season",
+            f"Week {week:.0f} recorded, Season is "
+            f"{_unreadable(df, i, 'Season')}")
+
+
+def _flag_out_of_range(i, season, week, add):
+    if not SEASON_MIN <= season <= SEASON_MAX:
+        add(i, "Season out of range",
+            f"{season:.0f} recorded; the franchise runs "
+            f"{SEASON_MIN}-{SEASON_MAX}")
+    if not WEEK_MIN <= week <= WEEK_MAX:
+        add(i, "Week out of range",
+            f"{week:.0f} recorded; a season runs weeks "
+            f"{WEEK_MIN}-{WEEK_MAX} including the playoffs")
+
+
+def _unreadable(df, i, column) -> str:
+    """Why a cell did not parse — blank, or holding something it can't use.
+
+    Saying "blank" about a cell with `wk3` in it sends the reader to
+    look for an empty box they will not find.
+    """
+    raw = df.at[i, column]
+    text = "" if raw is None or pd.isna(raw) else str(raw).strip()
+    return "blank" if not text else f"{text!r}, which is not a number"
 
 
 def _flag_run(df, run, add):

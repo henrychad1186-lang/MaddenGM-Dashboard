@@ -5,6 +5,7 @@ import pytest
 
 from src import data_checks as dc
 from src import game_log
+from src.season import SEASON_MAX, SEASON_MIN, WEEK_MAX, WEEK_MIN
 
 
 def _row(**kw):
@@ -211,5 +212,112 @@ def test_the_all_clear_names_every_category_it_checked():
         and node.args[0].value.startswith("✅ Data checks:")
     ]
     assert len(captions) == 1, captions
-    for word in ("yards", "scores", "time of possession", "efficiency"):
+    for word in ("yards", "scores", "time of possession", "efficiency",
+                 "placement"):
         assert word in captions[0], f"{word!r} missing from {captions[0]!r}"
+
+
+# ── Season and week placement ──
+#
+# `game_log.assign_season_week` validates a placement on the way in —
+# range, double-booking, whole games only. Rows that arrive from a CSV
+# paste or a Google Sheet never pass through it, which is the same gap
+# the made-above-attempted check above exists to close.
+
+
+def _placed(rows):
+    """[(game, check)] for a log of {GAME_ID, Season, Week} rows."""
+    return [(i["game"], i["check"]) for i in dc.check_log(pd.DataFrame(rows))]
+
+
+def test_two_games_in_the_same_week_are_flagged():
+    rows = [{"GAME_ID": 1, "Season": 2026, "Week": 4},
+            {"GAME_ID": 2, "Season": 2026, "Week": 5},
+            {"GAME_ID": 3, "Season": 2026, "Week": 4}]
+    [issue] = dc.check_log(pd.DataFrame(rows))
+    assert (issue["game"], issue["check"]) == ("3", "Two games in the same week")
+    # Named, not just counted: the point of the finding is which other
+    # game to go and look at.
+    assert "#1" in issue["detail"] and "2026" in issue["detail"]
+
+
+def test_the_same_week_in_different_seasons_is_not_a_clash():
+    rows = [{"GAME_ID": 1, "Season": 2026, "Week": 4},
+            {"GAME_ID": 2, "Season": 2027, "Week": 4}]
+    assert dc.check_log(pd.DataFrame(rows)) == []
+
+
+def test_season_outside_the_franchise_range_is_flagged():
+    rows = [{"GAME_ID": 1, "Season": SEASON_MIN - 1, "Week": 3},
+            {"GAME_ID": 2, "Season": SEASON_MAX + 1, "Week": 4}]
+    got = _placed(rows)
+    assert got == [("1", "Season out of range"), ("2", "Season out of range")]
+    # The bounds are quoted from src.season, so moving them there moves
+    # the message too rather than leaving a stale range on screen.
+    [first] = [i for i in dc.check_log(pd.DataFrame(rows)) if i["game"] == "1"]
+    assert f"{SEASON_MIN}-{SEASON_MAX}" in first["detail"]
+
+
+def test_week_outside_the_franchise_range_is_flagged():
+    rows = [{"GAME_ID": 1, "Season": 2026, "Week": WEEK_MIN - 1},
+            {"GAME_ID": 2, "Season": 2026, "Week": WEEK_MAX + 1}]
+    got = _placed(rows)
+    assert got == [("1", "Week out of range"), ("2", "Week out of range")]
+    [first] = [i for i in dc.check_log(pd.DataFrame(rows)) if i["game"] == "1"]
+    assert f"{WEEK_MIN}-{WEEK_MAX}" in first["detail"]
+
+
+def test_the_bounds_themselves_are_accepted():
+    rows = [{"GAME_ID": 1, "Season": SEASON_MIN, "Week": WEEK_MIN},
+            {"GAME_ID": 2, "Season": SEASON_MAX, "Week": WEEK_MAX}]
+    assert dc.check_log(pd.DataFrame(rows)) == []
+
+
+@pytest.mark.parametrize("season, week, check", [
+    (2026, None, "Game has a season but no week"),
+    (None, 7, "Game has a week but no season"),
+])
+def test_half_placed_games_are_flagged(season, week, check):
+    rows = [{"GAME_ID": 1, "Season": season, "Week": week}]
+    assert _placed(rows) == [("1", check)]
+
+
+def test_an_unreadable_cell_is_reported_as_what_it_says():
+    """"blank" would be a lie about a cell that has something in it.
+
+    Reachable only for a caller that has not already coerced the
+    columns — `app._prepare_game_log` runs `to_numeric(errors="coerce")`
+    on both, so through the app this cell arrives as <NA> and reads as
+    "blank" here. That loss is reported at the point it happens, by
+    `game_log.unreadable_placements`; this message covers a frame read
+    straight from a CSV, as `test_shipped_log_findings` does.
+    """
+    rows = [{"GAME_ID": 1, "Season": 2026, "Week": "wk3"}]
+    [issue] = dc.check_log(pd.DataFrame(rows))
+    assert issue["check"] == "Game has a season but no week"
+    assert "wk3" in issue["detail"] and "blank" not in issue["detail"]
+
+
+def test_unplaced_games_are_not_flagged():
+    """The shape this check must not take.
+
+    Every one of the 42 shipped games has a blank Season and Week, and
+    `games_missing_season_week` plus the season/week form already exist
+    to fill them in. A row that says nothing about its place in the
+    timeline is incomplete, not contradictory, and flagging it would
+    turn the Raw Data panel into 42 items of noise on first load —
+    absence reported as a finding, which this repo has fixed twice.
+    """
+    rows = [{"GAME_ID": i, "Season": blank, "Week": blank}
+            for i, blank in enumerate([None, "", float("nan")], start=1)]
+    assert dc.check_log(pd.DataFrame(rows)) == []
+
+
+def test_a_log_without_the_columns_is_unaffected():
+    assert dc.check_log(pd.DataFrame({"GAME_ID": [1, 2]})) == []
+    assert dc.check_log(pd.DataFrame({"GAME_ID": [1], "Season": [2026]})) == []
+
+
+def test_consecutive_weeks_are_not_flagged():
+    rows = [{"GAME_ID": i, "Season": 2026, "Week": i} for i in range(1, 19)]
+    assert dc.check_log(pd.DataFrame(rows)) == []

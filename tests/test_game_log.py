@@ -1144,3 +1144,49 @@ class TestSeasonWeekOnTheShippedLog:
         assert game_log.duplicate_week(placed, 2026, 1, "GB")
         assert len(game_log.games_missing_season_week(placed)) == (
             len(games) - len(plan))
+
+
+# ── Placements the loader is about to discard ──
+
+
+def test_typed_placements_are_reported_before_they_are_coerced_away():
+    """`app._prepare_game_log` runs `to_numeric(errors="coerce")` on both
+    columns, so "Wk 3" and an empty cell reach every downstream reader as
+    the same <NA>. Nothing after that point can tell them apart, which is
+    why this has to run before it."""
+    df = pd.DataFrame({"GAME_ID": [1, 2, 3],
+                       "Season": ["2026", "2026", "2026 rebuild"],
+                       "Week": ["Wk 1", "Wk 2", 3]})
+    notes = game_log.unreadable_placements(df)
+    assert len(notes) == 2, notes
+    season, week = notes
+    assert season.startswith("1 row(s) have a Season") and "2026 rebuild" in season
+    assert week.startswith("2 row(s) have a Week") and "'Wk 1'" in week
+    # Named so the user can find them, not just counted.
+    assert "unplaced" in week
+
+
+def test_blank_placements_are_not_reported():
+    """Every shipped row is blank/blank. Warning on those would fire on
+    first load for all 42 games and say nothing true: a blank cell is not
+    a value the loader is discarding."""
+    df = pd.DataFrame({"GAME_ID": [1, 2, 3],
+                       "Season": [None, "", float("nan")],
+                       "Week": [None, "   ", float("nan")]})
+    assert game_log.unreadable_placements(df) == []
+
+
+def test_real_placements_are_not_reported():
+    df = pd.DataFrame({"GAME_ID": [1, 2], "Season": [2026, "2027"],
+                       "Week": [1, "18"]})
+    assert game_log.unreadable_placements(df) == []
+
+
+def test_a_log_without_the_columns_reports_nothing():
+    assert game_log.unreadable_placements(pd.DataFrame({"GAME_ID": [1]})) == []
+    assert game_log.unreadable_placements(pd.DataFrame()) == []
+    assert game_log.unreadable_placements(None) == []
+
+
+def test_the_shipped_log_has_no_unreadable_placements():
+    assert game_log.unreadable_placements(pd.read_csv("data/game_logs.csv")) == []
