@@ -184,6 +184,19 @@ class TestVerdict:
         rows = schemes.compare(_log([("A", 35, 10)] * 5), schemes.OFF_SCHEME)
         assert "Only one" in schemes.verdict(rows, schemes.OFF_SCHEME)
 
+    def test_one_qualifying_scheme_is_not_called_none(self):
+        # "No offensive scheme has 4 games" was false with A on 5.
+        rows = schemes.compare(_log([("A", 35, 10)] * 5 + [("B", 17, 20)]),
+                               schemes.OFF_SCHEME)
+        said = schemes.verdict(rows, schemes.OFF_SCHEME)
+        assert said.startswith("Only **A**") and "No " not in said
+
+    def test_schemes_without_scores_do_not_crash(self):
+        df = pd.DataFrame({"Result": ["W"] * 5 + ["L"] * 5,
+                           "Playbook": ["A"] * 5 + ["B"] * 5})
+        rows = schemes.compare(df, schemes.OFF_SCHEME)
+        assert "no scores" in schemes.verdict(rows, schemes.OFF_SCHEME)
+
     def test_nothing_logged_says_nothing(self):
         assert schemes.verdict([], schemes.OFF_SCHEME) == ""
 

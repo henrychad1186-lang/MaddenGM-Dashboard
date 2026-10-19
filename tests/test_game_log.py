@@ -1091,6 +1091,27 @@ class TestAssignSeasonWeek:
         ok, msg = game_log.assign_season_week(str(path), {1: (2026, 4)})
         assert ok, msg
 
+    def test_shifting_placed_games_for_a_bye_is_not_a_clash(self, tmp_path):
+        # Re-planning from game 2 to add a bye moves 2 into 3's old week
+        # while 3 moves on; both old slots are being vacated.
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team\n"
+                        "1,2026,1,GB\n2,2026,2,GB\n3,2026,3,GB\n")
+        ok, msg = game_log.assign_season_week(
+            str(path), {2: (2026, 3), 3: (2026, 4)})
+        assert ok, msg
+        out = pd.read_csv(path).set_index("GAME_ID")
+        assert list(out["Week"]) == [1, 3, 4]
+
+    def test_a_moved_game_still_clashes_with_one_staying_put(self, tmp_path):
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team\n"
+                        "1,2026,1,GB\n2,2026,2,GB\n")
+        before = path.read_bytes()
+        ok, msg = game_log.assign_season_week(str(path), {2: (2026, 1)})
+        assert not ok and "#1" in msg
+        assert path.read_bytes() == before
+
     def test_an_unknown_game_is_refused(self, log):
         before = open(log, "rb").read()
         ok, msg = game_log.assign_season_week(log, {99: (2026, 1)})
