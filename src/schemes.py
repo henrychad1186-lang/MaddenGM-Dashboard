@@ -337,9 +337,19 @@ def verdict(rows: "list[dict]", column: str) -> str:
                 f"{only['record']} over {only['games']} games. "
                 f"Log a game under another one to get a comparison.")
     if len(ranked) < 2:
+        # Exactly one can qualify (22 games under one scheme, 2 under
+        # another); "no scheme has 4 games" was false then.
+        if ranked:
+            return (f"Only **{ranked[0]['value']}** has {MIN_GAMES}+ games, "
+                    f"so there is nothing to rank it against yet. "
+                    f"{len(rows)} are on file; keep logging.")
         return (f"No {label} has {MIN_GAMES} games yet, so nothing here is "
                 f"worth acting on. {len(rows)} are on file; keep logging.")
     best, rest = ranked[0], ranked[1]
+    if best["margin"] is None or rest["margin"] is None:
+        # A log with schemes but no scores: nothing to rank on, and the
+        # :+.1f below raised TypeError on None.
+        return (f"The log has no scores to compare {label}s on.")
     gap = (best["margin"] or 0) - (rest["margin"] or 0)
     better = (f"**{best['value']}** is ahead on margin "
               f"({best['margin']:+.1f} vs {rest['margin']:+.1f} per game) "

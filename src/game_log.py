@@ -675,12 +675,18 @@ def _week_already_taken(mapping: dict, existing: pd.DataFrame) -> "str | None":
     on_file = zip(pd.to_numeric(existing["GAME_ID"], errors="coerce"),
                   pd.to_numeric(existing["Season"], errors="coerce"),
                   pd.to_numeric(existing["Week"], errors="coerce"))
+    moving = {int(g) for g in mapping}
     for game_id, season, week in on_file:
         if pd.isna(season) or pd.isna(week):
             continue
+        # A game in this mapping is leaving its old slot, so that slot is
+        # free. Counting it blocked every re-plan that shifts placed games
+        # (a bye moves 40-47 up a week: 40 takes 41's week 7 while 41
+        # moves to 8, and the write was refused as a clash with 41).
+        if pd.notna(game_id) and int(game_id) in moving:
+            continue
         slot = (int(season), int(week))
-        # A game keeping its own week is not a clash with itself.
-        if slot in seen and seen[slot] != int(game_id):
+        if slot in seen:
             return (f"Game #{int(game_id)} is already season "
                     f"{slot[0]} week {slot[1]}.")
     return None

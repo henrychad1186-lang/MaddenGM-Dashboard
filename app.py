@@ -1418,12 +1418,13 @@ def render_season_week_form() -> None:
     if existing.empty or "GAME_ID" not in existing.columns:
         return
     unplaced = game_log.games_missing_season_week(existing)
-    if unplaced.empty:
-        return
+    # Stays available once every game is placed: a missed bye or a wrong
+    # season start is found later, and the form is the only edit path.
+    label = ("📅 Season & week"
+             + (f" — {len(unplaced)} of {len(existing)} games have none"
+                if len(unplaced) else " — correct a placement"))
 
-    with st.expander(
-            f"📅 Season & week — {len(unplaced)} of {len(existing)} games "
-            "have none", expanded=False):
+    with st.expander(label, expanded=False):
         if _LOG_SOURCE != "local":
             st.info("The dashboard is showing an uploaded file or a Google "
                     "Sheet, so set the seasons there. Writing here would "
