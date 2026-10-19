@@ -1211,3 +1211,69 @@ def test_a_log_without_the_columns_reports_nothing():
 
 def test_the_shipped_log_has_no_unreadable_placements():
     assert game_log.unreadable_placements(pd.read_csv("data/game_logs.csv")) == []
+
+
+# ── Correcting a placement after every game already has one ──
+
+
+def test_a_fully_placed_log_can_still_be_replanned_for_a_bye(tmp_path):
+    """The user story behind keeping the Season & week form on screen.
+
+    A bye missed on the first pass is only noticed once the season is
+    numbered, and re-planning is the only way to fix it. Guards the
+    engine end to end: plan from the game after the bye, save, and the
+    weeks shift without tripping the clash check.
+    """
+    path = tmp_path / "game_logs.csv"
+    path.write_text("GAME_ID,Season,Week,Team\n"
+                    + "".join(f"{i},2026,{i},GB\n" for i in range(1, 6)))
+    existing = game_log.read_log(str(path))
+    assert game_log.games_missing_season_week(existing).empty
+
+    plan = game_log.plan_season_weeks(existing, 3, 2026, 4)
+    ok, msg = game_log.assign_season_week(str(path), plan)
+    assert ok, msg
+    # Week 3 is now the bye; 3-5 each moved up one.
+    assert pd.read_csv(path)["Week"].tolist() == [1, 2, 4, 5, 6]
+
+
+def test_the_season_week_form_is_not_hidden_once_everything_is_placed():
+    """Pins the UI half of the above, which the engine test cannot see.
+
+    `render_season_week_form` used to `return` when nothing was
+    unplaced, so the only way to correct a placement disappeared the
+    moment the season was fully numbered. Parsed rather than grepped,
+    the way the data-checks caption guard is.
+    """
+    import ast
+    import pathlib
+    app = pathlib.Path(__file__).resolve().parent.parent / "app.py"
+    tree = ast.parse(app.read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+              and n.name == "render_season_week_form")
+    for node in ast.walk(fn):
+        if not (isinstance(node, ast.If) and len(node.body) == 1
+                and isinstance(node.body[0], ast.Return)
+                and node.body[0].value is None):
+            continue
+        guard = ast.dump(node.test)
+        assert "unplaced" not in guard, (
+            "render_season_week_form bails out on `unplaced` again, so a "
+            "fully placed season has no way to correct a bye")
+
+
+def test_a_row_with_no_game_id_is_refused_not_crashed(tmp_path):
+    """A blank GAME_ID holding a week blocked the slot and then raised.
+
+    `int(NaN)` inside the refusal turned a message the user could act on
+    into `ValueError: cannot convert float NaN to integer`, which takes
+    the tab down. The row still has to block — it holds the week — it
+    just cannot be named.
+    """
+    path = tmp_path / "game_logs.csv"
+    path.write_text("GAME_ID,Season,Week,Team\n1,2026,1,GB\n,2026,5,GB\n")
+    before = path.read_bytes()
+    ok, msg = game_log.assign_season_week(str(path), {1: (2026, 5)})
+    assert not ok
+    assert "season 2026 week 5" in msg and "NaN" not in msg
+    assert path.read_bytes() == before, "refused write still touched the file"
