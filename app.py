@@ -503,6 +503,12 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
     # opponents, first repeat at game 13), so they stay blank rather than
     # being backfilled with a guess. Nullable Int64 keeps blank as <NA>
     # instead of coercing it to a fictitious week 0.
+    #
+    # The coercion below cannot tell "Wk 3" from an empty cell — both
+    # become <NA> — so a typed placement would disappear without a word
+    # and the game would read as simply unplaced. Checked first, while
+    # the original text is still there to quote back.
+    warnings.extend(game_log.unreadable_placements(df))
     for _col in ("Season", "Week"):
         if _col in df.columns:
             df[_col] = pd.to_numeric(df[_col], errors="coerce").astype("Int64")

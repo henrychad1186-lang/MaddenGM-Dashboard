@@ -283,7 +283,15 @@ def test_half_placed_games_are_flagged(season, week, check):
 
 
 def test_an_unreadable_cell_is_reported_as_what_it_says():
-    """"blank" would be a lie about a cell that has something in it."""
+    """"blank" would be a lie about a cell that has something in it.
+
+    Reachable only for a caller that has not already coerced the
+    columns — `app._prepare_game_log` runs `to_numeric(errors="coerce")`
+    on both, so through the app this cell arrives as <NA> and reads as
+    "blank" here. That loss is reported at the point it happens, by
+    `game_log.unreadable_placements`; this message covers a frame read
+    straight from a CSV, as `test_shipped_log_findings` does.
+    """
     rows = [{"GAME_ID": 1, "Season": 2026, "Week": "wk3"}]
     [issue] = dc.check_log(pd.DataFrame(rows))
     assert issue["check"] == "Game has a season but no week"
