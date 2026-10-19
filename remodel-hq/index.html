@@ -367,7 +367,7 @@ function seed() {
       scope: "- Drywall Patch & Repair (up to 2 visits): Cut damage, backer, mesh tape, hot mud, skim, sand\nPaint not included.",
       items: [li("Drywall Patch & Repair (up to 2 visits)",1)] },
     { id: uid(), name: "Interior Door Replacement", description: "Pre-hung door install, painted both sides.",
-      scope: "- Interior Pre-Hung Door Install: Plumb/shim frame, casing, latch set\n- Paint Interior Door (both sides + frame): Painting sheet\nOwner supplies door, hardware and paint.",
+      scope: "- Interior Pre-Hung Door Install: Plumb/shim frame, casing, latch set\n- Paint Interior Door (both sides + frame): Light scuff sand, paint slab and jambs\nOwner supplies door, hardware and paint.",
       items: [li("Interior Pre-Hung Door Install",1),li("Paint Interior Door (both sides + frame)",1)] },
     { id: uid(), name: "Exterior Entry Door", description: "Full tear-out and pre-hung entry door install.",
       scope: "- Exterior Entry Door Install: Tear-out, sill pan, flash, hang, foam, lockset, brickmould\nOwner supplies door unit and lockset.",
@@ -397,7 +397,7 @@ function seed() {
       scope: "- Pressure Wash Driveway / Walkways: Pre-treat, rotary surface clean, detail, rinse\n- Pressure Wash Full House (Soft Wash): Low-pressure siding wash with biocide\n- Gutter Cleaning: Hand-clear gutters, flush downspouts, haul waste",
       items: [li("Pressure Wash Driveway / Walkways",1),li("Pressure Wash Full House (Soft Wash)",1),li("Gutter Cleaning",1)] },
     { id: uid(), name: "Deck Restain", description: "Example: 12x16 deck (192 SF) with 40 LF of railing. Edit to the measured size.",
-      scope: "- Deck Cleaning & Prep Wash: Painting sheet\n- Deck Floor & Stairs Stain: Painting sheet\n- Deck Railing & Baluster Stain: Painting sheet\nOwner supplies stain.",
+      scope: "- Deck Cleaning & Prep Wash: Wood cleaner wash and rinse\n- Deck Floor & Stairs Stain: Brush/pad apply penetrating stain\n- Deck Railing & Baluster Stain: Hand-brush all sides of rails, posts and balusters\nOwner supplies stain.",
       items: [li("Deck Cleaning & Prep Wash",192),li("Deck Floor & Stairs Stain",192),li("Deck Railing & Baluster Stain",40)] },
     { id: uid(), name: "Privacy Fence Stain – One Side", description: "Example: 100 LF of 6 ft fence. Edit to the measured length.",
       scope: "- Privacy Fence Stain (1 side): 6ft fence\nOwner supplies stain.",
@@ -406,7 +406,7 @@ function seed() {
       scope: "- Cabinet Repaint – Prep & Prime: Per door/drawer front\n- Cabinet Repaint – Enamel Top Coats: Per door/drawer front, 2 coats\nOwner supplies paint and primer.",
       items: [li("Cabinet Repaint – Prep & Prime",20),li("Cabinet Repaint – Enamel Top Coats",20)] },
     { id: uid(), name: "Handyman Service Call + 2 Hours", description: "Trip minimum (includes travel and setup) plus 2 hours of labor. Edit the hours.",
-      scope: "- Service Call / Trip Minimum: Minimum service call (Quick Price List, Oct 17). Master guide baseline says $150.\n- Handyman / General Carpentry: Punch-list, framing, fixture swaps, troubleshooting\nMaterials billed separately if needed.",
+      scope: "- Service Call / Trip Minimum: Travel to site, setup, and up to 1 hour of labor\n- Handyman / General Carpentry: Punch-list, framing, fixture swaps, troubleshooting\nMaterials billed separately if needed.",
       items: [li("Service Call / Trip Minimum",1),li("Handyman / General Carpentry",2)] },
   ];
   return {
@@ -1021,6 +1021,19 @@ document.addEventListener("keydown", e => {
 });
 $("#search").addEventListener("keydown", e => { if (e.key === "Escape") { e.target.value = ""; e.target.blur(); render(); } });
 window.addEventListener("afterprint", () => $("#printArea").innerHTML = "");
+
+/* Templates saved before the scope cleanup still print internal source notes; rewrite them in place. */
+const SCOPE_FIXES = [
+  ["Paint Interior Door (both sides + frame): Painting sheet", "Paint Interior Door (both sides + frame): Light scuff sand, paint slab and jambs"],
+  ["Deck Cleaning & Prep Wash: Painting sheet", "Deck Cleaning & Prep Wash: Wood cleaner wash and rinse"],
+  ["Deck Floor & Stairs Stain: Painting sheet", "Deck Floor & Stairs Stain: Brush/pad apply penetrating stain"],
+  ["Deck Railing & Baluster Stain: Painting sheet", "Deck Railing & Baluster Stain: Hand-brush all sides of rails, posts and balusters"],
+  ["Service Call / Trip Minimum: Minimum service call (Quick Price List, Oct 17). Master guide baseline says $150.", "Service Call / Trip Minimum: Travel to site, setup, and up to 1 hour of labor"],
+];
+DB.templates.forEach(t => {
+  const s = SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), t.scope || "");
+  if (s !== (t.scope || "")) { t.scope = s; save(); }
+});
 
 show(DB.ui.tab || "dash");
 </script>
