@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>C&amp;B Building and Remodeling</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="C&B Building and Remodeling: kitchens, baths, decks, flooring, painting and handyman work in Lexington and Central Kentucky. Plan your project and get a ballpark price online.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: limestone page, deep bluegrass-green bands, brass for every action; the planner reads like a work order. */
+:root{
+  --paper:#F5F6F2;      /* limestone */
+  --panel:#FFFFFF;
+  --stone:#E2E6DF;      /* rules, chips */
+  --ink:#16302C;        /* bluegrass green-black: text and dark bands */
+  --ink-2:#4E625E;      /* secondary text */
+  --band:#16302C;       /* dark section */
+  --band-ink:#EEF3F0;
+  --band-ink-2:#A9BDB7;
+  --brass:#B9822A;      /* actions */
+  --brass-ink:#FFFFFF;
+  --brass-soft:#F4E6CC;
+  --sage:#2F6B62;       /* selected state */
+  --sage-soft:#DCEBE6;
+  --grid:rgba(22,48,44,.07);
+  --shadow:0 1px 2px rgba(22,48,44,.06),0 8px 24px rgba(22,48,44,.08);
+  --f-display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Instrument Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --r:14px;
+  --gut-l:max(16px,env(safe-area-inset-left,0px));
+  --gut-r:max(16px,env(safe-area-inset-right,0px));
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0E1A18;--panel:#152522;--stone:#24382F;--ink:#E9F0EC;--ink-2:#A3B6B0;--band:#0A1412;--band-ink:#E9F0EC;--band-ink-2:#93A8A1;
+  --brass:#E0A84A;--brass-ink:#1A1408;--brass-soft:#3A2E17;--sage:#7CC2B3;--sage-soft:#1D3A34;--grid:rgba(233,240,236,.05);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0E1A18;--panel:#152522;--stone:#24382F;--ink:#E9F0EC;--ink-2:#A3B6B0;--band:#0A1412;--band-ink:#E9F0EC;--band-ink-2:#93A8A1;
+  --brass:#E0A84A;--brass-ink:#1A1408;--brass-soft:#3A2E17;--sage:#7CC2B3;--sage-soft:#1D3A34;--grid:rgba(233,240,236,.05);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);color-scheme:dark}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important;animation:none!important}}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 var(--f-body);-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:40;background:var(--paper)}
+a{color:inherit}
+h1,h2,h3{font-family:var(--f-display);line-height:1.08;letter-spacing:-.02em;text-wrap:balance;margin:0}
+h1{font-size:clamp(2.4rem,5.4vw,4.2rem);font-weight:800}
+h2{font-size:clamp(1.8rem,3.4vw,2.6rem);font-weight:700}
+h3{font-size:1.2rem;font-weight:700;letter-spacing:-.01em}
+p{margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding-left:var(--gut-l);padding-right:var(--gut-r)}
+.eyebrow{font:500 .78rem/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--sage)}
+.lede{font-size:1.15rem;color:var(--ink-2);max-width:58ch}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+:focus-visible{outline:3px solid var(--brass);outline-offset:3px;border-radius:6px}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;gap:.5em;font:600 1rem/1 var(--f-body);padding:.95em 1.35em;border-radius:999px;border:1.5px solid transparent;text-decoration:none;cursor:pointer;transition:transform .15s ease,background .15s ease,border-color .15s ease}
+.btn:hover{transform:translateY(-1px)}
+.btn-brass{background:var(--brass);color:var(--brass-ink)}
+.btn-line{background:transparent;color:var(--ink);border-color:var(--ink)}
+.btn-sm{padding:.65em 1em;font-size:.92rem}
+
+/* header */
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:30;background:color-mix(in srgb,var(--paper) 88%,transparent);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--stone)}
+header.top .wrap{display:flex;align-items:center;gap:20px;padding-block:12px}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;font:800 1.05rem/1.1 var(--f-display);letter-spacing:-.01em}
+.mark{width:38px;height:38px;border-radius:10px;background:var(--ink);color:var(--paper);display:grid;place-items:center;font:800 .95rem/1 var(--f-display);letter-spacing:-.04em}
+.brand small{display:block;font:500 .7rem/1.2 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
+nav.links{display:flex;gap:22px;margin-left:auto}
+nav.links a{text-decoration:none;font-weight:600;font-size:.95rem;color:var(--ink-2)}
+nav.links a:hover{color:var(--ink)}
+@media (max-width:860px){nav.links{display:none}header.top .btn{margin-left:auto}}
+
+/* hero */
+.hero{position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:28px 28px;mask-image:linear-gradient(180deg,#000 40%,transparent);-webkit-mask-image:linear-gradient(180deg,#000 40%,transparent);pointer-events:none}
+.hero .wrap{position:relative;display:grid;grid-template-columns:1.1fr .9fr;gap:48px;align-items:center;padding-block:72px 64px}
+.hero-copy{display:grid;gap:22px;min-width:0}
+.hero h1 em{font-style:normal;color:var(--sage)}
+.hero-cta{display:flex;flex-wrap:wrap;gap:12px}
+.facts{display:flex;flex-wrap:wrap;gap:10px 22px;color:var(--ink-2);font-size:.95rem}
+.facts span::before{content:"";display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--brass);margin-right:8px;vertical-align:middle}
+@media (max-width:900px){.hero .wrap{grid-template-columns:1fr;padding-block:48px}}
+
+/* work order card */
+.order{background:var(--panel);border:1px solid var(--stone);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;min-width:0}
+.order-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:16px 20px;border-bottom:1px dashed var(--stone)}
+.order-head b{font:700 1rem/1.2 var(--f-display)}
+.order-head .mono{font-size:.75rem;color:var(--ink-2);letter-spacing:.06em;text-transform:uppercase}
+.order-lines{list-style:none;margin:0;padding:8px 20px}
+.order-lines li{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--stone);font-size:.95rem}
+.order-lines li:last-child{border-bottom:0}
+.order-lines li span:last-child{font-family:var(--f-mono);font-size:.85rem;color:var(--ink-2);white-space:nowrap}
+.order-foot{padding:16px 20px 20px;background:var(--sage-soft);display:grid;gap:4px}
+.order-foot .label{font:500 .72rem/1 var(--f-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--sage)}
+.order-foot .range{font:800 clamp(1.6rem,3vw,2.1rem)/1.1 var(--f-display);letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.order-foot .note{font-size:.85rem;color:var(--ink-2)}
+
+/* sections */
+section{padding-block:84px}
+.sec-head{display:grid;gap:12px;margin-bottom:36px;max-width:720px}
+.band{background:var(--band);color:var(--band-ink)}
+.band .sec-head .lede,.contact p{color:var(--band-ink-2)}
+.band .eyebrow{color:var(--brass)}
+
+/* services */
+.svc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+@media (max-width:900px){.svc{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.svc{grid-template-columns:1fr}}
+.svc button{all:unset;cursor:pointer;display:grid;gap:10px;align-content:start;padding:22px;border-radius:var(--r);background:var(--panel);border:1px solid var(--stone);transition:border-color .15s,transform .15s,box-shadow .15s}
+.svc button:hover{border-color:var(--sage);transform:translateY(-2px);box-shadow:var(--shadow)}
+.svc button:focus-visible{outline:3px solid var(--brass);outline-offset:3px}
+.svc .ico{width:44px;height:44px;border-radius:12px;background:var(--sage-soft);color:var(--sage);display:grid;place-items:center}
+.svc p{color:var(--ink-2);font-size:.95rem}
+.svc .from{font:500 .8rem/1 var(--f-mono);color:var(--ink);letter-spacing:.02em}
+.svc .from b{color:var(--brass)}
+
+/* planner */
+.planner{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:28px;align-items:start}
+@media (max-width:980px){.planner{grid-template-columns:1fr}}
+.steps{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
+.steps button{all:unset;cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 14px 8px 8px;border-radius:999px;border:1px solid var(--stone);font-weight:600;font-size:.92rem;color:var(--ink-2);background:var(--panel)}
+.steps button i{font-style:normal;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--stone);color:var(--ink);font:600 .8rem/1 var(--f-mono)}
+.steps button[aria-current="step"]{border-color:var(--ink);color:var(--ink)}
+.steps button[aria-current="step"] i{background:var(--ink);color:var(--paper)}
+.steps button.done i{background:var(--sage);color:var(--paper)}
+.steps button:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+.pane{background:var(--panel);border:1px solid var(--stone);border-radius:var(--r);padding:26px;display:grid;gap:22px;min-width:0}
+.pane h3{font-size:1.35rem}
+.types{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:720px){.types{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.types label{position:relative;display:grid;gap:8px;justify-items:start;padding:16px;border-radius:12px;border:1.5px solid var(--stone);cursor:pointer;transition:border-color .15s,background .15s}
+.types label:hover{border-color:var(--sage)}
+.types input{position:absolute;opacity:0;pointer-events:none}
+.types label:has(input:checked){border-color:var(--sage);background:var(--sage-soft)}
+.types label:has(input:focus-visible){outline:3px solid var(--brass);outline-offset:2px}
+.types .ico{color:var(--sage)}
+.types b{font-size:.98rem}
+.types small{color:var(--ink-2);font-size:.82rem;line-height:1.3}
+
+.field{display:grid;gap:10px}
+.field > .lbl{display:flex;justify-content:space-between;gap:12px;align-items:baseline;font-weight:600}
+.field > .lbl .mono{font-size:.85rem;color:var(--sage);font-weight:500}
+.hint{font-size:.85rem;color:var(--ink-2)}
+.seg{display:flex;flex-wrap:wrap;gap:8px}
+.seg label{display:grid;gap:2px;padding:12px 14px;border-radius:12px;border:1.5px solid var(--stone);cursor:pointer;flex:1 1 180px;min-width:0}
+.seg label:has(input:checked){border-color:var(--sage);background:var(--sage-soft)}
+.seg label:has(input:focus-visible){outline:3px solid var(--brass);outline-offset:2px}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg b{font-size:.95rem}
+.seg small{font-size:.82rem;color:var(--ink-2)}
+input[type=range]{width:100%;accent-color:var(--sage);height:28px}
+.dims{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media (max-width:560px){.dims{grid-template-columns:1fr}}
+.blueprint{border:1px dashed var(--sage);border-radius:10px;padding:14px;display:flex;align-items:center;justify-content:center;min-height:120px;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:14px 14px}
+.blueprint svg{max-width:100%;height:auto}
+.checks{display:grid;gap:8px}
+.check{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;border:1.5px solid var(--stone)}
+.check:has(input:checked){border-color:var(--sage);background:var(--sage-soft)}
+.check input[type=checkbox]{width:20px;height:20px;accent-color:var(--sage);flex:none}
+.check .t{flex:1;min-width:0}
+.check .t b{display:block;font-size:.95rem}
+.check .t small{color:var(--ink-2);font-size:.82rem}
+.check .p{font:500 .8rem/1.2 var(--f-mono);color:var(--ink-2);white-space:nowrap}
+.qty{display:flex;align-items:center;gap:6px}
+.qty button{all:unset;cursor:pointer;width:30px;height:30px;border-radius:8px;border:1px solid var(--stone);display:grid;place-items:center;font-weight:700}
+.qty button:focus-visible{outline:3px solid var(--brass)}
+.qty output{min-width:1.6em;text-align:center;font-family:var(--f-mono)}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:560px){.form{grid-template-columns:1fr}}
+.form .full{grid-column:1/-1}
+.form label{display:grid;gap:6px;font-weight:600;font-size:.92rem}
+.form input,.form select,.form textarea{font:inherit;color:var(--ink);background:var(--paper);border:1.5px solid var(--stone);border-radius:10px;padding:11px 12px;width:100%}
+.form input:focus,.form select:focus,.form textarea:focus{outline:none;border-color:var(--sage)}
+.form textarea{min-height:96px;resize:vertical}
+.nav-row{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.summary{position:sticky;top:calc(env(safe-area-inset-top,0px) + 84px)}
+.summary .order-lines li span:first-child{min-width:0}
+.sent{display:grid;gap:14px}
+.sent .msg{font:400 .85rem/1.5 var(--f-mono);background:var(--paper);border:1px solid var(--stone);border-radius:10px;padding:14px;white-space:pre-wrap;max-height:260px;overflow:auto}
+.sent .row{display:flex;flex-wrap:wrap;gap:10px}
+.err{color:#B4442E;font-size:.88rem}
+
+/* process */
+.process{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;counter-reset:s}
+@media (max-width:900px){.process{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.process{grid-template-columns:1fr}}
+.process li{list-style:none;display:grid;gap:10px;padding-top:18px;border-top:2px solid var(--brass)}
+.process li::before{counter-increment:s;content:counter(s,decimal-leading-zero);font:500 .85rem/1 var(--f-mono);color:var(--brass)}
+.process{padding:0;margin:0}
+
+/* why */
+.why{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 40px}
+@media (max-width:760px){.why{grid-template-columns:1fr}}
+.why div{display:grid;gap:6px;padding:20px 0;border-bottom:1px solid var(--stone)}
+.why p{color:var(--ink-2)}
+
+/* contact */
+.contact{display:grid;grid-template-columns:1.2fr .8fr;gap:40px;align-items:center}
+@media (max-width:860px){.contact{grid-template-columns:1fr}}
+.phone{font:800 clamp(2rem,5vw,3.2rem)/1 var(--f-display);letter-spacing:-.02em;text-decoration:none;color:var(--band-ink)}
+.contact .card{background:color-mix(in srgb,var(--band-ink) 6%,transparent);border:1px solid color-mix(in srgb,var(--band-ink) 14%,transparent);border-radius:var(--r);padding:24px;display:grid;gap:10px}
+.contact dt{font:500 .72rem/1 var(--f-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--brass)}
+.contact dd{margin:0 0 10px;color:var(--band-ink)}
+footer{padding-block:28px;border-top:1px solid color-mix(in srgb,var(--band-ink) 12%,transparent);font-size:.85rem;color:var(--band-ink-2)}
+footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:999px;font-weight:600;font-size:.9rem;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:50}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.fade{animation:fade .35s ease both}
+@keyframes fade{from{opacity:.001;transform:translateY(6px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-kitchen" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 10h18v10H3zM3 10V5h18v5M8 14h2M14 14h2M7 7h.01M11 7h.01"/></symbol>
+    <symbol id="i-bath" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 12h16v3a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM6 12V6a2 2 0 0 1 4 0M7 20l-1 2M17 20l1 2"/></symbol>
+    <symbol id="i-deck" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 13h18M3 17h18M5 13v8M19 13v8M12 13v8M5 13V8M19 13V8M5 8h14"/></symbol>
+    <symbol id="i-floor" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 4h18v16H3zM3 9h9M12 4v5M3 14h18M9 14v6M15 9h6M15 9v5"/></symbol>
+    <symbol id="i-paint" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 4h13v5H4zM17 6h2v6h-8v3M10 15h2v6h-2z"/></symbol>
+    <symbol id="i-tools" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></symbol>
+    <symbol id="i-house" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 11 12 4l9 7M5 10v10h14V10M10 20v-5h4v5"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="mark">C&amp;B</span><span>C&amp;B Building<br>&amp; Remodeling<small>Lexington, KY</small></span></a>
+    <nav class="links" aria-label="Sections">
+      <a href="#services">Services</a><a href="#plan">Plan your project</a><a href="#process">How we work</a><a href="#contact">Contact</a>
+    </nav>
+    <a class="btn btn-brass btn-sm" href="tel:+18597776548"><svg width="16" height="16"><use href="#i-phone"/></svg>(859) 777-6548</a>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero" style="padding:0">
+    <div class="wrap">
+      <div class="hero-copy">
+        <span class="eyebrow">Lexington &amp; Central Kentucky</span>
+        <h1>Kitchens, baths and decks, <em>built right</em> the first time.</h1>
+        <p class="lede">One crew for remodels, repairs and everything in between. Plan your project below, see a ballpark price in seconds, then send it straight to us.</p>
+        <div class="hero-cta">
+          <a class="btn btn-brass" href="#plan">Plan your project</a>
+          <a class="btn btn-line" href="tel:+18597776548">Call (859) 777-6548</a>
+        </div>
+        <div class="facts"><span>Written quotes before work starts</span><span>Hidden damage approved with you first</span><span>Your fixtures welcome</span></div>
+      </div>
+      <div class="order" aria-label="Example project">
+        <div class="order-head"><b>Kitchen update</b><span class="mono">Example plan</span></div>
+        <ul class="order-lines">
+          <li><span>Cabinet demo &amp; install, trim, plumbing</span><span>labor</span></li>
+          <li><span>Subway tile backsplash</span><span>30 sq ft</span></li>
+          <li><span>LVP flooring with tear-out</span><span>150 sq ft</span></li>
+        </ul>
+        <div class="order-foot">
+          <span class="label">Ballpark</span>
+          <span class="range" id="heroRange">$9,300 – $14,000</span>
+          <span class="note">Your exact price comes in a written quote after we see the space.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="services">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">What we do</span>
+        <h2>From a leaky faucet to a full gut remodel</h2>
+        <p class="lede">Pick a service to start planning it.</p>
+      </div>
+      <div class="svc" id="svcGrid"></div>
+    </div>
+  </section>
+
+  <section id="plan" class="band">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Project planner</span>
+        <h2 style="color:var(--band-ink)">Design your project and see a ballpark price</h2>
+        <p class="lede">Three steps, about two minutes. Prices come from our current rates for Lexington-area work.</p>
+      </div>
+      <div class="planner" style="color:var(--ink)">
+        <div>
+          <div class="steps" role="list" id="steps">
+            <button type="button" data-step="1" role="listitem"><i>1</i>Project type</button>
+            <button type="button" data-step="2" role="listitem"><i>2</i>Design it</button>
+            <button type="button" data-step="3" role="listitem"><i>3</i>Send it</button>
+          </div>
+          <div class="pane" id="pane"></div>
+        </div>
+        <aside class="summary">
+          <div class="order">
+            <div class="order-head"><b id="sumTitle">Your project</b><span class="mono" id="sumTag">Draft</span></div>
+            <ul class="order-lines" id="sumLines"></ul>
+            <div class="order-foot">
+              <span class="label">Ballpark</span>
+              <span class="range" id="sumRange">—</span>
+              <span class="note" id="sumNote"></span>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <section id="process">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">How we work</span>
+        <h2>No surprises, start to finish</h2>
+      </div>
+      <ol class="process">
+        <li><h3>Plan it here</h3><p class="hint">Pick your project and options. You get a ballpark range right away.</p></li>
+        <li><h3>Walkthrough</h3><p class="hint">We visit, measure, and talk through finishes and anything we can't see from the plan.</p></li>
+        <li><h3>Written quote</h3><p class="hint">A line-by-line quote with scope, exclusions and payment terms. A deposit schedules the work.</p></li>
+        <li><h3>Build</h3><p class="hint">We do the work and walk it with you at the end. Changes to scope go in a signed change order.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="why">
+        <div><h3>One crew, many trades</h3><p>Plumbing fixtures, carpentry, drywall, tile, flooring, paint and decks. You don't have to coordinate five contractors for one remodel.</p></div>
+        <div><h3>Jobs big and small</h3><p>Plenty of contractors turn down anything under $15,000. We'll swap a toilet on Tuesday and start your kitchen the next week.</p></div>
+        <div><h3>Bring your own fixtures</h3><p>Picked out a vanity or a fan you love? We install what you choose and quote the labor clearly.</p></div>
+        <div><h3>Hidden damage, handled honestly</h3><p>If we open a wall and find rot, a bad flange or a seized shutoff, we show you and agree on the price before we fix it.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="contact" class="band" style="padding-bottom:0">
+    <div class="wrap contact">
+      <div style="display:grid;gap:16px">
+        <span class="eyebrow">Get in touch</span>
+        <h2 style="color:var(--band-ink)">Call or text for a walkthrough</h2>
+        <a class="phone" href="tel:+18597776548">(859) 777-6548</a>
+        <p>Calls and texts both work. Send photos of the space by text and we can often give you a tighter range before we visit.</p>
+      </div>
+      <dl class="card">
+        <dt>Service area</dt><dd>Lexington, Central Kentucky and Covington</dd>
+        <dt>Small jobs</dt><dd>Service calls start at $165 and include travel, setup and the first hour</dd>
+        <dt>Larger projects</dt><dd>Deposit at signing, balance at completion, all in a written quote</dd>
+      </dl>
+    </div>
+    <footer><div class="wrap"><span>© <span id="yr"></span> C&amp;B Building and Remodeling · Henry Services</span><span>Lexington, Kentucky</span></div></footer>
+  </section>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+/* ---------- pricing (C&B Pricing & Estimating Guide ranges, Oct 2026) ---------- */
+const PHONE = "+18597776548", PHONE_TXT = "(859) 777-6548";
+const r50 = n => Math.round(n / 50) * 50;
+const $$ = n => "$" + Math.round(n).toLocaleString("en-US");
+const range = (lo, hi) => [Math.max(0, lo), Math.max(0, hi)];
+const minC = (lo, hi, min) => [Math.max(lo, min), Math.max(hi, min)];
+
+const TYPES = {
+  kitchen: { name: "Kitchen", icon: "i-kitchen", blurb: "Cabinets, counters hookup, backsplash, floors", from: 8000 },
+  bath:    { name: "Bathroom", icon: "i-bath", blurb: "Fixture refresh to full custom remodel", from: 1200 },
+  deck:    { name: "Deck", icon: "i-deck", blurb: "New treated-pine decks, restaining", from: 1500 },
+  floor:   { name: "Flooring", icon: "i-floor", blurb: "LVP, tear-out, baseboard and trim", from: 350 },
+  paint:   { name: "Painting", icon: "i-paint", blurb: "Rooms, ceilings, trim, cabinets", from: 300 },
+  fixtures:{ name: "Fixtures & repairs", icon: "i-tools", blurb: "Toilets, faucets, fans, doors, TV mounts", from: 135 },
+  exterior:{ name: "Exterior", icon: "i-house", blurb: "Pressure washing, gutters, concrete, fences", from: 135 },
+};
+
+/* Every option set has: controls (rendered in step 2) and calc(state) -> {lines:[[label, detail, lo, hi]], note, timeline} */
+const DEF = {
+  kitchen: { level: "update", backsplash: 30, floor: 150, floorOn: true, paint: false },
+  bath: { level: "refresh", fan: false, floorSf: 40, tileFloor: false },
+  deck: { w: 16, d: 12, attached: true, stain: true, rail: true },
+  floor: { sf: 200, tear: true, base: true },
+  paint: { sf: 250, scope: "walls", rooms: 1, cab: 0 },
+  fixtures: { toilet: 1, kfaucet: 0, disposal: 0, fan: 1, fanbox: 0, tv: 0, door: 0, patch: 0, window: 0, exhaust: 0 },
+  exterior: { drive: true, house: false, gutter: true, fence: 0, slab: 0 },
+};
+
+const CALC = {
+  kitchen(s) {
+    const L = [];
+    if (s.level === "update") L.push(["Cabinet demo & install, trim, sink hookup", "labor", 8000, 12500]);
+    else L.push(["Full kitchen remodel: cabinets, trim, plumbing", "labor", 12500, 21000]);
+    if (s.backsplash > 0) { const [a, b] = minC(26 * s.backsplash, 45 * s.backsplash, 550); L.push(["Subway tile backsplash", s.backsplash + " sq ft", a, b]); }
+    if (s.floorOn && s.floor > 0) { const [a, b] = minC(3.0 * s.floor, 5.3 * s.floor, 550); L.push(["LVP flooring with tear-out", s.floor + " sq ft", a, b]); }
+    if (s.paint) L.push(["Paint kitchen walls", "2 coats", 300, 600]);
+    return { lines: L, timeline: s.level === "update" ? "about 2–4 weeks on site" : "about 4–6 weeks on site" };
+  },
+  bath(s) {
+    const L = [];
+    if (s.level === "refresh") { L.push(["Vanity & top swap", "up to 36\"", 300, 525], ["Toilet replacement", "", 185, 365], ["Shower head & tub spout", "", 125, 225], ["Drywall tie-in around tub/shower", "", 300, 425], ["Paint bathroom walls", "2 coats", 300, 300]); }
+    else if (s.level === "guest") L.push(["Guest / hall bath remodel", "demo to studs", 6500, 13000]);
+    else L.push(["Primary bath custom remodel", "walk-in shower", 12500, 25000]);
+    if (s.fan) L.push(["Bath exhaust fan swap", "", 175, 295]);
+    if (s.tileFloor && s.floorSf > 0 && s.level === "refresh") { const [a, b] = minC(3.0 * s.floorSf, 5.3 * s.floorSf, 550); L.push(["New LVP floor with tear-out", s.floorSf + " sq ft", a, b]); }
+    return { lines: L, timeline: { refresh: "about 2–3 days", guest: "about 2–3 weeks", primary: "about 3–5 weeks" }[s.level] };
+  },
+  deck(s) {
+    const sf = s.w * s.d, L = [];
+    const [a, b] = minC(32 * sf, 58 * sf, 1500); L.push(["Treated pine deck, footings to railing", `${s.w}′ × ${s.d}′ · ${sf} sq ft`, a, b]);
+    if (s.stain) L.push(["Clean & stain deck floor", sf + " sq ft", 2.5 * sf, 2.5 * sf]);
+    const lf = s.attached ? s.w + 2 * s.d : 2 * (s.w + s.d);
+    if (s.stain && s.rail) L.push(["Stain railings & balusters", lf + " lin ft", 8.5 * lf, 8.5 * lf]);
+    return { lines: L, timeline: "about 1–2 weeks to build; stain once the new wood dries" };
+  },
+  floor(s) {
+    const L = [];
+    const [a, b] = minC(2.15 * s.sf, 3.65 * s.sf, 350); L.push(["LVP / laminate install", s.sf + " sq ft", a, b]);
+    if (s.tear) { const [c, d] = minC(0.85 * s.sf, 1.65 * s.sf, 200); L.push(["Tear out & haul off old floor", s.sf + " sq ft", c, d]); }
+    if (s.base) { const lf = Math.round(4 * Math.sqrt(s.sf)); const [c, d] = minC(2.75 * lf, 7.5 * lf, 200); L.push(["New baseboard & trim", "about " + lf + " lin ft", c, d]); }
+    return { lines: L, timeline: s.sf > 600 ? "about 3–5 days" : "about 1–3 days" };
+  },
+  paint(s) {
+    const L = [], full = s.scope === "full";
+    const [a, b] = minC((full ? 2.95 : 1.65) * s.sf, (full ? 4.85 : 2.95) * s.sf, full ? 450 : 300);
+    L.push([full ? "Full repaint: walls, ceilings, trim, doors" : "Walls only, 2 coats", s.sf + " sq ft of floor", a, b]);
+    if (s.cab > 0) L.push(["Cabinet repaint", s.cab + " doors & drawers", 80 * s.cab, 80 * s.cab]);
+    return { lines: L, timeline: s.sf > 800 || s.cab > 0 ? "about 3–5 days" : "about 1–2 days" };
+  },
+  fixtures(s) {
+    const items = FIXTURES.filter(f => s[f.k] > 0).map(f => [f.name, s[f.k] > 1 ? "× " + s[f.k] : "", f.lo * s[f.k], f.hi * s[f.k]]);
+    const count = FIXTURES.reduce((n, f) => n + (s[f.k] || 0), 0);
+    if (count > 1) items.push(["Same-trip savings", (count - 1) + " extra item" + (count > 2 ? "s" : ""), -35 * (count - 1), -35 * (count - 1)]);
+    if (!items.length) return { lines: [], timeline: "" };
+    return { lines: items, timeline: count > 4 ? "usually one day" : "usually a few hours", min: 165 };
+  },
+  exterior(s) {
+    const L = [];
+    if (s.drive) L.push(["Pressure wash driveway & walks", "", 165, 425]);
+    if (s.house) L.push(["Soft wash house siding", "", 325, 795]);
+    if (s.gutter) L.push(["Gutter cleaning", "", 135, 295]);
+    if (s.fence > 0) L.push(["Privacy fence stain, one side", s.fence + " lin ft", 7.5 * s.fence, 7.5 * s.fence]);
+    if (s.slab > 0) { const [a, b] = minC(9 * s.slab, 14 * s.slab, 750); L.push(["New concrete pad, broom finish", s.slab + " sq ft", a, b]); }
+    return { lines: L, timeline: s.slab > 0 ? "about 1 week with cure time" : "usually one day" };
+  },
+};
+const FIXTURES = [
+  { k: "toilet", name: "Toilet replacement", lo: 185, hi: 365 },
+  { k: "kfaucet", name: "Kitchen faucet swap", lo: 165, hi: 265 },
+  { k: "disposal", name: "Garbage disposal swap", lo: 165, hi: 295 },
+  { k: "fan", name: "Ceiling fan, existing box", lo: 165, hi: 345 },
+  { k: "fanbox", name: "Ceiling fan, new box or vaulted", lo: 375, hi: 895 },
+  { k: "exhaust", name: "Bath exhaust fan swap", lo: 175, hi: 295 },
+  { k: "tv", name: "TV wall mount", lo: 135, hi: 245 },
+  { k: "door", name: "Interior door, pre-hung", lo: 175, hi: 345 },
+  { k: "window", name: "Replacement window", lo: 350, hi: 350 },
+  { k: "patch", name: "Drywall patch & repair", lo: 185, hi: 375 },
+];
+
+/* ---------- state ---------- */
+const KEY = "cb-planner-v1";
+let S = { step: 1, type: "kitchen", opts: JSON.parse(JSON.stringify(DEF)), contact: { name: "", phone: "", zip: "", start: "Within 1–3 months", notes: "" } };
+try { const saved = JSON.parse(localStorage.getItem(KEY)); if (saved && saved.opts) S = { ...S, ...saved, opts: { ...S.opts, ...saved.opts }, contact: { ...S.contact, ...saved.contact } }; } catch {}
+const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
+const el = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function toast(m) { const t = el("toast"); t.textContent = m; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 2200); }
+
+function result() {
+  const o = S.opts[S.type], res = CALC[S.type](o);
+  let lo = res.lines.reduce((a, l) => a + l[2], 0), hi = res.lines.reduce((a, l) => a + l[3], 0);
+  if (res.min && res.lines.length) { lo = Math.max(lo, res.min); hi = Math.max(hi, res.min); }
+  return { ...res, lo: r50(lo), hi: r50(hi) };
+}
+const fmtRange = r => !r.lines.length ? "—" : r.lo === r.hi ? $$(r.lo) : `${$$(r.lo)} – ${$$(r.hi)}`;
+
+/* ---------- services grid ---------- */
+el("svcGrid").innerHTML = Object.entries(TYPES).filter(([k]) => k !== "exterior" || true).slice(0, 6).map(([k, t]) => `
+  <button type="button" data-type="${k}">
+    <span class="ico"><svg width="24" height="24"><use href="#${t.icon}"/></svg></span>
+    <h3>${t.name}</h3><p>${t.blurb}</p><span class="from">From <b>${$$(t.from)}</b> · plan it →</span>
+  </button>`).join("");
+el("svcGrid").onclick = e => { const b = e.target.closest("[data-type]"); if (!b) return; S.type = b.dataset.type; S.step = 2; persist(); render(); el("plan").scrollIntoView(); };
+
+/* ---------- planner render ---------- */
+const radio = (name, val, cur, title, sub) => `<label><input type="radio" name="${name}" value="${val}" ${cur === val ? "checked" : ""}><b>${title}</b><small>${sub}</small></label>`;
+const slider = (id, label, val, min, max, step, unit) => `<div class="field"><div class="lbl"><label for="${id}">${label}</label><span class="mono" id="${id}-v">${val} ${unit}</span></div><input type="range" id="${id}" data-o="${id}" min="${min}" max="${max}" step="${step}" value="${val}"></div>`;
+const check = (id, on, title, sub, price) => `<label class="check"><input type="checkbox" id="${id}" data-o="${id}" ${on ? "checked" : ""}><span class="t"><b>${title}</b><small>${sub}</small></span><span class="p">${price}</span></label>`;
+
+function deckSvg(w, d, attached) {
+  const s = Math.min(240 / w, 150 / d), W = w * s, D = d * s, x = (300 - W) / 2, y = 24;
+  return `<svg viewBox="0 0 300 ${D + 56}" width="300" role="img" aria-label="Deck ${w} by ${d} feet">
+    ${attached ? `<rect x="${x - 10}" y="6" width="${W + 20}" height="12" fill="var(--stone)"/><text x="150" y="15" text-anchor="middle" font-size="8" fill="var(--ink-2)" font-family="IBM Plex Mono,monospace">HOUSE</text>` : ""}
+    <rect x="${x}" y="${y}" width="${W}" height="${D}" fill="var(--sage-soft)" stroke="var(--sage)" stroke-width="2"/>
+    ${Array.from({ length: Math.floor(D / 7) }, (_, i) => `<line x1="${x}" x2="${x + W}" y1="${y + 7 * (i + 1)}" y2="${y + 7 * (i + 1)}" stroke="var(--sage)" stroke-opacity=".25"/>`).join("")}
+    <line x1="${x}" x2="${x + W}" y1="${y + D + 14}" y2="${y + D + 14}" stroke="var(--ink-2)"/><text x="150" y="${y + D + 28}" text-anchor="middle" font-size="11" fill="var(--ink)" font-family="IBM Plex Mono,monospace">${w}′</text>
+    <line x1="${x + W + 12}" x2="${x + W + 12}" y1="${y}" y2="${y + D}" stroke="var(--ink-2)"/><text x="${x + W + 18}" y="${y + D / 2 + 4}" font-size="11" fill="var(--ink)" font-family="IBM Plex Mono,monospace">${d}′</text>
+  </svg>`;
+}
+
+function step2(t, o) {
+  if (t === "kitchen") return `
+    <div class="field"><div class="lbl">How big a change?</div><div class="seg">
+      ${radio("level", "update", o.level, "Kitchen update", "New cabinets and trim, sink hooked back up, same layout")}
+      ${radio("level", "full", o.level, "Full remodel", "Layout or plumbing changes, more cabinets, crown")}
+    </div></div>
+    ${slider("backsplash", "Backsplash tile", o.backsplash, 0, 80, 5, "sq ft")}
+    ${check("floorOn", o.floorOn, "New LVP floor", "Includes tearing out the old floor", "$3–$5.30/sq ft")}
+    ${o.floorOn ? slider("floor", "Kitchen floor area", o.floor, 50, 400, 10, "sq ft") : ""}
+    ${check("paint", o.paint, "Paint the walls", "Two coats, minor patching", "$300–$600")}`;
+  if (t === "bath") return `
+    <div class="field"><div class="lbl">What kind of bathroom project?</div><div class="seg">
+      ${radio("level", "refresh", o.level, "Fixture refresh", "New vanity, toilet, shower trim and paint. No demo.")}
+      ${radio("level", "guest", o.level, "Guest / hall bath remodel", "Demo to studs, new surround or tile, vanity, trim")}
+      ${radio("level", "primary", o.level, "Primary bath, custom", "Walk-in tiled shower, double vanity, lighting")}
+    </div></div>
+    ${check("fan", o.fan, "Replace the exhaust fan", "Direct swap into the existing opening", "$175–$295")}
+    ${o.level === "refresh" ? check("tileFloor", o.tileFloor, "New floor", "LVP with tear-out", "$3–$5.30/sq ft") + (o.tileFloor ? slider("floorSf", "Bathroom floor area", o.floorSf, 20, 150, 5, "sq ft") : "") : ""}`;
+  if (t === "deck") return `
+    <div class="dims">${slider("w", "Width", o.w, 8, 30, 1, "ft")}${slider("d", "Depth", o.d, 8, 24, 1, "ft")}</div>
+    <div class="blueprint" id="bp">${deckSvg(o.w, o.d, o.attached)}</div>
+    ${check("attached", o.attached, "Attached to the house", "Railing on three sides instead of four", "")}
+    ${check("stain", o.stain, "Stain the deck floor", "Clean, prep and penetrating stain", "$2.50/sq ft")}
+    ${o.stain ? check("rail", o.rail, "Stain railings too", "All sides of rails, posts and balusters", "$8.50/lin ft") : ""}`;
+  if (t === "floor") return `
+    ${slider("sf", "Floor area", o.sf, 50, 1500, 25, "sq ft")}
+    <p class="hint">Not sure? A 12′ × 15′ bedroom is 180 sq ft.</p>
+    ${check("tear", o.tear, "Tear out the old floor", "Carpet, laminate or vinyl, hauled away", "$0.85–$1.65/sq ft")}
+    ${check("base", o.base, "New baseboard & trim", "Mitered, nailed, filled and caulked", "$2.75–$7.50/lin ft")}`;
+  if (t === "paint") return `
+    <div class="field"><div class="lbl">What are we painting?</div><div class="seg">
+      ${radio("scope", "walls", o.scope, "Walls only", "Spot prime, 2 coats")}
+      ${radio("scope", "full", o.scope, "Full rooms", "Walls, ceilings, trim and doors")}
+    </div></div>
+    ${slider("sf", "Floor area of the rooms", o.sf, 50, 2500, 25, "sq ft")}
+    ${slider("cab", "Cabinet doors & drawer fronts", o.cab, 0, 50, 1, "fronts")}`;
+  if (t === "fixtures") return `<div class="checks">${FIXTURES.map(f => `
+    <div class="check"><span class="t"><b>${f.name}</b><small>${f.lo === f.hi ? $$(f.lo) : $$(f.lo) + "–" + $$(f.hi)} each</small></span>
+      <span class="qty"><button type="button" data-q="${f.k}" data-d="-1" aria-label="Fewer ${f.name}">−</button><output aria-live="polite">${o[f.k] || 0}</output><button type="button" data-q="${f.k}" data-d="1" aria-label="More ${f.name}">+</button></span></div>`).join("")}</div>
+    <p class="hint">Every extra item on the same visit saves $35. Service calls start at $165.</p>`;
+  if (t === "exterior") return `
+    ${check("drive", o.drive, "Pressure wash driveway & walks", "Pre-treat, surface clean, rinse", "$165–$425")}
+    ${check("house", o.house, "Soft wash the house", "Low-pressure siding wash for mold and mildew", "$325–$795")}
+    ${check("gutter", o.gutter, "Gutter cleaning", "Hand-cleared, downspouts flushed", "$135–$295")}
+    ${slider("fence", "Privacy fence to stain (one side)", o.fence, 0, 300, 10, "lin ft")}
+    ${slider("slab", "New concrete pad or walkway", o.slab, 0, 600, 10, "sq ft")}`;
+}
+
+function renderPane() {
+  const pane = el("pane"), t = S.type, o = S.opts[t];
+  if (S.step === 1) {
+    pane.innerHTML = `<h3>What are you planning?</h3>
+      <div class="types" role="radiogroup" aria-label="Project type">${Object.entries(TYPES).map(([k, v]) => `
+        <label><input type="radio" name="ptype" value="${k}" ${t === k ? "checked" : ""}><svg class="ico" width="26" height="26"><use href="#${v.icon}"/></svg><b>${v.name}</b><small>${v.blurb}</small></label>`).join("")}</div>
+      <div class="nav-row"><span></span><button type="button" class="btn btn-brass" data-go="2">Design it →</button></div>`;
+  } else if (S.step === 2) {
+    pane.innerHTML = `<h3>Design your ${TYPES[t].name.toLowerCase()} project</h3>${step2(t, o)}
+      <div class="nav-row"><button type="button" class="btn btn-line" data-go="1">← Project type</button><button type="button" class="btn btn-brass" data-go="3">Next: send it →</button></div>`;
+  } else if (S.step === 3) {
+    const c = S.contact;
+    pane.innerHTML = `<h3>Where should we reach you?</h3>
+      <form class="form" id="cform" novalidate>
+        <label>Your name<input id="c-name" name="name" autocomplete="name" value="${esc(c.name)}" required></label>
+        <label>Phone<input id="c-phone" name="phone" type="tel" autocomplete="tel" value="${esc(c.phone)}" required></label>
+        <label>ZIP code<input id="c-zip" name="zip" inputmode="numeric" autocomplete="postal-code" value="${esc(c.zip)}"></label>
+        <label>When do you want to start?<select id="c-start" name="start">${["As soon as possible", "Within 1–3 months", "3–6 months out", "Just pricing it out"].map(v => `<option ${v === c.start ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+        <label class="full">Anything we should know?<textarea id="c-notes" name="notes" placeholder="Room sizes, what's there now, fixtures you've picked out…">${esc(c.notes)}</textarea></label>
+        <p class="err full" id="cerr" hidden></p>
+        <div class="nav-row full"><button type="button" class="btn btn-line" data-go="2">← Design</button><button type="submit" class="btn btn-brass">Review &amp; send</button></div>
+      </form>`;
+  } else {
+    const msg = message();
+    pane.innerHTML = `<div class="sent fade"><h3>Send your plan to C&amp;B</h3>
+      <p class="hint">Text it to us and we'll reply to set up a walkthrough. You can attach photos of the space in the same text.</p>
+      <div class="msg" id="msg">${esc(msg)}</div>
+      <div class="row">
+        <a class="btn btn-brass" href="sms:${PHONE}?&body=${encodeURIComponent(msg)}">Text this to ${PHONE_TXT}</a>
+        <button type="button" class="btn btn-line" id="copyMsg">Copy plan</button>
+        <a class="btn btn-line" href="tel:${PHONE}">Call instead</a>
+      </div>
+      <p class="hint">If the text button doesn't open your messages app, copy the plan and text it to ${PHONE_TXT}.</p>
+      <div class="nav-row"><button type="button" class="btn btn-line" data-go="1">Plan another project</button></div></div>`;
+  }
+  pane.classList.remove("fade"); void pane.offsetWidth; pane.classList.add("fade");
+}
+
+function message() {
+  const r = result(), c = S.contact;
+  return [`New project from the C&B website`, ``, `Project: ${TYPES[S.type].name}`, ...r.lines.map(l => `- ${l[0]}${l[1] ? " (" + l[1] + ")" : ""}`), `Ballpark: ${fmtRange(r)}`, ``,
+    `Name: ${c.name}`, `Phone: ${c.phone}`, c.zip ? `ZIP: ${c.zip}` : null, `Start: ${c.start}`, c.notes ? `Notes: ${c.notes}` : null].filter(x => x !== null).join("\n");
+}
+
+function renderSummary() {
+  const r = result();
+  el("sumTitle").textContent = TYPES[S.type].name + " project";
+  el("sumTag").textContent = S.step >= 4 ? "Ready to send" : "Draft";
+  el("sumLines").innerHTML = r.lines.length ? r.lines.map(l => `<li><span>${esc(l[0])}</span><span>${esc(l[1] || (l[2] < 0 ? $$(l[2]) : ""))}</span></li>`).join("") : `<li><span>Add at least one item to see a price.</span><span></span></li>`;
+  el("sumRange").textContent = fmtRange(r);
+  el("sumNote").textContent = r.lines.length ? `${r.timeline ? "Typical time on site: " + r.timeline + ". " : ""}Ballpark for the listed work. You pick fixtures and finishes; your written quote confirms exactly what's included.` : "";
+  document.querySelectorAll("#steps button").forEach(b => { const n = +b.dataset.step; b.toggleAttribute("aria-current", false); b.classList.toggle("done", n < Math.min(S.step, 4)); if (n === Math.min(S.step, 3)) b.setAttribute("aria-current", "step"); });
+}
+
+function render() { renderPane(); renderSummary(); }
+
+/* ---------- events ---------- */
+el("steps").onclick = e => { const b = e.target.closest("[data-step]"); if (!b) return; S.step = +b.dataset.step; persist(); render(); };
+el("pane").addEventListener("click", e => {
+  const go = e.target.closest("[data-go]"); if (go) { S.step = +go.dataset.go; persist(); render(); el("plan").scrollIntoView({ block: "start" }); return; }
+  const q = e.target.closest("[data-q]"); if (q) { const o = S.opts.fixtures; o[q.dataset.q] = Math.max(0, Math.min(10, (o[q.dataset.q] || 0) + +q.dataset.d)); q.parentElement.querySelector("output").textContent = o[q.dataset.q]; persist(); renderSummary(); return; }
+  if (e.target.id === "copyMsg") {
+    const text = message();
+    Promise.resolve().then(() => navigator.clipboard.writeText(text)).then(() => toast("Plan copied"), () => { const r = document.createRange(); r.selectNodeContents(el("msg")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast("Selected. Press copy on your device."); });
+  }
+});
+el("pane").addEventListener("input", e => {
+  const t = e.target;
+  if (t.name === "ptype") { S.type = t.value; persist(); renderSummary(); return; }
+  if (t.closest("#cform")) { S.contact[t.name] = t.value; persist(); return; }
+  const o = S.opts[S.type];
+  if (t.type === "radio") { o[t.name] = t.value; persist(); render(); return; }
+  if (t.type === "checkbox") { o[t.dataset.o] = t.checked; persist(); render(); return; }
+  if (t.type === "range") {
+    o[t.dataset.o] = +t.value; const v = el(t.id + "-v"); if (v) v.textContent = t.value + " " + v.textContent.split(" ").slice(1).join(" ");
+    if (S.type === "deck") el("bp").innerHTML = deckSvg(o.w, o.d, o.attached);
+    persist(); renderSummary();
+  }
+});
+el("pane").addEventListener("submit", e => {
+  e.preventDefault(); const c = S.contact, err = el("cerr");
+  const digits = (c.phone || "").replace(/\D/g, "");
+  if (!c.name.trim() || digits.length < 10) { err.textContent = !c.name.trim() ? "Add your name so we know who to ask for." : "Add a 10-digit phone number so we can reach you."; err.hidden = false; return; }
+  if (!result().lines.length) { err.textContent = "Your plan is empty. Go back and add at least one item."; err.hidden = false; return; }
+  S.step = 4; persist(); render();
+});
+
+/* hero example uses the same pricing as the planner */
+(() => { const ex = CALC.kitchen({ level: "update", backsplash: 30, floor: 150, floorOn: true, paint: false }); const lo = r50(ex.lines.reduce((a, l) => a + l[2], 0)), hi = r50(ex.lines.reduce((a, l) => a + l[3], 0)); el("heroRange").textContent = `${$$(lo)} – ${$$(hi)}`; })();
+el("yr").textContent = new Date().getFullYear();
+render();
+</script>
+</body>
+</html>

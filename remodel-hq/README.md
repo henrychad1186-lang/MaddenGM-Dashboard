@@ -26,3 +26,11 @@ Differences from `index.html`:
 - Print becomes **Proposal**: an in-page preview plus a downloadable standalone `.html` proposal to print or send.
 - Confirmations and prompts are in-page dialogs; CSV and backup exports go through the viewer's download prompt.
 - It is a page fragment (no `<html>`/`<head>`): the artifact host adds that wrapper. Use `index.html` for opening locally.
+
+## Customer website (`site/index.html`)
+
+A single-file public website for C&B Building and Remodeling: services, a three-step project planner with live ballpark pricing, how-we-work, and contact. Upload `site/index.html` to any static host (Netlify Drop, GitHub Pages, Vercel, or your domain's host); it needs no server.
+
+- **Planner pricing** comes from the Pricing & Estimating Guide low–high ranges (kitchen, bath, deck, flooring, painting, fixtures, exterior), rounded to $50, with item minimums and the $35 same-trip discount applied. Update the `CALC` and `FIXTURES` blocks in the script when rates change.
+- **Lead hand-off:** the last step builds a plain-text summary and opens a text message to (859) 777-6548, with Copy and Call fallbacks. Nothing is stored on a server. To collect submissions in an inbox instead, add a form service (Formspree, Netlify Forms) to the final step.
+- **Typical time on site** figures in the planner are general estimates; adjust them in `CALC` to match your schedule.
