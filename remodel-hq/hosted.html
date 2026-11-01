@@ -470,7 +470,11 @@ function putRemote(key, body) {
     // editor was open. Migrating at this chokepoint covers all
     // three, instead of a call per caller that the next path
     // added would miss again.
-    migrateDoc(key, body);
+    // A correction here is only in DB: lastSent still holds the
+    // stored document, and neither onStore() nor releaseDoc()
+    // schedules a write of its own. Without this the cloud keeps
+    // the old text until some unrelated edit happens to flush.
+    if (migrateDoc(key, body)) save();
     const arr = DB[coll], o = arr.find(x => x.id === body.id);
     if (o) { Object.keys(o).forEach(k => delete o[k]); Object.assign(o, body); } else arr.push(body);
   }
@@ -531,7 +535,9 @@ function releaseDoc() {
   // automatic rewrite is not a local edit — counting it as one made
   // this keep the local copy and silently drop a genuine remote change
   // to any template that happened to need migrating.
-  const base = k in lastSent ? canon(migrateDoc(k, JSON.parse(lastSent[k]))) : undefined;
+  const prev = k in lastSent ? JSON.parse(lastSent[k]) : null;
+  if (prev) migrateDoc(k, prev);   // mutates the copy; no save
+  const base = prev ? canon(prev) : undefined;
   if (local && canon(local) === base) { lastSent[k] = j; putRemote(k, JSON.parse(j)); }
 }
 
@@ -539,9 +545,11 @@ function releaseDoc() {
 // the "t_" prefix rather than a collection name so it is usable before
 // putRemote() has worked out which collection the key belongs to.
 function migrateDoc(key, body) {
-  if (key[0] === "t" && key[1] === "_" && typeof body.scope === "string")
-    body.scope = fixScopeText(body.scope);
-  return body;
+  if (key[0] === "t" && key[1] === "_" && typeof body.scope === "string") {
+    const s = fixScopeText(body.scope);
+    if (s !== body.scope) { body.scope = s; return true; }
+  }
+  return false;
 }
 let dl = null;
 async function connect() {

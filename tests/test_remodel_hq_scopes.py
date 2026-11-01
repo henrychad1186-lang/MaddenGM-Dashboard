@@ -335,3 +335,53 @@ def test_migrating_does_not_count_as_a_local_edit():
     assert out["localDesc"] == "edited-here", (
         "a real local edit was overwritten by the held remote copy: "
         f"{out['localDesc']!r}")
+
+
+def test_a_migrated_template_is_written_back_to_the_store():
+    """Correcting DB is not enough; the cloud has to converge.
+
+    `putRemote()` rewrites the scope, but `lastSent` still holds the
+    stored document and neither `onStore()` nor `releaseDoc()`
+    schedules a write. The startup `fixScopes()` pass cannot cover it
+    either: `putRemote` has already corrected the template, so that
+    pass sees nothing changed and never calls `save()`. The local copy
+    then looks right while every other device keeps the old promise.
+
+    The guard on the other side matters as much: a template that is
+    already correct must not schedule a write, or every load churns the
+    store. `save()` is observed through its 400ms debounce timer.
+    """
+    out = _in_page("""
+    () => {
+      const BAD = "- Service Call / Trip Minimum: Travel to site, setup, "
+                + "and up to 1 hour of labor";
+      const OK = "- Service Call / Trip Minimum: Travel to site and "
+               + "on-site setup";
+      const doc = (id, scope) => ({
+        id: "t_" + id, metadata: {hasPendingWrites: false},
+        data: () => ({id, name: "P", description: "d", scope})});
+      const snap = d => ({empty: false, metadata: {fromCache: false},
+        docs: d, forEach: f => d.forEach(f)});
+      const out = {};
+      let n = 0; const realST = window.setTimeout;
+      window.setTimeout = function (f, ms) { if (ms === 400) n++;
+                                             return realST(f, ms); };
+      onStore(snap([doc("s1", BAD)]));
+      out.fixedScope = (DB.templates.find(t => t.id === "s1") || {}).scope;
+      out.fixedSaves = n;
+      n = 0;
+      onStore(snap([doc("s2", OK)]));
+      out.cleanScope = (DB.templates.find(t => t.id === "s2") || {}).scope;
+      out.cleanSaves = n;
+      window.setTimeout = realST;
+      return out;
+    }
+    """)
+    assert "hour of labor" not in out["fixedScope"], out["fixedScope"]
+    assert out["fixedSaves"] > 0, (
+        "the scope was corrected locally but no write was scheduled, so "
+        "the store keeps the old promise")
+    assert "on-site setup" in out["cleanScope"], out["cleanScope"]
+    assert out["cleanSaves"] == 0, (
+        "an already-correct template scheduled a write; every load would "
+        "churn the store")
