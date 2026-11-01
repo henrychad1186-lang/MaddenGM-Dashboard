@@ -174,3 +174,53 @@ def test_the_local_build_has_no_cloud_path_to_miss():
     # so this looks for a definition, not a mention.
     assert "function onStore" not in src, (
         "index.html gained a sync path; it needs the same post-ingest call")
+
+
+def test_a_later_snapshot_cannot_undo_the_migration():
+    """Snapshots arrive cache-first, then server.
+
+    The first-load guard is `fromCache && snap.empty`, so a cached
+    *non-empty* snapshot passes it, sets `ready`, and is migrated. The
+    server copy then lands in the incremental branch, where
+    `putRemote()` swaps the template back to the stored version — which
+    still carries the promise. The flush does not catch it either,
+    because `lastSent` already matches the server document.
+
+    Driven through the real handler with two synthetic snapshots rather
+    than asserted on the source text; removing the incremental
+    `fixScopes()` makes this fail with the promise restored.
+    """
+    sync_api = pytest.importorskip("playwright.sync_api")
+    chrome = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+    if not pathlib.Path(chrome).exists():
+        pytest.skip("bundled Chromium not present")
+    page_url = "file://" + str((_HQ / "hosted.html").resolve())
+    js = """
+    () => {
+      const BAD = "- Service Call / Trip Minimum: Travel to site, setup, "
+                + "and up to 1 hour of labor";
+      const doc = (scope, desc) => ({
+        id: "t_x1", metadata: {hasPendingWrites: false},
+        data: () => ({id: "x1", name: "Probe", description: desc,
+                      scope: scope})});
+      const snap = (docs, fromCache) => ({
+        empty: docs.length === 0, metadata: {fromCache}, docs,
+        forEach: f => docs.forEach(f)});
+      onStore(snap([doc(BAD, "v1")], true));      // cached, non-empty
+      onStore(snap([doc(BAD, "v2")], false));     // server, edited elsewhere
+      return (DB.templates.find(t => t.id === "x1") || {}).scope;
+    }
+    """
+    with sync_api.sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chrome,
+                                    args=["--no-sandbox"])
+        try:
+            page = browser.new_page()
+            page.goto(page_url)
+            page.wait_for_timeout(1500)
+            scope = page.evaluate(js)
+        finally:
+            browser.close()
+    assert "hour of labor" not in scope, (
+        f"a later snapshot restored the promise: {scope!r}")
+    assert "Travel to site and on-site setup" in scope, scope

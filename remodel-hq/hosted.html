@@ -503,7 +503,16 @@ function onStore(snap) {
     if (seen.has(k) || k === openDocKey) continue;
     delete lastSent[k]; dropRemote(k); changed = true;
   }
-  if (changed) { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {} render(); }
+  if (changed) {
+    // Snapshots arrive cache-first, then server. The cached one can be
+    // non-empty, so the branch above may have migrated it and set
+    // ready; the server copy then lands here and putRemote() swaps the
+    // migrated template back out. Re-run: it is a no-op when nothing
+    // needs fixing, and its save() flushes any correction upward,
+    // since flush() recomputes from DB rather than from lastSent.
+    fixScopes();
+    try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {} render();
+  }
 }
 function releaseDoc() {
   const k = openDocKey; openDocKey = null;
