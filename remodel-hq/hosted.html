@@ -465,6 +465,12 @@ function putRemote(key, body) {
   else if (key === "trades") DB.trades = body.items || [];
   else {
     const coll = { q: "quotes", p: "projects", t: "templates" }[key[0]]; if (!coll) return;
+    // Every remote write lands here: both onStore branches and
+    // releaseDoc(), which applies the version held back while an
+    // editor was open. Migrating at this chokepoint covers all
+    // three, instead of a call per caller that the next path
+    // added would miss again.
+    if (coll === "templates" && typeof body.scope === "string") body.scope = fixScopeText(body.scope);
     const arr = DB[coll], o = arr.find(x => x.id === body.id);
     if (o) { Object.keys(o).forEach(k => delete o[k]); Object.assign(o, body); } else arr.push(body);
   }
@@ -1147,7 +1153,7 @@ $("#restore").onclick = () => $("#jsonFile").click();
 $("#jsonFile").onchange = async e => {
   const file = e.target.files[0]; e.target.value = ""; if (!file) return;
   try { const d = JSON.parse(await file.text()); if (!d.pricebook || !d.quotes || !d.projects) throw 0;
-    if (!await ask("Replace all current data with this backup? Everything now in Remodel HQ will be overwritten.", { ok: "Replace data", danger: true })) return; DB = d; DB.ui = DB.ui || { tab: "settings", pView: "board" }; save(); show("settings"); toast("Backup restored"); }
+    if (!await ask("Replace all current data with this backup? Everything now in Remodel HQ will be overwritten.", { ok: "Replace data", danger: true })) return; DB = d; DB.ui = DB.ui || { tab: "settings", pView: "board" }; fixScopes(); save(); show("settings"); toast("Backup restored"); }
   catch { toast("Not a valid Remodel HQ backup"); }
 };
 $("#exportQuotes").onclick = () => download("quotes.csv", [csvRow(["number", "date", "status", "client", "phone", "email", "address", "project", "cost", "markup", "tax", "discount", "total", "margin_pct"]),
@@ -1183,9 +1189,12 @@ const SCOPE_FIXES = [
 ];
 // A function declaration, so it is hoisted: the hosted build also calls
 // this from onStore(), which is defined far above this point.
+function fixScopeText(s) {
+  return SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), s || "");
+}
 function fixScopes() {
   DB.templates.forEach(t => {
-    const s = SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), t.scope || "");
+    const s = fixScopeText(t.scope);
     if (s !== (t.scope || "")) { t.scope = s; save(); }
   });
 }

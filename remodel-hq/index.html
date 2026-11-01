@@ -997,7 +997,7 @@ $("#restore").onclick = () => $("#jsonFile").click();
 $("#jsonFile").onchange = async e => {
   const file = e.target.files[0]; e.target.value = ""; if (!file) return;
   try { const d = JSON.parse(await file.text()); if (!d.pricebook || !d.quotes || !d.projects) throw 0;
-    if (!confirm("Replace ALL current data with this backup?")) return; DB = d; DB.ui = DB.ui || { tab: "settings", pView: "board" }; save(); show("settings"); toast("Backup restored"); }
+    if (!confirm("Replace ALL current data with this backup?")) return; DB = d; DB.ui = DB.ui || { tab: "settings", pView: "board" }; fixScopes(); save(); show("settings"); toast("Backup restored"); }
   catch { toast("Not a valid Remodel HQ backup"); }
 };
 $("#exportQuotes").onclick = () => download("quotes.csv", [csvRow(["number", "date", "status", "client", "phone", "email", "address", "project", "cost", "markup", "tax", "discount", "total", "margin_pct"]),
@@ -1034,9 +1034,12 @@ const SCOPE_FIXES = [
 ];
 // A function declaration, so it is hoisted: the hosted build also calls
 // this from onStore(), which is defined far above this point.
+function fixScopeText(s) {
+  return SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), s || "");
+}
 function fixScopes() {
   DB.templates.forEach(t => {
-    const s = SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), t.scope || "");
+    const s = fixScopeText(t.scope);
     if (s !== (t.scope || "")) { t.scope = s; save(); }
   });
 }

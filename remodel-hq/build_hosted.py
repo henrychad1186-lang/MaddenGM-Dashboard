@@ -124,6 +124,12 @@ function putRemote(key, body) {
   else if (key === "trades") DB.trades = body.items || [];
   else {
     const coll = { q: "quotes", p: "projects", t: "templates" }[key[0]]; if (!coll) return;
+    // Every remote write lands here: both onStore branches and
+    // releaseDoc(), which applies the version held back while an
+    // editor was open. Migrating at this chokepoint covers all
+    // three, instead of a call per caller that the next path
+    // added would miss again.
+    if (coll === "templates" && typeof body.scope === "string") body.scope = fixScopeText(body.scope);
     const arr = DB[coll], o = arr.find(x => x.id === body.id);
     if (o) { Object.keys(o).forEach(k => delete o[k]); Object.assign(o, body); } else arr.push(body);
   }

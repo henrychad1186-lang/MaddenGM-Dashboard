@@ -224,3 +224,64 @@ def test_a_later_snapshot_cannot_undo_the_migration():
     assert "hour of labor" not in scope, (
         f"a later snapshot restored the promise: {scope!r}")
     assert "Travel to site and on-site setup" in scope, scope
+
+
+def _in_page(js):
+    """Evaluate js against a loaded hosted.html, or skip."""
+    sync_api = pytest.importorskip("playwright.sync_api")
+    chrome = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
+    if not pathlib.Path(chrome).exists():
+        pytest.skip("bundled Chromium not present")
+    with sync_api.sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=chrome,
+                                    args=["--no-sandbox"])
+        try:
+            page = browser.new_page()
+            page.goto("file://" + str((_HQ / "hosted.html").resolve()))
+            page.wait_for_timeout(1500)
+            return page.evaluate(js)
+        finally:
+            browser.close()
+
+
+def test_a_template_open_in_an_editor_is_migrated_when_it_closes():
+    """The one template the incremental branch deliberately skips.
+
+    While a record is open, `onStore` parks the remote copy in
+    `heldRemote` rather than swapping it out underneath the editor, and
+    `releaseDoc()` applies it on close. So the migration in the
+    incremental branch never sees it — the open template is exactly the
+    one that slips past. Covered at `putRemote()` instead, which is the
+    single point every remote write passes through.
+    """
+    scope = _in_page("""
+    () => {
+      const BAD = "- Service Call / Trip Minimum: Travel to site, setup, "
+                + "and up to 1 hour of labor";
+      const doc = (scope, desc) => ({
+        id: "t_e1", metadata: {hasPendingWrites: false},
+        data: () => ({id: "e1", name: "Probe", description: desc, scope})});
+      const snap = (docs) => ({empty: false, metadata: {fromCache: false},
+        docs, forEach: f => docs.forEach(f)});
+      onStore(snap([doc("clean placeholder", "v1")]));
+      openDocKey = "t_e1";                 // the editor is open
+      onStore(snap([doc(BAD, "v2")]));     // held back, not applied
+      releaseDoc();                        // applied on close
+      return (DB.templates.find(t => t.id === "e1") || {}).scope;
+    }
+    """)
+    assert "hour of labor" not in scope, (
+        f"releaseDoc() restored the promise: {scope!r}")
+
+
+def test_a_restored_backup_is_migrated():
+    """`DB = d` replaces everything and bypasses `putRemote` entirely.
+
+    A backup taken while the one-hour wording was live carries it, and
+    restoring one is exactly the moment old data re-enters.
+    """
+    src = _text("index.html")
+    restore = re.search(r"DB = d; DB\.ui = DB\.ui \|\|[^;]*;([^\n]*)", src)
+    assert restore, "the backup restore path moved"
+    assert "fixScopes();" in restore.group(1), (
+        "a restored backup is not migrated: " + restore.group(1).strip())
