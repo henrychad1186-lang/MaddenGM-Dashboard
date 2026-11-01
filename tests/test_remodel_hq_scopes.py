@@ -285,3 +285,53 @@ def test_a_restored_backup_is_migrated():
     assert restore, "the backup restore path moved"
     assert "fixScopes();" in restore.group(1), (
         "a restored backup is not migrated: " + restore.group(1).strip())
+
+
+def test_migrating_does_not_count_as_a_local_edit():
+    """The cost of correcting data in place, and its over-correction guard.
+
+    `releaseDoc()` applies the other device's version only when nothing
+    was edited here, comparing `canon(local)` with `lastSent`. Once
+    `putRemote()` rewrites a scope on the way in, the local copy
+    differs from the stored document by the correction alone — so a
+    genuine remote change to any template that needed migrating was
+    being read as a local edit and silently dropped.
+
+    Both directions are checked, because the fix is to ignore the
+    migration in that comparison and the risk is ignoring a real edit
+    with it: a remote change must survive, and a local change must
+    still win.
+    """
+    out = _in_page("""
+    () => {
+      const BAD = "- Service Call / Trip Minimum: Travel to site, setup, "
+                + "and up to 1 hour of labor";
+      const doc = (id, scope, desc) => ({
+        id: "t_" + id, metadata: {hasPendingWrites: false},
+        data: () => ({id, name: "Probe", description: desc, scope})});
+      const snap = d => ({empty: false, metadata: {fromCache: false},
+        docs: d, forEach: f => d.forEach(f)});
+      const t = id => DB.templates.find(x => x.id === id) || {};
+      const out = {};
+      onStore(snap([doc("m1", BAD, "v1")]));
+      openDocKey = "t_m1";
+      onStore(snap([doc("m1", BAD, "v2-remote-edit")]));
+      releaseDoc();
+      out.remoteDesc = t("m1").description;
+      out.remoteScope = t("m1").scope;
+      onStore(snap([doc("m2", BAD, "base")]));
+      openDocKey = "t_m2";
+      t("m2").description = "edited-here";
+      onStore(snap([doc("m2", BAD, "remote-v3")]));
+      releaseDoc();
+      out.localDesc = t("m2").description;
+      return out;
+    }
+    """)
+    assert out["remoteDesc"] == "v2-remote-edit", (
+        "a remote edit was dropped because the migration looked like a "
+        f"local edit: {out['remoteDesc']!r}")
+    assert "hour of labor" not in out["remoteScope"], out["remoteScope"]
+    assert out["localDesc"] == "edited-here", (
+        "a real local edit was overwritten by the held remote copy: "
+        f"{out['localDesc']!r}")

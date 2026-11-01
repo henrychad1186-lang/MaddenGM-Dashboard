@@ -129,7 +129,7 @@ function putRemote(key, body) {
     // editor was open. Migrating at this chokepoint covers all
     // three, instead of a call per caller that the next path
     // added would miss again.
-    if (coll === "templates" && typeof body.scope === "string") body.scope = fixScopeText(body.scope);
+    migrateDoc(key, body);
     const arr = DB[coll], o = arr.find(x => x.id === body.id);
     if (o) { Object.keys(o).forEach(k => delete o[k]); Object.assign(o, body); } else arr.push(body);
   }
@@ -185,7 +185,22 @@ function releaseDoc() {
   const j = heldRemote[k]; delete heldRemote[k];
   // Apply the other device's version only if nothing was edited here; otherwise this edit wins on the next save.
   const local = docsOf()[k];
-  if (local && canon(local) === lastSent[k]) { lastSent[k] = j; putRemote(k, JSON.parse(j)); }
+  // Compared against the *migrated* form of what the server last sent.
+  // putRemote() corrects a template scope on the way in, and that
+  // automatic rewrite is not a local edit — counting it as one made
+  // this keep the local copy and silently drop a genuine remote change
+  // to any template that happened to need migrating.
+  const base = k in lastSent ? canon(migrateDoc(k, JSON.parse(lastSent[k]))) : undefined;
+  if (local && canon(local) === base) { lastSent[k] = j; putRemote(k, JSON.parse(j)); }
+}
+
+// Corrections applied to a document arriving from the store. Keyed on
+// the "t_" prefix rather than a collection name so it is usable before
+// putRemote() has worked out which collection the key belongs to.
+function migrateDoc(key, body) {
+  if (key[0] === "t" && key[1] === "_" && typeof body.scope === "string")
+    body.scope = fixScopeText(body.scope);
+  return body;
 }
 let dl = null;
 async function connect() {
