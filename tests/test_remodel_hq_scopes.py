@@ -144,3 +144,33 @@ def test_every_shipped_scope_migrates_off_the_one_hour_promise(name, saved):
     assert "hour of labor" not in migrated, (
         f"a saved scope still promises an hour after migration: {migrated!r}")
     assert "Painting sheet" not in migrated
+
+
+def test_the_hosted_build_migrates_templates_it_loads_from_the_cloud():
+    """The local pass cannot reach data that arrives after it.
+
+    `hosted.html` runs the rewrite once at startup and then calls
+    `connect()`. On the first snapshot `onStore` does `DB = blankDB()`
+    and repopulates from the store, so every template it ingests has
+    never been through `SCOPE_FIXES` — on the one build that is
+    actually deployed and shared. The correction has to run again
+    after that ingest.
+    """
+    src = _text("hosted.html")
+    assert "function fixScopes()" in src, "fixScopes() is not defined"
+    first_load = re.search(
+        r"const ui = DB\.ui; DB = blankDB\(\);(.*?)setSync\(\"Saved\"\); render\(\);",
+        src, re.S)
+    assert first_load, "onStore's first-snapshot branch not found"
+    assert "fixScopes();" in first_load.group(1), (
+        "cloud templates are ingested without the scope migration")
+
+
+def test_the_local_build_has_no_cloud_path_to_miss():
+    """index.html keeps the single startup pass: it has no store."""
+    src = _text("index.html")
+    assert "function fixScopes()" in src and "fixScopes();" in src
+    # The word also appears in a comment pointing at the hosted build,
+    # so this looks for a definition, not a mention.
+    assert "function onStore" not in src, (
+        "index.html gained a sync path; it needs the same post-ingest call")

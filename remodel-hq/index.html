@@ -1032,10 +1032,15 @@ const SCOPE_FIXES = [
   // #82 shipped the line below to browsers before the promise was caught, so the note above is already gone from their saved copy and only this pair can still reach it.
   ["Service Call / Trip Minimum: Travel to site, setup, and up to 1 hour of labor", "Service Call / Trip Minimum: Travel to site and on-site setup"],
 ];
-DB.templates.forEach(t => {
-  const s = SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), t.scope || "");
-  if (s !== (t.scope || "")) { t.scope = s; save(); }
-});
+// A function declaration, so it is hoisted: the hosted build also calls
+// this from onStore(), which is defined far above this point.
+function fixScopes() {
+  DB.templates.forEach(t => {
+    const s = SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), t.scope || "");
+    if (s !== (t.scope || "")) { t.scope = s; save(); }
+  });
+}
+fixScopes();
 
 show(DB.ui.tab || "dash");
 </script>

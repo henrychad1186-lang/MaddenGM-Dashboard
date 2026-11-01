@@ -481,6 +481,11 @@ function onStore(snap) {
     if (snap.empty) { setSync("Saved"); if (hadLocal) flush(); render(); return; }
     const ui = DB.ui; DB = blankDB(); DB.ui = ui;
     for (const d of snap.docs) { const body = d.data(); lastSent[d.id] = canon(body); putRemote(d.id, JSON.parse(lastSent[d.id])); }
+    // The pre-connect fixScopes() ran against local data only; this
+    // branch has just replaced DB with the cloud copy, so the templates
+    // now in hand have never been through it. save() inside it flushes
+    // the corrections back up, since ready is already true here.
+    fixScopes();
     try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {}
     setSync("Saved"); render(); return;
   }
@@ -1167,10 +1172,15 @@ const SCOPE_FIXES = [
   // #82 shipped the line below to browsers before the promise was caught, so the note above is already gone from their saved copy and only this pair can still reach it.
   ["Service Call / Trip Minimum: Travel to site, setup, and up to 1 hour of labor", "Service Call / Trip Minimum: Travel to site and on-site setup"],
 ];
-DB.templates.forEach(t => {
-  const s = SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), t.scope || "");
-  if (s !== (t.scope || "")) { t.scope = s; save(); }
-});
+// A function declaration, so it is hoisted: the hosted build also calls
+// this from onStore(), which is defined far above this point.
+function fixScopes() {
+  DB.templates.forEach(t => {
+    const s = SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), t.scope || "");
+    if (s !== (t.scope || "")) { t.scope = s; save(); }
+  });
+}
+fixScopes();
 
 show(DB.ui.tab || "dash");
 connect();

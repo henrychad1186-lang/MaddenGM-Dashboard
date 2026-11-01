@@ -140,6 +140,11 @@ function onStore(snap) {
     if (snap.empty) { setSync("Saved"); if (hadLocal) flush(); render(); return; }
     const ui = DB.ui; DB = blankDB(); DB.ui = ui;
     for (const d of snap.docs) { const body = d.data(); lastSent[d.id] = canon(body); putRemote(d.id, JSON.parse(lastSent[d.id])); }
+    // The pre-connect fixScopes() ran against local data only; this
+    // branch has just replaced DB with the cloud copy, so the templates
+    // now in hand have never been through it. save() inside it flushes
+    // the corrections back up, since ready is already true here.
+    fixScopes();
     try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {}
     setSync("Saved"); render(); return;
   }
