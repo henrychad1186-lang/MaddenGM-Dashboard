@@ -90,3 +90,57 @@ def test_the_in_place_rewrite_matches_the_seed():
     assert not missing, (
         "SCOPE_FIXES rewrites saved data to text the seed no longer uses, "
         f"so the two have drifted: {missing}")
+
+
+# Every scope wording that has ever been shipped to a browser, oldest
+# first. `SCOPE_FIXES` has to carry each of them forward, because
+# `index.html:419` is `localStorage.getItem(KEY) || seed()` — saved data
+# wins and the seed only runs for a browser that has never loaded the
+# app. A user who opened an intermediate version has that version's
+# text saved, and only a migration can reach it.
+_SHIPPED_TRIP_SCOPES = (
+    # Original, with the internal note.
+    "- Service Call / Trip Minimum: Minimum service call (Quick Price "
+    "List, Oct 17). Master guide baseline says $150.\n"
+    "- Handyman / General Carpentry: Punch-list, framing, fixture swaps",
+    # What #82 shipped and republished to the live artifact.
+    "- Service Call / Trip Minimum: Travel to site, setup, and up to 1 "
+    "hour of labor\n"
+    "- Handyman / General Carpentry: Punch-list, framing, fixture swaps",
+)
+
+
+def _scope_fixes(src):
+    block = re.search(r"const SCOPE_FIXES = \[(.*?)\n\];", src, re.S)
+    assert block, "SCOPE_FIXES block not found"
+    pairs = re.findall(r'\["((?:[^"\\]|\\.)*)", "((?:[^"\\]|\\.)*)"\]',
+                       block.group(1))
+    assert pairs, "no replacement pairs parsed"
+    # The HTML holds \n as a two-character escape; the saved string has
+    # a real newline, which is what the replacement runs against.
+    return [(f.replace("\\n", "\n"), t.replace("\\n", "\n"))
+            for f, t in pairs]
+
+
+def _migrate(pairs, scope):
+    """`SCOPE_FIXES.reduce((a,[f,t]) => a.split(f).join(t), scope)`."""
+    for frm, to in pairs:
+        scope = scope.replace(frm, to)
+    return scope
+
+
+@pytest.mark.parametrize("name", _SOURCES)
+@pytest.mark.parametrize("saved", _SHIPPED_TRIP_SCOPES)
+def test_every_shipped_scope_migrates_off_the_one_hour_promise(name, saved):
+    """A correction only the seed carries reaches nobody who already ran it.
+
+    Replacing the one-hour sentence in the seed is not enough: anyone
+    who loaded the version that introduced it has it in localStorage,
+    and startup prefers that over the seed. `quoteFromTemplate` then
+    copies the saved scope onto every new proposal, so the promise
+    keeps printing.
+    """
+    migrated = _migrate(_scope_fixes(_text(name)), saved)
+    assert "hour of labor" not in migrated, (
+        f"a saved scope still promises an hour after migration: {migrated!r}")
+    assert "Painting sheet" not in migrated

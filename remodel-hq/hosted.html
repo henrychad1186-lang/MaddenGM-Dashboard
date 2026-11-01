@@ -1164,6 +1164,8 @@ const SCOPE_FIXES = [
   ["Deck Floor & Stairs Stain: Painting sheet", "Deck Floor & Stairs Stain: Brush/pad apply penetrating stain"],
   ["Deck Railing & Baluster Stain: Painting sheet", "Deck Railing & Baluster Stain: Hand-brush all sides of rails, posts and balusters"],
   ["Service Call / Trip Minimum: Minimum service call (Quick Price List, Oct 17). Master guide baseline says $150.", "Service Call / Trip Minimum: Travel to site and on-site setup"],
+  // #82 shipped the line below to browsers before the promise was caught, so the note above is already gone from their saved copy and only this pair can still reach it.
+  ["Service Call / Trip Minimum: Travel to site, setup, and up to 1 hour of labor", "Service Call / Trip Minimum: Travel to site and on-site setup"],
 ];
 DB.templates.forEach(t => {
   const s = SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), t.scope || "");
