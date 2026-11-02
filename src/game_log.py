@@ -590,6 +590,7 @@ def _why_not_batch(existing: pd.DataFrame, changes: dict) -> "str | None":
     if "GAME_ID" not in existing.columns:
         return ("This log has no GAME_ID column, so there is no way to say "
                 "which game to update.")
+    seen_rows: dict = {}
     for game_id, fields in changes.items():
         bad = [key for key in fields if key not in GRID_FIELDS]
         if bad:
@@ -601,6 +602,16 @@ def _why_not_batch(existing: pd.DataFrame, changes: dict) -> "str | None":
         if len(rows) > 1:
             return (f"Game #{game_id} appears {len(rows)} times, so the one "
                     "to edit is ambiguous.")
+        # Dict keys are unique; the games they name need not be. `1`
+        # and `"1"` are two keys for one row, and each patch was
+        # checked against the *original* row and passed, then both were
+        # applied — producing the impossible pair the check exists to
+        # stop, written and reported as success.
+        if rows[0] in seen_rows:
+            return (f"Game #{_format(game_id)} is named more than once in "
+                    "this save, so it is not clear what its final values "
+                    "should be. Send each game once.")
+        seen_rows[rows[0]] = game_id
         # Only when the edit touches those numbers. Checking every row
         # in the batch made one legacy game with 7 conversions from 3
         # attempts refuse a placement-only save — and the season/week

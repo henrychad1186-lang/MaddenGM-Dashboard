@@ -186,3 +186,27 @@ def test_clearing_a_scheme_is_not_an_edit_either():
     after = before.copy()
     after.loc[0, schemes.OFF_SCHEME] = ""
     assert catchup.changes(before, after) == {}
+
+
+def test_the_grid_keeps_game_ids_by_value():
+    """The same truncation, in the module I had just claimed was clean.
+
+    `frame` built its row list with `int(GAME_ID)`, so a log holding 1
+    and 1.5 produced two rows both named 1 and both filled from game 1
+    — the second game unreachable and its data invisible. `changes`
+    then read them as a duplicate and skipped both, while the grid's
+    duplicate warning found none, because the log has no duplicates.
+    """
+    log = pd.DataFrame({"GAME_ID": [1, 1.5],
+                        "Third_Down_Att": [10, 99]})
+    out = catchup.frame(log, _label)
+    assert out["Game"].tolist() == [1.0, 1.5]
+    assert out["Third_Down_Att"].tolist() == [10, 99]
+
+
+def test_an_edit_to_a_fractional_game_reaches_that_game():
+    log = pd.DataFrame({"GAME_ID": [1, 1.5], "Third_Down_Att": [10, 99]})
+    before = catchup.frame(log, _label)
+    after = before.copy()
+    after.loc[1, "Third_Down_Att"] = 7
+    assert catchup.changes(before, after) == {1.5: {"Third_Down_Att": 7}}

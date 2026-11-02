@@ -40,7 +40,13 @@ def frame(existing: pd.DataFrame, label) -> pd.DataFrame:
     rows = []
     if existing is None or existing.empty or "GAME_ID" not in existing.columns:
         return _empty()
-    for game_id in [int(v) for v in pd.to_numeric(
+    # By value: `int()` here made 1 and 1.5 two rows both named 1 and
+    # both filled from game 1, so the second game was unreachable and
+    # `changes` then read the pair as a duplicate and skipped both —
+    # while the grid's duplicate warning found none, the log having no
+    # duplicates. The same mistake as in the writer, in the module
+    # written to avoid it.
+    for game_id in [float(v) for v in pd.to_numeric(
             existing["GAME_ID"], errors="coerce").dropna()]:
         current = game_log.row_for_game(existing, game_id)
         row = {"Game": game_id, "Matchup": label(existing, game_id)}
@@ -95,7 +101,7 @@ def changes(before: pd.DataFrame, after: pd.DataFrame) -> dict:
     # game. Those rows are left for `update_games` to refuse by name.
     ambiguous = set(base.index[base.index.duplicated(keep=False)])
     for _, row in after.iterrows():
-        game_id = int(row["Game"])
+        game_id = float(row["Game"])
         if game_id not in base.index or game_id in ambiguous:
             continue
         old = base.loc[game_id]

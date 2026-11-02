@@ -1481,3 +1481,23 @@ def test_planning_does_not_merge_games_with_fractional_ids():
         1: (2026, 1), 1.5: (2026, 2), 2: (2026, 3)}
     assert game_log.plan_season_weeks(existing, 1.5, 2026, 1) == {
         1.5: (2026, 1), 2: (2026, 2)}
+
+
+def test_two_keys_for_one_game_are_refused(tmp_path):
+    """Dictionary-key uniqueness is not game uniqueness.
+
+    `1` and `"1"` are different dict keys naming the same row. Each
+    patch was validated against the *original* row and passed, then
+    both were applied to it — producing 7 conversions from 5
+    attempts, the exact state `_impossible_pair` exists to prevent,
+    written and reported as success.
+    """
+    path = tmp_path / "game_logs.csv"
+    path.write_text("GAME_ID,Team,Third_Down_Att,Third_Down_Conv\n"
+                    "1,GB,10,3\n")
+    before = path.read_bytes()
+    ok, msg = game_log.update_games(str(path), {
+        1: {"Third_Down_Att": 5}, "1": {"Third_Down_Conv": 7}})
+    assert not ok, path.read_text()
+    assert "#1" in msg and "once" in msg.lower(), msg
+    assert path.read_bytes() == before
