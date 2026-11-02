@@ -81,7 +81,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .totals{margin-left:auto;max-width:360px}
 .totals div{display:flex;justify-content:space-between;padding:3px 0}
 .totals .big{font-size:18px;font-weight:700;border-top:1px solid var(--line);padding-top:6px;margin-top:4px}
-.totals .int{color:var(--muted);font-size:12px}
+.totals .int{color:var(--muted);font-size:12px;gap:12px}.totals .int span:last-child{white-space:nowrap}
 .chk{display:flex;gap:8px;align-items:center;padding:4px 0}
 .chk input[type=checkbox]{width:auto}
 .chk.done span{text-decoration:line-through;color:var(--muted)}
@@ -175,7 +175,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
       <button id="pbImport">Import CSV</button><button id="pbExport">Export CSV</button>
       <button class="pri" id="pbAdd">+ Add item <kbd>N</kbd></button></div>
     <div class="tblwrap"><table id="pbTable"></table></div>
-    <p class="help">Unit price = Material + Labor. Quote markup is applied on top of both in each quote (0% by default, since these are your client prices). CSV columns: category,name,unit,material,labor,notes</p>
+    <p class="help">Unit price = Material + Labor. Quote markup is applied on top of both in each quote (0% by default, since these are your client prices). "Your cost" is what a unit costs you; with it filled in, quotes show real profit and margin (blank = unknown, not $0). CSV columns: category,name,unit,material,labor,your_cost,notes</p>
     <input type="file" id="csvFile" accept=".csv,text/csv" hidden>
   </section>
 
@@ -431,6 +431,10 @@ function save() {
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = v => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
+// Your cost per unit is optional: blank means "not entered", which is not the same as $0.
+const hasCost = v => v !== null && v !== undefined && v !== "" && isFinite(parseFloat(v));
+const costVal = v => (String(v ?? "").trim() === "" ? null : num(v));
+const pct = m => (m === null ? "—" : (m * 100).toFixed(1) + "%");
 const money = v => (v < 0 ? "-" : "") + "$" + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const money0 = v => (v < 0 ? "-" : "") + "$" + Math.round(Math.abs(v)).toLocaleString();
 const pill = s => `<span class="pill s-${esc(String(s ?? "").replace(/\s/g, "-"))}">${esc(s)}</span>`;
@@ -457,12 +461,23 @@ function parseCSV(text) {
 
 /* ---------- quote math ---------- */
 function quoteTotals(q) {
-  let mat = 0, lab = 0;
-  for (const it of q.items) { mat += num(it.qty) * num(it.material); lab += num(it.qty) * num(it.labor); }
+  // mat/lab are the price-book prices (client prices); ucost is what the line costs you.
+  let mat = 0, lab = 0, yourCost = 0, missing = 0;
+  for (const it of q.items) {
+    const qty = num(it.qty);
+    mat += qty * num(it.material); lab += qty * num(it.labor);
+    if (hasCost(it.ucost)) yourCost += qty * num(it.ucost);
+    else if (qty * (num(it.material) + num(it.labor))) missing++;
+  }
   const cost = mat + lab, markup = cost * num(q.markup) / 100, tax = mat * num(q.tax) / 100;
   const total = cost + markup + tax - num(q.discount);
-  const profit = markup - num(q.discount);
-  return { mat, lab, cost, markup, tax, total, profit, margin: total ? profit / total : 0, deposit: total * num(q.deposit) / 100 };
+  // Revenue excludes tax, which is passed through. Profit is only stated when every
+  // priced line has a cost; a partial sum would overstate it.
+  const revenue = cost + markup - num(q.discount);
+  const costKnown = q.items.length > 0 && missing === 0;
+  const profit = costKnown ? revenue - yourCost : null;
+  const margin = costKnown && revenue ? profit / revenue : null;
+  return { mat, lab, cost, markup, tax, total, revenue, yourCost, missing, costKnown, profit, margin, deposit: total * num(q.deposit) / 100 };
 }
 function projectFin(p) {
   const co = (p.changeOrders || []).reduce((s, c) => s + num(c.amount), 0);
@@ -500,13 +515,14 @@ function renderDash() {
   const bookedYTD = won.filter(q => (q.acceptedDate || q.date || "").startsWith(ytd)).reduce((s, q) => s + quoteTotals(q).total, 0);
   const ar = DB.projects.filter(p => p.status !== "Lead").reduce((s, p) => s + Math.max(0, projectFin(p).owed), 0);
   const winRate = decided.length ? won.length / decided.length : 0;
-  const avgMargin = won.length ? won.reduce((s, q) => s + quoteTotals(q).margin, 0) / won.length : 0;
+  const wonCosted = won.map(q => quoteTotals(q)).filter(t => t.margin !== null);
+  const avgMargin = wonCosted.length ? wonCosted.reduce((s, t) => s + t.margin, 0) / wonCosted.length : null;
   const k = (l, v, s = "") => `<div class="card kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
   $("#kpis").innerHTML =
     k("Open quotes", money0(open.reduce((s, q) => s + quoteTotals(q).total, 0)), open.length + " sent, awaiting answer") +
     k("Booked " + ytd, money0(bookedYTD), won.length + " accepted all-time") +
     k("Win rate", decided.length ? Math.round(winRate * 100) + "%" : "—", decided.length + " decided quotes") +
-    k("Avg margin (won)", won.length ? (avgMargin * 100).toFixed(1) + "%" : "—", "Gross profit / sell price") +
+    k("Avg margin (won)", pct(avgMargin), wonCosted.length ? `${wonCosted.length} of ${won.length} won quotes fully costed` : (won.length ? "Enter your costs to see margin" : "Gross profit / sell price")) +
     k("Active projects", active.length, DB.projects.filter(p => projectFin(p).over).length + " over budget") +
     k("Receivable", money0(ar), "Contract + COs − payments");
 
@@ -545,11 +561,11 @@ function renderQuotes() {
   const f = $("#qFilter").value;
   const rows = DB.quotes.filter(q => (!f || q.status === f) && hit(q.number, q.client.name, q.client.address, q.projectName))
     .map(q => ({ q, t: quoteTotals(q) }));
-  const key = { number: r => r.q.number, date: r => r.q.date, client: r => r.q.client.name.toLowerCase(), total: r => r.t.total, margin: r => r.t.margin, status: r => r.q.status };
+  const key = { number: r => r.q.number, date: r => r.q.date, client: r => r.q.client.name.toLowerCase(), total: r => r.t.total, margin: r => r.t.margin ?? -Infinity, status: r => r.q.status };
   rows.sort((a, b) => { const x = key[qSort.k](a), y = key[qSort.k](b); return (x > y ? 1 : x < y ? -1 : 0) * qSort.d; });
   const h = (k, l, c = "") => `<th class="sort ${c}" data-k="${k}">${l}${qSort.k === k ? (qSort.d > 0 ? " ▲" : " ▼") : ""}</th>`;
   $("#qTable").innerHTML = `<thead><tr>${h("number", "#")}${h("date", "Date")}${h("client", "Client / Project")}${h("status", "Status")}${h("total", "Total", "n")}${h("margin", "Margin", "n")}<th></th></tr></thead><tbody>` +
-    (rows.length ? rows.map(({ q, t }) => `<tr class="click" data-id="${q.id}"><td>${q.number}</td><td>${fmtDate(q.date)}</td><td><b>${esc(q.client.name || "(no client)")}</b><div class="muted">${esc(q.projectName)}</div></td><td>${pill(q.status)}</td><td class="n">${money(t.total)}</td><td class="n">${(t.margin * 100).toFixed(1)}%</td>
+    (rows.length ? rows.map(({ q, t }) => `<tr class="click" data-id="${q.id}"><td>${q.number}</td><td>${fmtDate(q.date)}</td><td><b>${esc(q.client.name || "(no client)")}</b><div class="muted">${esc(q.projectName)}</div></td><td>${pill(q.status)}</td><td class="n">${money(t.total)}</td><td class="n" title="${t.costKnown ? "" : t.missing + " line(s) without your cost"}">${pct(t.margin)}</td>
       <td class="n"><button class="sm" data-act="dup">Duplicate</button> <button class="sm" data-act="print">Print</button></td></tr>`).join("")
       : `<tr><td colspan="7" class="empty">No quotes yet. Start one from a template.</td></tr>`) + "</tbody>";
 }
@@ -574,7 +590,7 @@ function quoteFromTemplate(t) {
   q.projectName = t.name; q.scope = t.scope || "";
   q.items = t.items.map(i => {
     const p = i.priceId && DB.pricebook.find(x => x.id === i.priceId);
-    return p ? { id: uid(), priceId: p.id, desc: p.name, category: p.category, unit: p.unit, qty: i.qty, material: p.material, labor: p.labor }
+    return p ? { id: uid(), priceId: p.id, desc: p.name, category: p.category, unit: p.unit, qty: i.qty, material: p.material, labor: p.labor, ucost: p.ucost ?? null }
              : { ...i, id: uid() };
   });
   return q;
@@ -607,7 +623,7 @@ dlg.addEventListener("close", () => { dlgSave = null; render(); });
 /* ---------- line items editor (shared by quotes & templates) ---------- */
 function itemsTable(items, withPrices = true) {
   return `<div class="tblwrap"><table class="items"><thead><tr><th>Category</th><th>Description</th><th>Unit</th><th class="n">Qty</th>
-    ${withPrices ? `<th class="n">Mat/unit</th><th class="n">Labor/unit</th><th class="n">Cost</th>` : ""}<th></th></tr></thead><tbody>
+    ${withPrices ? `<th class="n">Mat/unit</th><th class="n">Labor/unit</th><th class="n">Line total</th><th class="n" title="What this costs you per unit. Leave blank if unknown.">Your cost/unit</th>` : ""}<th></th></tr></thead><tbody>
     ${items.map((it, i) => `<tr data-i="${i}">
       <td><input data-f="category" value="${esc(it.category)}" style="width:110px"></td>
       <td><input data-f="desc" value="${esc(it.desc)}" style="min-width:220px"></td>
@@ -615,9 +631,10 @@ function itemsTable(items, withPrices = true) {
       <td class="n"><input class="num" type="number" step="any" data-f="qty" value="${it.qty}"></td>
       ${withPrices ? `<td class="n"><input class="num" type="number" step="any" data-f="material" value="${it.material}"></td>
       <td class="n"><input class="num" type="number" step="any" data-f="labor" value="${it.labor}"></td>
-      <td class="n" data-cost>${money(num(it.qty) * (num(it.material) + num(it.labor)))}</td>` : ""}
+      <td class="n" data-cost>${money(num(it.qty) * (num(it.material) + num(it.labor)))}</td>
+      <td class="n"><input class="num" type="number" step="any" data-f="ucost" placeholder="—" value="${hasCost(it.ucost) ? it.ucost : ""}"></td>` : ""}
       <td class="n" style="white-space:nowrap"><button class="sm" data-act="up" title="Move up">↑</button> <button class="sm del" data-act="rm" title="Remove">✕</button></td></tr>`).join("")
-      || `<tr><td colspan="8" class="empty">No line items. Add from the price book or a trade rate below.</td></tr>`}
+      || `<tr><td colspan="9" class="empty">No line items. Add from the price book or a trade rate below.</td></tr>`}
     </tbody></table></div>
     <div class="bar" style="margin-top:8px">
       <select data-add="price" style="width:auto;max-width:380px"><option value="">+ Add from price book…</option>${priceOptions()}</select>
@@ -634,19 +651,19 @@ function bindItems(container, items, onChange) {
   container.addEventListener("input", e => {
     const tr = e.target.closest("tr[data-i]"), f = e.target.dataset.f; if (!tr || !f) return;
     const it = items[+tr.dataset.i];
-    it[f] = ["qty", "material", "labor"].includes(f) ? num(e.target.value) : e.target.value;
+    it[f] = f === "ucost" ? costVal(e.target.value) : ["qty", "material", "labor"].includes(f) ? num(e.target.value) : e.target.value;
     const c = tr.querySelector("[data-cost]"); if (c) c.textContent = money(num(it.qty) * (num(it.material) + num(it.labor)));
     onChange(false);
   });
   container.addEventListener("change", e => {
     const a = e.target.dataset.add; if (!a || !e.target.value) return;
-    if (a === "price") { const p = DB.pricebook.find(x => x.id === e.target.value); items.push({ id: uid(), priceId: p.id, desc: p.name, category: p.category, unit: p.unit, qty: 1, material: p.material, labor: p.labor }); }
-    else { const t = DB.trades.find(x => x.id === e.target.value); items.push({ id: uid(), priceId: null, desc: t.trade + " labor", category: "Labor", unit: "HR", qty: Math.max(1, Math.ceil(num(t.min) / Math.max(1, num(t.rate)))), material: 0, labor: t.rate }); }
+    if (a === "price") { const p = DB.pricebook.find(x => x.id === e.target.value); items.push({ id: uid(), priceId: p.id, desc: p.name, category: p.category, unit: p.unit, qty: 1, material: p.material, labor: p.labor, ucost: p.ucost ?? null }); }
+    else { const t = DB.trades.find(x => x.id === e.target.value); items.push({ id: uid(), priceId: null, desc: t.trade + " labor", category: "Labor", unit: "HR", qty: Math.max(1, Math.ceil(num(t.min) / Math.max(1, num(t.rate)))), material: 0, labor: t.rate, ucost: t.ucost ?? null }); }
     onChange(true);
   });
   container.addEventListener("click", e => {
     const act = e.target.dataset.act; if (!act) return;
-    if (act === "custom") { items.push({ id: uid(), priceId: null, desc: "", category: "General", unit: "LS", qty: 1, material: 0, labor: 0 }); return onChange(true); }
+    if (act === "custom") { items.push({ id: uid(), priceId: null, desc: "", category: "General", unit: "LS", qty: 1, material: 0, labor: 0, ucost: null }); return onChange(true); }
     const tr = e.target.closest("tr[data-i]"); if (!tr) return;
     const i = +tr.dataset.i;
     if (act === "rm") items.splice(i, 1);
@@ -674,7 +691,7 @@ function editQuote(id) {
         <div><label>Job address</label><input data-c="address" value="${esc(q.client.address)}"></div>
       </div>
       <div class="f"><div><label>Scope of work</label><textarea data-q="scope">${esc(q.scope)}</textarea></div></div>
-      <h3>Line items <span class="help">(your cost — markup is applied below)</span></h3>
+      <h3>Line items <span class="help">(client prices — markup, if any, is applied below; "Your cost" is internal and never printed)</span></h3>
       <div id="qi">${itemsTable(q.items)}</div>
       <div class="grid two" style="margin-top:14px;align-items:start">
         <div>
@@ -725,7 +742,9 @@ function editQuote(id) {
       ${num(q.discount) ? `<div><span>Discount</span><span>-${money(num(q.discount))}</span></div>` : ""}
       <div class="big"><span>Client total</span><span>${money(t.total)}</span></div>
       <div><span>Deposit (${num(q.deposit)}%)</span><span>${money(t.deposit)}</span></div>
-      <div class="int"><span>Internal: cost ${money0(t.cost)} · profit ${money0(t.profit)}</span><span class="${t.margin < .15 ? "bad" : ""}">${(t.margin * 100).toFixed(1)}% margin</span></div>`;
+      ${t.costKnown
+        ? `<div class="int"><span>Internal: your cost ${money0(t.yourCost)} · profit ${money0(t.profit)}</span><span class="${t.margin < .15 ? "bad" : ""}">${pct(t.margin)} margin</span></div>`
+        : `<div class="int"><span>Internal: margin unknown — ${t.missing ? t.missing + ' priced line(s) have no "your cost"' : "add priced line items"}</span><span>—</span></div>`}`;
   };
   draw();
 }
@@ -734,7 +753,7 @@ function projectFromQuote(q) {
   const t = quoteTotals(q);
   const p = blankProject();
   Object.assign(p, { name: q.projectName || ("Quote #" + q.number), client: q.client.name, phone: q.client.phone, email: q.client.email, address: q.client.address,
-    quoteId: q.id, contract: +t.total.toFixed(2), budget: +(t.cost + t.tax).toFixed(2), status: "Scheduled", notes: q.scope });
+    quoteId: q.id, contract: +t.total.toFixed(2), budget: +((t.costKnown ? t.yourCost : t.cost) + t.tax).toFixed(2), status: "Scheduled", notes: q.scope });
   const cats = [...new Set(q.items.map(i => i.category))];
   p.tasks = [{ id: uid(), text: "Collect deposit (" + money(t.deposit) + ")", done: false, due: today() }, { id: uid(), text: "Pull permits", done: false, due: "" },
     ...cats.map(c => ({ id: uid(), text: c, done: false, due: "" })), { id: uid(), text: "Final walkthrough / punch list", done: false, due: "" }, { id: uid(), text: "Collect final payment", done: false, due: "" }];
@@ -930,28 +949,35 @@ function editTemplate(id) {
 
 /* ---------- pricing ---------- */
 function renderPricing() {
-  $("#trTable").innerHTML = `<thead><tr><th>Trade</th><th class="n">Rate $/hr</th><th class="n">Min. charge $</th><th>Notes</th><th></th></tr></thead><tbody>` +
+  $("#trTable").innerHTML = `<thead><tr><th>Trade</th><th class="n">Rate $/hr</th><th class="n" title="What an hour costs you (wage, burden, overhead). Blank if unknown.">Your cost $/hr</th><th class="n">Min. charge $</th><th>Notes</th><th></th></tr></thead><tbody>` +
     DB.trades.filter(t => hit(t.trade, t.notes)).map(t => `<tr data-id="${t.id}"><td><input data-f="trade" value="${esc(t.trade)}"></td>
-      <td class="n"><input class="num" type="number" step="any" data-f="rate" value="${t.rate}"></td><td class="n"><input class="num" type="number" step="any" data-f="min" value="${t.min}"></td>
+      <td class="n"><input class="num" type="number" step="any" data-f="rate" value="${t.rate}"></td><td class="n"><input class="num" type="number" step="any" data-f="ucost" placeholder="—" value="${hasCost(t.ucost) ? t.ucost : ""}"></td><td class="n"><input class="num" type="number" step="any" data-f="min" value="${t.min}"></td>
       <td><input data-f="notes" value="${esc(t.notes)}"></td><td class="n"><button class="sm del" data-rm>✕</button></td></tr>`).join("") + "</tbody>";
   const cats = [...new Set(DB.pricebook.map(p => p.category))].sort();
   const sel = $("#pbCat"), cur = sel.value;
   sel.innerHTML = `<option value="">All categories</option>` + cats.map(c => `<option ${c === cur ? "selected" : ""}>${esc(c)}</option>`).join("");
   const rows = DB.pricebook.filter(p => (!sel.value || p.category === sel.value) && hit(p.category, p.name, p.notes));
-  $("#pbTable").innerHTML = `<thead><tr><th>Category</th><th>Item</th><th>Unit</th><th class="n">Material $</th><th class="n">Labor $</th><th class="n">Cost/unit</th><th class="n">Sell @ ${num(DB.settings.markup)}%</th><th>Notes</th><th></th></tr></thead><tbody>` +
+  $("#pbTable").innerHTML = `<thead><tr><th>Category</th><th>Item</th><th>Unit</th><th class="n">Material $</th><th class="n">Labor $</th><th class="n">Price/unit</th><th class="n">Sell @ ${num(DB.settings.markup)}%</th><th class="n" title="What one unit costs you (materials + your labor). Blank if unknown.">Your cost $</th><th class="n">Margin</th><th>Notes</th><th></th></tr></thead><tbody>` +
     (rows.map(p => `<tr data-id="${p.id}"><td><input data-f="category" value="${esc(p.category)}" list="catList" style="width:120px"></td><td><input data-f="name" value="${esc(p.name)}" style="min-width:200px"></td>
       <td><input data-f="unit" value="${esc(p.unit)}" style="width:55px"></td>
       <td class="n"><input class="num" type="number" step="any" data-f="material" value="${p.material}"></td><td class="n"><input class="num" type="number" step="any" data-f="labor" value="${p.labor}"></td>
       <td class="n" data-c>${money(num(p.material) + num(p.labor))}</td><td class="n muted" data-s>${money((num(p.material) + num(p.labor)) * (1 + num(DB.settings.markup) / 100))}</td>
-      <td><input data-f="notes" value="${esc(p.notes)}"></td><td class="n"><button class="sm del" data-rm>✕</button></td></tr>`).join("") || `<tr><td colspan="9" class="empty">No items.</td></tr>`) +
+      <td class="n"><input class="num" type="number" step="any" data-f="ucost" placeholder="—" value="${hasCost(p.ucost) ? p.ucost : ""}"></td><td class="n" data-m>${pct(unitMargin(p))}</td>
+      <td><input data-f="notes" value="${esc(p.notes)}"></td><td class="n"><button class="sm del" data-rm>✕</button></td></tr>`).join("") || `<tr><td colspan="11" class="empty">No items.</td></tr>`) +
     `</tbody><datalist id="catList">${cats.map(c => `<option value="${esc(c)}">`).join("")}</datalist>`;
+}
+function unitMargin(p) {
+  const sell = (num(p.material) + num(p.labor)) * (1 + num(DB.settings.markup) / 100);
+  return hasCost(p.ucost) && sell ? (sell - num(p.ucost)) / sell : null;
 }
 $("#pbCat").onchange = renderPricing;
 function bindInline(tableSel, coll, numeric) {
   $(tableSel).addEventListener("input", e => {
     const tr = e.target.closest("tr[data-id]"), f = e.target.dataset.f; if (!tr || !f) return;
-    const r = DB[coll].find(x => x.id === tr.dataset.id); r[f] = numeric.includes(f) ? num(e.target.value) : e.target.value;
-    const c = tr.querySelector("[data-c]"), s = tr.querySelector("[data-s]");
+    const r = DB[coll].find(x => x.id === tr.dataset.id);
+    r[f] = f === "ucost" ? costVal(e.target.value) : numeric.includes(f) ? num(e.target.value) : e.target.value;
+    const c = tr.querySelector("[data-c]"), s = tr.querySelector("[data-s]"), m = tr.querySelector("[data-m]");
+    if (m) m.textContent = pct(unitMargin(r));
     if (c) c.textContent = money(num(r.material) + num(r.labor));
     if (s) s.textContent = money((num(r.material) + num(r.labor)) * (1 + num(DB.settings.markup) / 100));
     save();
@@ -970,7 +996,7 @@ $("#pbAdd").onclick = () => {
   DB.pricebook.push(p); save(); $("#search").value = ""; renderPricing();
   const inp = document.querySelector(`#pbTable tr[data-id="${p.id}"] input[data-f="name"]`); inp.scrollIntoView({ block: "center" }); inp.focus();
 };
-$("#pbExport").onclick = () => download("price-book.csv", [csvRow(["category", "name", "unit", "material", "labor", "notes"]), ...DB.pricebook.map(p => csvRow([p.category, p.name, p.unit, p.material, p.labor, p.notes]))].join("\n"), "text/csv");
+$("#pbExport").onclick = () => download("price-book.csv", [csvRow(["category", "name", "unit", "material", "labor", "your_cost", "notes"]), ...DB.pricebook.map(p => csvRow([p.category, p.name, p.unit, p.material, p.labor, hasCost(p.ucost) ? p.ucost : "", p.notes]))].join("\n"), "text/csv");
 $("#pbImport").onclick = () => $("#csvFile").click();
 $("#csvFile").onchange = async e => {
   const file = e.target.files[0]; e.target.value = ""; if (!file) return;
@@ -981,6 +1007,8 @@ $("#csvFile").onchange = async e => {
   for (const r of rows.slice(1)) {
     const g = k => ix(k) >= 0 ? (r[ix(k)] || "").trim() : "";
     const rec = { category: g("category") || "General", name: g("name"), unit: g("unit") || "EA", material: num(g("material")), labor: num(g("labor")), notes: g("notes") };
+    // Only a file with a your_cost column touches costs; an older export leaves them alone.
+    if (ix("your_cost") >= 0) rec.ucost = costVal(g("your_cost"));
     if (!rec.name) continue;
     const ex = DB.pricebook.find(p => p.name.toLowerCase() === rec.name.toLowerCase() && p.category.toLowerCase() === rec.category.toLowerCase());
     if (ex) { Object.assign(ex, rec); updated++; } else { DB.pricebook.push({ id: uid(), ...rec }); added++; }
@@ -1000,8 +1028,8 @@ $("#jsonFile").onchange = async e => {
     if (!confirm("Replace ALL current data with this backup?")) return; DB = d; DB.ui = DB.ui || { tab: "settings", pView: "board" }; save(); show("settings"); toast("Backup restored"); }
   catch { toast("Not a valid Remodel HQ backup"); }
 };
-$("#exportQuotes").onclick = () => download("quotes.csv", [csvRow(["number", "date", "status", "client", "phone", "email", "address", "project", "cost", "markup", "tax", "discount", "total", "margin_pct"]),
-  ...DB.quotes.map(q => { const t = quoteTotals(q); return csvRow([q.number, q.date, q.status, q.client.name, q.client.phone, q.client.email, q.client.address, q.projectName, t.cost.toFixed(2), t.markup.toFixed(2), t.tax.toFixed(2), num(q.discount).toFixed(2), t.total.toFixed(2), (t.margin * 100).toFixed(1)]); })].join("\n"), "text/csv");
+$("#exportQuotes").onclick = () => download("quotes.csv", [csvRow(["number", "date", "status", "client", "phone", "email", "address", "project", "cost", "markup", "tax", "discount", "total", "your_cost", "profit", "margin_pct"]),
+  ...DB.quotes.map(q => { const t = quoteTotals(q); return csvRow([q.number, q.date, q.status, q.client.name, q.client.phone, q.client.email, q.client.address, q.projectName, t.cost.toFixed(2), t.markup.toFixed(2), t.tax.toFixed(2), num(q.discount).toFixed(2), t.total.toFixed(2), t.costKnown ? t.yourCost.toFixed(2) : "", t.profit === null ? "" : t.profit.toFixed(2), t.margin === null ? "" : (t.margin * 100).toFixed(1)]); })].join("\n"), "text/csv");
 $("#exportProjects").onclick = () => download("projects.csv", [csvRow(["name", "client", "address", "status", "start", "end", "contract", "change_orders", "budget", "spent", "paid", "owed", "projected_profit", "tasks_pct"]),
   ...DB.projects.map(p => { const f = projectFin(p); return csvRow([p.name, p.client, p.address, p.status, p.start, p.end, num(p.contract).toFixed(2), f.co.toFixed(2), f.budget.toFixed(2), f.spent.toFixed(2), f.paid.toFixed(2), f.owed.toFixed(2), f.profit.toFixed(2), Math.round(f.pctTasks * 100)]); })].join("\n"), "text/csv");
 $("#reset").onclick = () => { if (confirm("Erase all quotes, projects, templates and pricing and restore the starter data?") && confirm("Really? This cannot be undone without a backup.")) { DB = seed(); save(); show("dash"); toast("Reset"); } };
