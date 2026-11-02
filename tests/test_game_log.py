@@ -1277,3 +1277,98 @@ def test_a_row_with_no_game_id_is_refused_not_crashed(tmp_path):
     assert not ok
     assert "season 2026 week 5" in msg and "NaN" not in msg
     assert path.read_bytes() == before, "refused write still touched the file"
+
+
+# ── Filling several games' gaps in one pass ──
+
+
+class TestUpdateGames:
+    """`update_games` writes a whole grid of corrections, or none of it.
+
+    The catch-up grid lets one sitting fix placement, efficiency and
+    schemes across every game at once. Applying that a game at a time
+    would be N chances to fail partway, which is the same reason
+    `assign_season_week` has always written its mapping in one pass.
+    """
+
+    @pytest.fixture
+    def log(self, tmp_path):
+        path = tmp_path / "game_logs.csv"
+        path.write_text(
+            "GAME_ID,Season,Week,Team,Opponent,Third_Down_Att,"
+            "Third_Down_Conv\n"
+            "1,,,GB,CHI,,\n2,,,GB,DET,,\n3,,,GB,MIN,,\n")
+        return str(path)
+
+    def test_several_games_in_one_write(self, log):
+        ok, msg = game_log.update_games(log, {
+            1: {"Season": 2026, "Week": 1, "Third_Down_Att": 11},
+            2: {"Season": 2026, "Week": 2},
+        })
+        assert ok, msg
+        out = pd.read_csv(log).set_index("GAME_ID")
+        assert out.loc[1, "Week"] == 1 and out.loc[2, "Week"] == 2
+        assert out.loc[1, "Third_Down_Att"] == 11
+        assert pd.isna(out.loc[3, "Week"])
+
+    def test_one_bad_game_writes_nothing(self, log):
+        before = open(log, "rb").read()
+        ok, msg = game_log.update_games(log, {
+            1: {"Season": 2026, "Week": 1},
+            2: {"Third_Down_Att": 5, "Third_Down_Conv": 9},   # impossible
+        })
+        assert not ok and "exceed" in msg
+        assert open(log, "rb").read() == before, "a refusal still wrote"
+
+    def test_two_games_cannot_take_the_same_week(self, log):
+        before = open(log, "rb").read()
+        ok, msg = game_log.update_games(log, {
+            1: {"Season": 2026, "Week": 4},
+            2: {"Season": 2026, "Week": 4},
+        })
+        assert not ok and "week 4" in msg
+        assert open(log, "rb").read() == before
+
+    def test_a_week_without_a_season_is_refused(self, log):
+        """The half-placed state `data_checks` flags, refused on the way in.
+
+        The grid edits the two columns independently, so it is the one
+        surface that can produce this; the write path should not let it.
+        """
+        ok, msg = game_log.update_games(log, {1: {"Week": 3}})
+        assert not ok and "season" in msg.lower()
+        assert pd.isna(pd.read_csv(log).set_index("GAME_ID").loc[1, "Week"])
+
+    def test_an_out_of_range_week_is_refused(self, log):
+        ok, msg = game_log.update_games(log, {1: {"Season": 2026, "Week": 99}})
+        assert not ok and "Week 99" in msg
+
+    def test_an_unknown_game_is_refused(self, log):
+        ok, msg = game_log.update_games(log, {99: {"Third_Down_Att": 5}})
+        assert not ok and "#99" in msg
+
+    def test_nothing_to_change_is_refused(self, log):
+        ok, msg = game_log.update_games(log, {})
+        assert not ok and "Nothing" in msg
+
+    def test_scheme_columns_are_added_when_absent(self, log):
+        ok, msg = game_log.update_games(log, {1: {"Def_Scheme": "Cover 3"}})
+        assert ok, msg
+        out = pd.read_csv(log).set_index("GAME_ID")
+        assert out.loc[1, "Def_Scheme"] == "Cover 3"
+        assert pd.isna(out.loc[2, "Def_Scheme"])
+
+    def test_untouched_rows_keep_their_exact_bytes(self, log):
+        """The reason this splices rather than round-tripping pandas."""
+        before = open(log).read().splitlines()
+        ok, _ = game_log.update_games(log, {2: {"Third_Down_Att": 7}})
+        assert ok
+        after = open(log).read().splitlines()
+        assert after[1] == before[1] and after[3] == before[3]
+
+    def test_update_game_still_works_through_it(self, log):
+        """The single-game writer delegates, so its behaviour is pinned."""
+        ok, msg = game_log.update_game(log, 1, {"Third_Down_Att": 9})
+        assert ok, msg
+        assert pd.read_csv(log).set_index("GAME_ID").loc[1,
+                                                         "Third_Down_Att"] == 9

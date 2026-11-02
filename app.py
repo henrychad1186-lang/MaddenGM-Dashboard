@@ -22,6 +22,7 @@ from src.theme import NEED_COLORS, RANK_COLORS, VERDICT_COLORS, rank_color
 from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
+from src import catchup
 from src import chat_store
 from src import chat_tools
 from src import close_games
@@ -1394,6 +1395,108 @@ def _backfill_label(games: pd.DataFrame, gid: int) -> str:
             f"({str(r.get('Result', '') or '?')}{score})")
 
 
+def _grid_choices(existing: pd.DataFrame, column: str) -> "list[str]":
+    """Options for a scheme column in the grid: built-ins plus what's logged.
+
+    A `SelectboxColumn` has a fixed list and cannot take a typed-in
+    value the way `scheme_picker`'s combo box can, so a name Madden
+    spells differently is still introduced through *Correct a logged
+    game* — but once it is on a row it appears here for every other.
+    """
+    known = schemes_mod.logged_values(existing, column)
+    return list(dict.fromkeys(list(schemes_mod.DEFAULTS[column]) + list(known)))
+
+
+def render_catchup_grid() -> None:
+    """Fill every game's gaps in one pass.
+
+    Three forms already correct a logged game, one field family each:
+    placement, efficiency, scheme. Each is a separate pick-a-game,
+    type, submit cycle, which is fine for fixing one row and wrong for
+    the state the log is actually in — every game unplaced, most
+    missing efficiency, three of the four scheme columns never written.
+    This is the same data as one table, saved once.
+
+    It does not replace the other two. The season/week form plans a
+    whole run of weeks from one choice, which a grid cannot do, and the
+    correction form is the only one that reaches a single game without
+    scrolling. What this removes is the need to visit all three.
+    """
+    _note = st.session_state.pop("catchup_note", None)
+    if _note:
+        st.success(_note)
+
+    existing = game_log.read_log(_GAME_LOGS_CSV)
+    if existing.empty or "GAME_ID" not in existing.columns:
+        return
+
+    unplaced = len(game_log.games_missing_season_week(existing))
+    missing_eff = len(game_log.games_missing_efficiency(existing))
+    gaps = []
+    if unplaced:
+        gaps.append(f"{unplaced} unplaced")
+    if missing_eff:
+        gaps.append(f"{missing_eff} missing efficiency")
+    label = ("📋 Fill in the log" +
+             (f" — {', '.join(gaps)}, of {len(existing)}" if gaps else
+              " — everything is filled in"))
+
+    with st.expander(label, expanded=False):
+        if _LOG_SOURCE != "local":
+            st.info("The dashboard is showing an uploaded file or a Google "
+                    "Sheet, so fill the gaps there. Editing here would "
+                    "write to the local file, which isn't what you are "
+                    "looking at.")
+            return
+        st.caption("Every logged game, every field that can be corrected "
+                   "after the fact. **None means not recorded** — the "
+                   "editor writes that in place of an empty cell; click "
+                   "one and type over it. Edit what you know and leave the "
+                   "rest alone: **a cell you don't touch stays as it "
+                   "was**, so saving cannot wipe a number. Season and week "
+                   "go together — a week with no season places the game "
+                   "nowhere and is refused.")
+
+        before = catchup.frame(existing, _backfill_label)
+        edited = st.data_editor(
+            before, hide_index=True, width="stretch", num_rows="fixed",
+            key="catchup_editor", disabled=["Game", "Matchup"],
+            column_config={
+                "Season": st.column_config.NumberColumn(
+                    min_value=season_mod.SEASON_MIN,
+                    max_value=season_mod.SEASON_MAX, step=1, format="%d"),
+                "Week": st.column_config.NumberColumn(
+                    min_value=season_mod.WEEK_MIN,
+                    max_value=season_mod.WEEK_MAX, step=1, format="%d"),
+                "Third_Down_Att": st.column_config.NumberColumn(
+                    "3rd down att", min_value=0, max_value=40, step=1, format="%d"),
+                "Third_Down_Conv": st.column_config.NumberColumn(
+                    "3rd down conv", min_value=0, max_value=40, step=1, format="%d"),
+                "RZ_Att": st.column_config.NumberColumn(
+                    "RZ trips", min_value=0, max_value=20, step=1, format="%d"),
+                "RZ_TD_Made": st.column_config.NumberColumn(
+                    "RZ TDs", min_value=0, max_value=20, step=1, format="%d"),
+                **{c: st.column_config.SelectboxColumn(
+                    schemes_mod.LABELS[c],
+                    options=[""] + _grid_choices(existing, c))
+                   for c in schemes_mod.SCHEME_COLUMNS},
+            })
+
+        if not st.button("Save all changes", type="primary",
+                         key="catchup_save"):
+            return
+        changes = catchup.changes(before, edited)
+        if not changes:
+            st.warning("Nothing was edited, so nothing was written.")
+            return
+        ok, message = game_log.update_games(_GAME_LOGS_CSV, changes)
+        if not ok:
+            st.error(message)
+            return
+        st.session_state["catchup_note"] = message
+        st.rerun()
+
+
 def render_season_week_form() -> None:
     """Place logged games in the franchise timeline.
 
@@ -1657,6 +1760,7 @@ home_tab, tabs = _all_tabs[0], _all_tabs[1:]
 with home_tab:
     render_tab_header("🏠", "Franchise Home",
                       f"Record, cap exposure, needs and moves for {MY_TEAM}")
+    render_catchup_grid()
     render_game_log_form()
     render_season_week_form()
     render_backfill_form()
