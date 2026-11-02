@@ -1390,3 +1390,21 @@ class TestUpdateGames:
         lines = path.read_text().splitlines()
         assert lines[1] == "1,GB,7", f"game 1's row is {lines[1]!r}"
         assert lines[2] == "1.5,GB,", f"game 1.5 was written: {lines[2]!r}"
+
+    def test_a_fractional_id_cannot_slip_past_the_clash_check(self, tmp_path):
+        """The same `int()` truncation, in the placement rules.
+
+        `_week_already_taken` builds `moving` with `int(game_id)`, so
+        placing 1.5 marks 1 as moving too and the on-file row for 1 is
+        skipped — its week looks free and both games end up in it. Same
+        root as the wrong-row write: an identity compared after
+        truncation is not the identity the rest of the code uses.
+        """
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team\n1,2026,4,GB\n1.5,,,GB\n")
+        before = path.read_bytes()
+        ok, msg = game_log.update_games(
+            str(path), {1.5: {"Season": 2026, "Week": 4}})
+        assert not ok, f"both games now sit in week 4: {path.read_text()!r}"
+        assert "week 4" in msg
+        assert path.read_bytes() == before

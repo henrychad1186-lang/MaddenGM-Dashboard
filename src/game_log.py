@@ -619,7 +619,9 @@ def _placement_refusal(existing: pd.DataFrame, changes: dict) -> "str | None":
             return (f"Game #{game_id} would have a "
                     f"{'week' if missing == 'season' else 'season'} but no "
                     f"{missing}, which places it nowhere.")
-        mapping[int(game_id)] = (int(season), int(week))
+        # Keyed by value: int() here would merge 1 and 1.5 and the
+        # clash check downstream would treat one as the other.
+        mapping[float(game_id)] = (int(season), int(week))
     if not mapping:
         return None
     return _valid_placement(mapping, existing)
@@ -743,10 +745,15 @@ def plan_season_weeks(existing: pd.DataFrame, first_game_id, season,
 
 
 def _in_range(mapping: dict, known: set) -> "str | None":
-    """Every game real and every slot inside the season's bounds."""
+    """Every game real and every slot inside the season's bounds.
+
+    `known` holds ids by value. Comparing `int(game_id)` would make 1
+    and 1.5 the same game, which is how the clash check below used to
+    let two games into one week.
+    """
     for game_id, (season, week) in mapping.items():
-        if int(game_id) not in known:
-            return f"No game #{game_id} in the log."
+        if float(game_id) not in known:
+            return f"No game #{_format(game_id)} in the log."
         if not SEASON_MIN <= int(season) <= SEASON_MAX:
             return f"Season {season} is outside {SEASON_MIN}-{SEASON_MAX}."
         if not WEEK_MIN <= int(week) <= WEEK_MAX:
@@ -771,7 +778,7 @@ def _week_already_taken(mapping: dict, existing: pd.DataFrame) -> "str | None":
     on_file = zip(pd.to_numeric(existing["GAME_ID"], errors="coerce"),
                   pd.to_numeric(existing["Season"], errors="coerce"),
                   pd.to_numeric(existing["Week"], errors="coerce"))
-    moving = {int(g) for g in mapping}
+    moving = {float(g) for g in mapping}
     for game_id, season, week in on_file:
         if pd.isna(season) or pd.isna(week):
             continue
@@ -779,7 +786,7 @@ def _week_already_taken(mapping: dict, existing: pd.DataFrame) -> "str | None":
         # free. Counting it blocked every re-plan that shifts placed games
         # (a bye moves 40-47 up a week: 40 takes 41's week 7 while 41
         # moves to 8, and the write was refused as a clash with 41).
-        if pd.notna(game_id) and int(game_id) in moving:
+        if pd.notna(game_id) and float(game_id) in moving:
             continue
         slot = (int(season), int(week))
         if slot in seen:
@@ -798,8 +805,21 @@ def _valid_placement(mapping: dict, existing: pd.DataFrame) -> "str | None":
     """Why this season/week assignment cannot be written, or None."""
     if not mapping:
         return "No games to place."
-    return (_in_range(mapping, set(_row_numbers_by_id(existing)))
+    return (_in_range(mapping, _known_ids(existing))
             or _week_already_taken(mapping, existing))
+
+
+def _known_ids(existing: pd.DataFrame) -> set:
+    """Every GAME_ID in the log, by value.
+
+    `_row_numbers_by_id` keys on `int(GAME_ID)` and so cannot answer
+    this: it reports 1.5 as 1, which both hid a missing game and let a
+    real week clash through.
+    """
+    if existing is None or existing.empty or "GAME_ID" not in existing.columns:
+        return set()
+    ids = pd.to_numeric(existing["GAME_ID"], errors="coerce")
+    return {float(v) for v in ids if pd.notna(v)}
 
 
 def _row_numbers_by_id(existing: pd.DataFrame) -> dict:
