@@ -152,3 +152,37 @@ def test_a_grid_that_double_books_a_week_is_refused(tmp_path):
         str(path), catchup.changes(before, after))
     assert not ok and "week 5" in message
     assert path.read_bytes() == was
+
+
+def test_a_duplicate_game_id_does_not_break_the_save():
+    """Two rows sharing an ID made `base.loc[gid]` a frame, not a row.
+
+    Comparing it raised "The truth value of a Series is ambiguous",
+    which aborts the Streamlit run before the writer can explain
+    anything — and it did so even when the edit was to a different,
+    unique game.
+    """
+    log = pd.DataFrame([{"GAME_ID": 1, "Third_Down_Att": 5},
+                        {"GAME_ID": 1, "Third_Down_Att": 9},
+                        {"GAME_ID": 2, "Third_Down_Att": None}])
+    before = catchup.frame(log, _label)
+    after = before.copy()
+    after.loc[2, "Third_Down_Att"] = 8
+    # The unique game is still editable; the ambiguous one is left for
+    # the writer to refuse by name.
+    assert catchup.changes(before, after) == {2: {"Third_Down_Att": 8}}
+
+
+def test_clearing_a_scheme_is_not_an_edit_either():
+    """The contract covered numbers but the code only honoured it there.
+
+    `changes` promised that clearing a cell leaves the value alone, and
+    the numeric branch did that — the scheme branch wrote the empty
+    string straight over a recorded playbook. Clearing one is still
+    supported, on *Correct a logged game*, which says so.
+    """
+    log = pd.DataFrame([{"GAME_ID": 1, "Playbook": "Air Raid"}])
+    before = catchup.frame(log, _label)
+    after = before.copy()
+    after.loc[0, schemes.OFF_SCHEME] = ""
+    assert catchup.changes(before, after) == {}

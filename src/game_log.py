@@ -527,9 +527,13 @@ def update_games(path: str, changes: dict) -> "tuple[bool, str]":
             _extend_header(path, new_columns)
             lines, columns = _lines_and_columns(path, existing)
 
-        positions = _row_numbers_by_id(existing)
         for game_id, fields in changes.items():
-            index = positions[int(game_id)] + 1   # the header is line 0
+            # `_row_numbers`, not `_row_numbers_by_id`: that one keys on
+            # int(GAME_ID), so 1.5 overwrites 1 in the map and the write
+            # lands on the wrong game while validation — which matches
+            # exactly — sees nothing wrong. Exactly one row is
+            # guaranteed by `_why_not_batch` above.
+            index = _row_numbers(existing, game_id)[0] + 1  # header is 0
             raw = lines[index]
             body = raw.rstrip("\r\n")
             # Captured before splicing: the body grows as fields are

@@ -1372,3 +1372,21 @@ class TestUpdateGames:
         assert ok, msg
         assert pd.read_csv(log).set_index("GAME_ID").loc[1,
                                                          "Third_Down_Att"] == 9
+
+    def test_a_fractional_id_cannot_steal_another_game_s_row(self, tmp_path):
+        """`1` and `1.5` are different games; `int()` makes them one.
+
+        `_row_numbers_by_id` keys on `int(GAME_ID)`, so 1.5 overwrote 1
+        in the position map. Validation matches exactly and passed, then
+        the write went to 1.5's line — the correction landed on the
+        wrong game and reported success. `update_game` inherits this
+        now that it delegates, so the single-game correction form had
+        it too.
+        """
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Team,Third_Down_Att\n1,GB,\n1.5,GB,\n")
+        ok, msg = game_log.update_games(str(path), {1: {"Third_Down_Att": 7}})
+        assert ok, msg
+        lines = path.read_text().splitlines()
+        assert lines[1] == "1,GB,7", f"game 1's row is {lines[1]!r}"
+        assert lines[2] == "1.5,GB,", f"game 1.5 was written: {lines[2]!r}"

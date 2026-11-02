@@ -88,9 +88,15 @@ def changes(before: pd.DataFrame, after: pd.DataFrame) -> dict:
     if before is None or after is None or before.empty or after.empty:
         return out
     base = before.set_index("Game")
+    # A log can carry the same GAME_ID twice. `base.loc[id]` is then a
+    # frame rather than a row and every comparison below raises "The
+    # truth value of a Series is ambiguous", which aborts the whole
+    # Streamlit run — even when the edit was to a different, unique
+    # game. Those rows are left for `update_games` to refuse by name.
+    ambiguous = set(base.index[base.index.duplicated(keep=False)])
     for _, row in after.iterrows():
         game_id = int(row["Game"])
-        if game_id not in base.index:
+        if game_id not in base.index or game_id in ambiguous:
             continue
         old = base.loc[game_id]
         fields = {}
@@ -103,7 +109,13 @@ def changes(before: pd.DataFrame, after: pd.DataFrame) -> dict:
                 fields[column] = int(wanted)
         for column in schemes.SCHEME_COLUMNS:
             wanted = schemes.normalize(row.get(column), column)
-            if wanted != schemes.normalize(old.get(column), column):
+            # Blank is "left alone", not "erase", the same as a cleared
+            # number above — the contract this function documents was
+            # only being honoured on the numeric branch, so clearing a
+            # box wrote the empty string over a recorded playbook.
+            # Clearing one is still supported on *Correct a logged
+            # game*, which says so in as many words.
+            if wanted and wanted != schemes.normalize(old.get(column), column):
                 fields[column] = wanted
         if fields:
             out[game_id] = fields

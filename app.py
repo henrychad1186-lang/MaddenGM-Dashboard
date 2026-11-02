@@ -1457,6 +1457,18 @@ def render_catchup_grid() -> None:
                    "go together — a week with no season places the game "
                    "nowhere and is refused.")
 
+        # Skipped silently by `catchup.changes`, which cannot tell which
+        # row an edit means — so say so, or an edit to one of these
+        # rows would appear to save and do nothing.
+        _ids = pd.to_numeric(existing["GAME_ID"], errors="coerce").dropna()
+        _dupes = sorted({int(v) for v in _ids[_ids.duplicated(keep=False)]})
+        if _dupes:
+            st.warning(
+                "Game " + ", ".join(f"#{d}" for d in _dupes) + " appears "
+                "more than once in the log, so there is no way to say which "
+                "row an edit means. Those rows can be read here but not "
+                "saved — give them distinct GAME_IDs in the CSV first.")
+
         before = catchup.frame(existing, _backfill_label)
         edited = st.data_editor(
             before, hide_index=True, width="stretch", num_rows="fixed",
