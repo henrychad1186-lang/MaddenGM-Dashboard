@@ -1213,6 +1213,51 @@ def test_the_shipped_log_has_no_unreadable_placements():
     assert game_log.unreadable_placements(pd.read_csv("data/game_logs.csv")) == []
 
 
+# ── Stat columns holding text ──
+
+
+def test_text_in_a_stat_column_no_longer_breaks_arithmetic():
+    """One "12%" left the whole column as text, so the sidebar's
+    `Fatigue.sub()` and Coach DNA's `Turnovers.mean()` raised and stopped
+    the script. The readable cells have to survive it."""
+    df = pd.DataFrame({"Fatigue": ["12%", "10", "20"],
+                       "Turnovers": ["N/A", "1", "3"]})
+    out, notes = game_log.coerce_stats(df)
+    assert out["Fatigue"].sub(15).abs().tolist()[1:] == [5, 5]
+    assert out["Turnovers"].mean() == 2
+    assert pd.isna(out["Fatigue"].iloc[0])
+    assert len(notes) == 2, notes
+    assert notes[0].startswith("1 row(s) have a Fatigue") and "'12%'" in notes[0]
+    assert "'N/A'" in notes[1]
+
+
+def test_coercing_stats_leaves_the_input_frame_alone():
+    df = pd.DataFrame({"Turnovers": ["N/A", "1"]})
+    game_log.coerce_stats(df)
+    assert df["Turnovers"].tolist() == ["N/A", "1"]
+
+
+def test_blank_and_numeric_stats_are_not_reported():
+    df = pd.DataFrame({"Turnovers": [1, 2, 3],
+                       "Takeaways": [None, "  ", float("nan")],
+                       "Sacks_For": ["2", 3, 4.5]})
+    out, notes = game_log.coerce_stats(df)
+    assert notes == []
+    assert out["Turnovers"].tolist() == [1, 2, 3]
+    assert out["Sacks_For"].tolist() == [2, 3, 4.5]
+
+
+def test_columns_outside_the_stat_list_are_left_as_text():
+    df = pd.DataFrame({"Opponent": ["CHI"], "TOP": ["31:12"]})
+    out, notes = game_log.coerce_stats(df)
+    assert notes == []
+    assert out.to_dict("list") == {"Opponent": ["CHI"], "TOP": ["31:12"]}
+
+
+def test_the_shipped_log_has_no_unreadable_stats():
+    assert game_log.coerce_stats(pd.read_csv("data/game_logs.csv"))[1] == []
+
+
 # ── Correcting a placement after every game already has one ──
 
 

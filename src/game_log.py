@@ -50,6 +50,15 @@ EFFICIENCY_FIELDS = ["Third_Down_Att", "Third_Down_Conv", "RZ_Att"]
 # sense in that direction. This module owns the CSV schema.
 SCHEME_FIELDS = ["Playbook", "Off_Playbook", "Def_Scheme", "Def_Playbook"]
 
+# Per-game numbers the dashboard does arithmetic on. Points, TOP, Season and
+# Week are not here because the loader already handles each of them itself.
+STAT_FIELDS = [
+    "Fatigue", "Pass_Yards", "Rush_Yards", "Total_Yards", "First_Downs",
+    "Turnovers", "RZ_TD_Made", "Pass_Yards_Allowed", "Rush_Yards_Allowed",
+    "Total_Yards_Allowed", "Sacks_For", "Takeaways", "Point_Differential",
+    "Third_Down_Att", "Third_Down_Conv", "RZ_Att",
+]
+
 # Columns that arrived after games had already been logged, so an
 # existing file may not have them. `append_game` adds any of these the
 # user actually supplies; everything else must already be in the header,
@@ -586,6 +595,32 @@ def unreadable_placements(df: pd.DataFrame) -> "list[str]":
             f"({', '.join(repr(v) for v in shown)}). Those games will read "
             f"as unplaced until the cell holds a plain number.")
     return notes
+
+
+def coerce_stats(df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
+    """STAT_FIELDS as numbers, plus a note for each column that lost text.
+
+    Returns a copy; the file itself is never touched. A cell that isn't a
+    number becomes blank, which every reader already treats as not
+    recorded, and is named in the note because it can't be told from an
+    empty cell afterwards.
+    """
+    out = df.copy()
+    notes = []
+    for column in STAT_FIELDS:
+        if column not in out.columns:
+            continue
+        numeric = pd.to_numeric(out[column], errors="coerce")
+        text = out[column].astype("string").str.strip()
+        lost = text.notna() & (text != "") & numeric.isna()
+        if lost.any():
+            shown = sorted(set(text[lost]))[:3]
+            notes.append(
+                f"{int(lost.sum())} row(s) have a {column} that is not a "
+                f"number ({', '.join(repr(v) for v in shown)}). Those cells "
+                f"are treated as not recorded.")
+        out[column] = numeric
+    return out, notes
 
 
 def games_missing_season_week(df: pd.DataFrame) -> pd.DataFrame:
