@@ -1477,10 +1477,6 @@ def render_catchup_grid() -> None:
             before, hide_index=True, width="stretch", num_rows="fixed",
             key="catchup_editor", disabled=["Game", "Matchup"],
             column_config={
-                # %g, because an id is kept by value: 1 shows as 1 and
-                # a 1.5 as 1.5, where the default float format would
-                # make every game read as "1.0000".
-                "Game": st.column_config.NumberColumn(format="%g"),
                 "Season": st.column_config.NumberColumn(
                     min_value=season_mod.SEASON_MIN,
                     max_value=season_mod.SEASON_MAX, step=1, format="%d"),
