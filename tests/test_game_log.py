@@ -1277,3 +1277,252 @@ def test_a_row_with_no_game_id_is_refused_not_crashed(tmp_path):
     assert not ok
     assert "season 2026 week 5" in msg and "NaN" not in msg
     assert path.read_bytes() == before, "refused write still touched the file"
+
+
+# ── Filling several games' gaps in one pass ──
+
+
+class TestUpdateGames:
+    """`update_games` writes a whole grid of corrections, or none of it.
+
+    The catch-up grid lets one sitting fix placement, efficiency and
+    schemes across every game at once. Applying that a game at a time
+    would be N chances to fail partway, which is the same reason
+    `assign_season_week` has always written its mapping in one pass.
+    """
+
+    @pytest.fixture
+    def log(self, tmp_path):
+        path = tmp_path / "game_logs.csv"
+        path.write_text(
+            "GAME_ID,Season,Week,Team,Opponent,Third_Down_Att,"
+            "Third_Down_Conv\n"
+            "1,,,GB,CHI,,\n2,,,GB,DET,,\n3,,,GB,MIN,,\n")
+        return str(path)
+
+    def test_several_games_in_one_write(self, log):
+        ok, msg = game_log.update_games(log, {
+            1: {"Season": 2026, "Week": 1, "Third_Down_Att": 11},
+            2: {"Season": 2026, "Week": 2},
+        })
+        assert ok, msg
+        out = pd.read_csv(log).set_index("GAME_ID")
+        assert out.loc[1, "Week"] == 1 and out.loc[2, "Week"] == 2
+        assert out.loc[1, "Third_Down_Att"] == 11
+        assert pd.isna(out.loc[3, "Week"])
+
+    def test_one_bad_game_writes_nothing(self, log):
+        before = open(log, "rb").read()
+        ok, msg = game_log.update_games(log, {
+            1: {"Season": 2026, "Week": 1},
+            2: {"Third_Down_Att": 5, "Third_Down_Conv": 9},   # impossible
+        })
+        assert not ok and "exceed" in msg
+        assert open(log, "rb").read() == before, "a refusal still wrote"
+
+    def test_two_games_cannot_take_the_same_week(self, log):
+        before = open(log, "rb").read()
+        ok, msg = game_log.update_games(log, {
+            1: {"Season": 2026, "Week": 4},
+            2: {"Season": 2026, "Week": 4},
+        })
+        assert not ok and "week 4" in msg
+        assert open(log, "rb").read() == before
+
+    def test_a_week_without_a_season_is_refused(self, log):
+        """The half-placed state `data_checks` flags, refused on the way in.
+
+        The grid edits the two columns independently, so it is the one
+        surface that can produce this; the write path should not let it.
+        """
+        ok, msg = game_log.update_games(log, {1: {"Week": 3}})
+        assert not ok and "season" in msg.lower()
+        assert pd.isna(pd.read_csv(log).set_index("GAME_ID").loc[1, "Week"])
+
+    def test_an_out_of_range_week_is_refused(self, log):
+        ok, msg = game_log.update_games(log, {1: {"Season": 2026, "Week": 99}})
+        assert not ok and "Week 99" in msg
+
+    def test_an_unknown_game_is_refused(self, log):
+        ok, msg = game_log.update_games(log, {99: {"Third_Down_Att": 5}})
+        assert not ok and "#99" in msg
+
+    def test_nothing_to_change_is_refused(self, log):
+        ok, msg = game_log.update_games(log, {})
+        assert not ok and "Nothing" in msg
+
+    def test_scheme_columns_are_added_when_absent(self, log):
+        ok, msg = game_log.update_games(log, {1: {"Def_Scheme": "Cover 3"}})
+        assert ok, msg
+        out = pd.read_csv(log).set_index("GAME_ID")
+        assert out.loc[1, "Def_Scheme"] == "Cover 3"
+        assert pd.isna(out.loc[2, "Def_Scheme"])
+
+    def test_untouched_rows_keep_their_exact_bytes(self, log):
+        """The reason this splices rather than round-tripping pandas."""
+        before = open(log).read().splitlines()
+        ok, _ = game_log.update_games(log, {2: {"Third_Down_Att": 7}})
+        assert ok
+        after = open(log).read().splitlines()
+        assert after[1] == before[1] and after[3] == before[3]
+
+    def test_update_game_still_works_through_it(self, log):
+        """The single-game writer delegates, so its behaviour is pinned."""
+        ok, msg = game_log.update_game(log, 1, {"Third_Down_Att": 9})
+        assert ok, msg
+        assert pd.read_csv(log).set_index("GAME_ID").loc[1,
+                                                         "Third_Down_Att"] == 9
+
+    def test_a_fractional_id_cannot_steal_another_game_s_row(self, tmp_path):
+        """`1` and `1.5` are different games; `int()` makes them one.
+
+        `_row_numbers_by_id` keys on `int(GAME_ID)`, so 1.5 overwrote 1
+        in the position map. Validation matches exactly and passed, then
+        the write went to 1.5's line — the correction landed on the
+        wrong game and reported success. `update_game` inherits this
+        now that it delegates, so the single-game correction form had
+        it too.
+        """
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Team,Third_Down_Att\n1,GB,\n1.5,GB,\n")
+        ok, msg = game_log.update_games(str(path), {1: {"Third_Down_Att": 7}})
+        assert ok, msg
+        lines = path.read_text().splitlines()
+        assert lines[1] == "1,GB,7", f"game 1's row is {lines[1]!r}"
+        assert lines[2] == "1.5,GB,", f"game 1.5 was written: {lines[2]!r}"
+
+    def test_a_fractional_id_cannot_slip_past_the_clash_check(self, tmp_path):
+        """The same `int()` truncation, in the placement rules.
+
+        `_week_already_taken` builds `moving` with `int(game_id)`, so
+        placing 1.5 marks 1 as moving too and the on-file row for 1 is
+        skipped — its week looks free and both games end up in it. Same
+        root as the wrong-row write: an identity compared after
+        truncation is not the identity the rest of the code uses.
+        """
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team\n1,2026,4,GB\n1.5,,,GB\n")
+        before = path.read_bytes()
+        ok, msg = game_log.update_games(
+            str(path), {1.5: {"Season": 2026, "Week": 4}})
+        assert not ok, f"both games now sit in week 4: {path.read_text()!r}"
+        assert "week 4" in msg
+        assert path.read_bytes() == before
+
+    def test_the_writer_identifies_columns_the_way_the_reader_does(
+            self, tmp_path):
+        """A header pandas keeps distinct must not be collapsed here.
+
+        `GAME_ID,Team, RZ_Att,RZ_Att` gives pandas ' RZ_Att' and
+        'RZ_Att' — two columns. Re-parsing the raw header and stripping
+        made them one name, so `columns.index` found the earlier one
+        and the write landed on the wrong column while reporting
+        success, leaving the validated field untouched. Same mistake as
+        the id truncation: a second way of naming a thing that
+        disagrees with the first.
+        """
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Team, RZ_Att,RZ_Att\n1,GB,2,5\n")
+        ok, msg = game_log.update_games(str(path), {1: {"RZ_Att": 3}})
+        assert ok, msg
+        assert path.read_text().splitlines()[1] == "1,GB,2,3", path.read_text()
+
+    def test_placing_a_game_ignores_efficiency_it_does_not_touch(
+            self, tmp_path):
+        """Placement must not be blocked by an unrelated legacy row.
+
+        `assign_season_week` checked only placement before it delegated
+        here. Running the made-cannot-exceed-attempted rule over every
+        row in the batch meant one old game with 7 conversions from 3
+        attempts refused the whole run the season/week form submits —
+        a save that changes neither number.
+        """
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team,Third_Down_Att,"
+                        "Third_Down_Conv\n1,,,GB,3,7\n2,,,GB,10,5\n")
+        ok, msg = game_log.assign_season_week(
+            str(path), {1: (2026, 1), 2: (2026, 2)})
+        assert ok, msg
+        assert pd.read_csv(path)["Week"].tolist() == [1, 2]
+
+    def test_editing_efficiency_is_still_checked(self, tmp_path):
+        """The guard on the other side: scoping it must not disable it."""
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team,Third_Down_Att,"
+                        "Third_Down_Conv\n1,,,GB,10,5\n")
+        before = path.read_bytes()
+        ok, msg = game_log.update_games(str(path), {1: {"Third_Down_Conv": 12}})
+        assert not ok and "exceed" in msg
+        assert path.read_bytes() == before
+
+    def test_the_refusal_names_the_game_that_actually_holds_the_week(
+            self, tmp_path):
+        """A refusal whose job is to say which game to look at."""
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team\n1.5,2026,4,GB\n2,,,GB\n")
+        ok, msg = game_log.update_games(
+            str(path), {2: {"Season": 2026, "Week": 4}})
+        assert not ok
+        assert "#1.5" in msg, msg
+
+
+def test_planning_does_not_merge_games_with_fractional_ids():
+    """Pre-existing, and the same family as the identity bugs above.
+
+    `plan_season_weeks` orders games with `int(GAME_ID)`, so 1 and 1.5
+    collapse: the plan skips a week, misplaces the first game and can
+    never reach 1.5 at all. Untouched by the grid, but it feeds the
+    mapping that now goes through the shared writer, so leaving it on
+    the old rule is the drift everything else here came from.
+    """
+    existing = pd.DataFrame({"GAME_ID": [1, 1.5, 2],
+                             "Season": [None] * 3, "Week": [None] * 3})
+    assert game_log.plan_season_weeks(existing, 1, 2026, 1) == {
+        1: (2026, 1), 1.5: (2026, 2), 2: (2026, 3)}
+    assert game_log.plan_season_weeks(existing, 1.5, 2026, 1) == {
+        1.5: (2026, 1), 2: (2026, 2)}
+
+
+def test_two_keys_for_one_game_are_refused(tmp_path):
+    """Dictionary-key uniqueness is not game uniqueness.
+
+    `1` and `"1"` are different dict keys naming the same row. Each
+    patch was validated against the *original* row and passed, then
+    both were applied to it — producing 7 conversions from 5
+    attempts, the exact state `_impossible_pair` exists to prevent,
+    written and reported as success.
+    """
+    path = tmp_path / "game_logs.csv"
+    path.write_text("GAME_ID,Team,Third_Down_Att,Third_Down_Conv\n"
+                    "1,GB,10,3\n")
+    before = path.read_bytes()
+    ok, msg = game_log.update_games(str(path), {
+        1: {"Third_Down_Att": 5}, "1": {"Third_Down_Conv": 7}})
+    assert not ok, path.read_text()
+    assert "#1" in msg and "once" in msg.lower(), msg
+    assert path.read_bytes() == before
+
+
+def test_a_plan_is_submitted_with_the_ids_it_previewed():
+    """The preview and the save must name the same games.
+
+    `plan_season_weeks` keeps ids by value, but the season/week form
+    rebuilt its mapping with `int(r["Game"])`, so 1 and 1.5 collapsed:
+    game 1 took the week shown for 1.5, 1.5 was never placed, and the
+    duplicate key disappeared before validation so the write reported
+    success. A preview that does not say what will be saved is worse
+    than no preview.
+    """
+    rows = [{"Game": 1.0, "Season": 2026, "Week": 1},
+            {"Game": 1.5, "Season": 2026, "Week": 2},
+            {"Game": 2.0, "Season": 2026, "Week": 3}]
+    assert game_log.placement_mapping(rows) == {
+        1.0: (2026, 1), 1.5: (2026, 2), 2.0: (2026, 3)}
+
+
+def test_a_half_filled_plan_row_is_left_out():
+    """A row the user cleared is not a placement."""
+    rows = [{"Game": 1, "Season": 2026, "Week": 1},
+            {"Game": 2, "Season": 2026, "Week": None},
+            {"Game": 3, "Season": None, "Week": 4}]
+    assert game_log.placement_mapping(rows) == {1.0: (2026, 1)}

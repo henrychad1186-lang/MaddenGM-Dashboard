@@ -471,53 +471,20 @@ def _write_atomically(path: str, text: str) -> None:
 def update_game(path: str, game_id, fields: dict) -> "tuple[bool, str]":
     """Write `fields` into the logged game `game_id`. Returns (ok, message).
 
-    Splices the new values into that game's own line and leaves every
-    other byte of the file alone. The obvious implementation — read with
-    pandas, set a cell, write back — is exactly what `append_game`'s
-    docstring warns about: the shipped log has a game missing four
-    stats, so those columns read as float and `to_csv` renders every
-    other row's `25` as `25.0`.
+    A one-game call on `update_games`, kept because the correction form
+    speaks in single games and because backfilling is narrower than the
+    grid: it may not touch Season or Week, which have placement rules
+    of their own.
     """
-    existing = read_log(path)
-    refusal = _why_not(existing, game_id, fields)
-    if refusal:
-        return False, refusal + " Nothing was written."
-
-    try:
-        with open(path, "r", newline="") as handle:
-            lines = handle.read().splitlines(keepends=True)
-        # A quoted field may hold a newline, in which case raw line N is
-        # not row N and splicing by line index writes into the wrong
-        # game. The entry form cannot produce one; an uploaded CSV can.
-        if len(lines) - 1 != len(existing):
-            return False, ("A field in this log spans more than one line, "
-                           "so the row to edit cannot be located safely. "
-                           "Nothing was written.")
-
-        columns = list(existing.columns)
-        new_columns = [c for c in fields if c not in columns]
-        if new_columns:
-            _extend_header(path, new_columns)
-            with open(path, "r", newline="") as handle:
-                lines = handle.read().splitlines(keepends=True)
-            columns += new_columns
-
-        index = _row_numbers(existing, game_id)[0] + 1  # header is line 0
-        raw = lines[index]
-        body = raw.rstrip("\r\n")
-        for column, value in fields.items():
-            body = _splice(body, columns.index(column), _format(value))
-        lines[index] = body + raw[len(raw.rstrip("\r\n")):]
-
-        _write_atomically(path, "".join(lines))
-    except OSError:
-        return False, ("Could not write the game log — the filesystem is "
-                       "read-only. Download the CSV and edit locally.")
-    except Exception as exc:
-        return False, f"Could not update the game log: {exc}"
-    return True, (f"Updated game #{game_id}: "
-                  + ", ".join(f"{k} {_format(v)}" for k, v in fields.items())
-                  + ".")
+    bad = [key for key in fields if key not in BACKFILL_FIELDS]
+    if bad:
+        return False, (f"{', '.join(sorted(bad))} cannot be backfilled — "
+                       f"only {', '.join(BACKFILL_FIELDS)}. "
+                       "Nothing was written.")
+    ok, message = update_games(path, {game_id: fields})
+    if not ok:
+        return ok, message
+    return True, f"Updated game #{_format(game_id)}."
 
 
 def _row_numbers(existing: pd.DataFrame, game_id) -> "list[int]":
@@ -527,6 +494,162 @@ def _row_numbers(existing: pd.DataFrame, game_id) -> "list[int]":
     wanted = pd.to_numeric(game_id, errors="coerce")
     ids = pd.to_numeric(existing["GAME_ID"], errors="coerce")
     return [i for i, v in enumerate(ids) if v == wanted]
+
+
+# The counts the made-cannot-exceed-attempted rule reads.
+RATE_FIELDS = ["Third_Down_Att", "Third_Down_Conv",
+               "RZ_Att", "RZ_TD_Made"]
+
+GRID_FIELDS = BACKFILL_FIELDS + ["Season", "Week"]
+
+
+def update_games(path: str, changes: dict) -> "tuple[bool, str]":
+    """Write several games' fields in one atomic pass.
+
+    `{game_id: {column: value}}`. The catch-up grid fixes placement,
+    efficiency and schemes across the whole log in one sitting, and
+    applying that a game at a time would be one chance to fail partway
+    per game — the same reason `assign_season_week` has always written
+    its mapping in a single write rather than looping `update_game`.
+    Both of those now go through here.
+    """
+    existing = read_log(path)
+    if not changes:
+        return False, "Nothing to change. Nothing was written."
+    refusal = _why_not_batch(existing, changes)
+    if refusal:
+        return False, refusal + " Nothing was written."
+    try:
+        lines, columns = _lines_and_columns(path, existing)
+        if lines is None:
+            return False, ("A field in this log spans more than one line, "
+                           "so the rows to edit cannot be located safely. "
+                           "Nothing was written.")
+        wanted = [c for fields in changes.values() for c in fields]
+        new_columns = [c for c in dict.fromkeys(wanted) if c not in columns]
+        if new_columns:
+            _extend_header(path, new_columns)
+            # `existing` predates the new columns, so re-reading gives
+            # its names again; the appended ones go on the end, which
+            # is where `_extend_header` put them.
+            lines, columns = _lines_and_columns(path, existing)
+            columns = columns + new_columns
+
+        for game_id, fields in changes.items():
+            # `_row_numbers`, not `_row_numbers_by_id`: that one keys on
+            # int(GAME_ID), so 1.5 overwrites 1 in the map and the write
+            # lands on the wrong game while validation — which matches
+            # exactly — sees nothing wrong. Exactly one row is
+            # guaranteed by `_why_not_batch` above.
+            index = _row_numbers(existing, game_id)[0] + 1  # header is 0
+            raw = lines[index]
+            body = raw.rstrip("\r\n")
+            # Captured before splicing: the body grows as fields are
+            # written, so measuring the ending afterwards drops it.
+            ending = raw[len(body):]
+            for column, value in fields.items():
+                body = _splice(body, columns.index(column), _format(value))
+            lines[index] = body + ending
+        _write_atomically(path, "".join(lines))
+    except OSError:
+        return False, ("Could not write the game log — the filesystem is "
+                       "read-only. Download the CSV and edit locally.")
+    except Exception as exc:
+        return False, f"Could not update the game log: {exc}"
+    return True, f"Updated {len(changes)} game(s)."
+
+
+def _lines_and_columns(path: str, existing: pd.DataFrame):
+    """Raw lines plus the header order, or (None, None) if unsafe.
+
+    A quoted field may hold a newline, in which case raw line N is not
+    row N and splicing by line index writes into the wrong game.
+
+    The names come from `existing.columns`, never from re-parsing the
+    header: a header like `GAME_ID,Team, RZ_Att,RZ_Att` gives pandas
+    two distinct columns, and a parser that strips whitespace collapses
+    them into one, so `columns.index` picks the earlier and the write
+    lands on a column validation never looked at.
+    """
+    with open(path, "r", newline="") as handle:
+        lines = handle.read().splitlines(keepends=True)
+    if len(lines) - 1 != len(existing):
+        return None, None
+    return lines, list(existing.columns)
+
+
+def _why_not_batch(existing: pd.DataFrame, changes: dict) -> "str | None":
+    """Why none of this batch may be written, or None to go ahead.
+
+    Everything is checked before the file is opened, so a refusal
+    anywhere leaves the log untouched rather than partly corrected.
+    """
+    if not looks_like_a_log(existing):
+        return ("The game log could not be read, so overwriting it would "
+                "lose whatever is in it.")
+    if "GAME_ID" not in existing.columns:
+        return ("This log has no GAME_ID column, so there is no way to say "
+                "which game to update.")
+    seen_rows: dict = {}
+    for game_id, fields in changes.items():
+        bad = [key for key in fields if key not in GRID_FIELDS]
+        if bad:
+            return (f"{', '.join(sorted(bad))} cannot be edited — only "
+                    f"{', '.join(GRID_FIELDS)}.")
+        rows = _row_numbers(existing, game_id)
+        if not rows:
+            return f"No game #{game_id} in the log."
+        if len(rows) > 1:
+            return (f"Game #{game_id} appears {len(rows)} times, so the one "
+                    "to edit is ambiguous.")
+        # Dict keys are unique; the games they name need not be. `1`
+        # and `"1"` are two keys for one row, and each patch was
+        # checked against the *original* row and passed, then both were
+        # applied — producing the impossible pair the check exists to
+        # stop, written and reported as success.
+        if rows[0] in seen_rows:
+            return (f"Game #{_format(game_id)} is named more than once in "
+                    "this save, so it is not clear what its final values "
+                    "should be. Send each game once.")
+        seen_rows[rows[0]] = game_id
+        # Only when the edit touches those numbers. Checking every row
+        # in the batch made one legacy game with 7 conversions from 3
+        # attempts refuse a placement-only save — and the season/week
+        # form submits a whole run, so that one row blocked all of it.
+        if set(fields) & set(RATE_FIELDS):
+            impossible = _impossible_pair(
+                {**row_for_game(existing, game_id), **fields})
+            if impossible:
+                return impossible
+    return _placement_refusal(existing, changes)
+
+
+def _placement_refusal(existing: pd.DataFrame, changes: dict) -> "str | None":
+    """Placement rules, for the games whose season or week is moving.
+
+    The grid edits the two columns independently, so it is the one
+    surface that can leave a game half-placed — a week with no season
+    is exactly what `data_checks` flags, and refusing it here keeps the
+    write path and the checker saying the same thing.
+    """
+    mapping = {}
+    for game_id, fields in changes.items():
+        if not {"Season", "Week"} & set(fields):
+            continue
+        merged = {**row_for_game(existing, game_id), **fields}
+        season = pd.to_numeric(merged.get("Season"), errors="coerce")
+        week = pd.to_numeric(merged.get("Week"), errors="coerce")
+        if pd.isna(season) or pd.isna(week):
+            missing = "season" if pd.isna(season) else "week"
+            return (f"Game #{game_id} would have a "
+                    f"{'week' if missing == 'season' else 'season'} but no "
+                    f"{missing}, which places it nowhere.")
+        # Keyed by value: int() here would merge 1 and 1.5 and the
+        # clash check downstream would treat one as the other.
+        mapping[float(game_id)] = (int(season), int(week))
+    if not mapping:
+        return None
+    return _valid_placement(mapping, existing)
 
 
 def _why_not(existing: pd.DataFrame, game_id, fields: dict) -> "str | None":
@@ -630,15 +753,18 @@ def plan_season_weeks(existing: pd.DataFrame, first_game_id, season,
     if existing is None or existing.empty or "GAME_ID" not in existing.columns:
         return {}
     ids = pd.to_numeric(existing["GAME_ID"], errors="coerce").dropna()
-    ordered = [int(v) for v in ids]
+    # By value, not int(): 1 and 1.5 collapsing made the plan skip a
+    # week, misplace the first game and never reach 1.5 at all. The
+    # same mistake as the identity bugs in the writer below.
+    ordered = [float(v) for v in ids]
     wanted = pd.to_numeric(first_game_id, errors="coerce")
-    if pd.isna(wanted) or int(wanted) not in ordered:
+    if pd.isna(wanted) or float(wanted) not in ordered:
         return {}
 
     season = int(pd.to_numeric(season, errors="coerce"))
     week = int(pd.to_numeric(start_week, errors="coerce"))
     plan = {}
-    for game_id in ordered[ordered.index(int(wanted)):]:
+    for game_id in ordered[ordered.index(float(wanted)):]:
         if week > WEEK_MAX:
             break
         plan[game_id] = (season, week)
@@ -646,11 +772,41 @@ def plan_season_weeks(existing: pd.DataFrame, first_game_id, season,
     return plan
 
 
+def placement_mapping(records) -> dict:
+    """`{game_id: (season, week)}` from the plan rows the user edited.
+
+    Here rather than inline in the form so it can be tested: ids are
+    carried by value, and rebuilding the mapping with `int()` collapsed
+    1 and 1.5 so the preview and the save named different games — the
+    duplicate key vanished before validation, so the write reported
+    success having placed the wrong one. A preview that does not say
+    what will be saved is worse than no preview.
+
+    A row missing either half is left out; `update_games` refuses a
+    half-placement, and a cleared cell means "not this one" rather than
+    "place it anyway".
+    """
+    out = {}
+    for row in records:
+        season = pd.to_numeric(row.get("Season"), errors="coerce")
+        week = pd.to_numeric(row.get("Week"), errors="coerce")
+        game_id = pd.to_numeric(row.get("Game"), errors="coerce")
+        if pd.isna(season) or pd.isna(week) or pd.isna(game_id):
+            continue
+        out[float(game_id)] = (int(season), int(week))
+    return out
+
+
 def _in_range(mapping: dict, known: set) -> "str | None":
-    """Every game real and every slot inside the season's bounds."""
+    """Every game real and every slot inside the season's bounds.
+
+    `known` holds ids by value. Comparing `int(game_id)` would make 1
+    and 1.5 the same game, which is how the clash check below used to
+    let two games into one week.
+    """
     for game_id, (season, week) in mapping.items():
-        if int(game_id) not in known:
-            return f"No game #{game_id} in the log."
+        if float(game_id) not in known:
+            return f"No game #{_format(game_id)} in the log."
         if not SEASON_MIN <= int(season) <= SEASON_MAX:
             return f"Season {season} is outside {SEASON_MIN}-{SEASON_MAX}."
         if not WEEK_MIN <= int(week) <= WEEK_MAX:
@@ -675,7 +831,7 @@ def _week_already_taken(mapping: dict, existing: pd.DataFrame) -> "str | None":
     on_file = zip(pd.to_numeric(existing["GAME_ID"], errors="coerce"),
                   pd.to_numeric(existing["Season"], errors="coerce"),
                   pd.to_numeric(existing["Week"], errors="coerce"))
-    moving = {int(g) for g in mapping}
+    moving = {float(g) for g in mapping}
     for game_id, season, week in on_file:
         if pd.isna(season) or pd.isna(week):
             continue
@@ -683,7 +839,7 @@ def _week_already_taken(mapping: dict, existing: pd.DataFrame) -> "str | None":
         # free. Counting it blocked every re-plan that shifts placed games
         # (a bye moves 40-47 up a week: 40 takes 41's week 7 while 41
         # moves to 8, and the write was refused as a clash with 41).
-        if pd.notna(game_id) and int(game_id) in moving:
+        if pd.notna(game_id) and float(game_id) in moving:
             continue
         slot = (int(season), int(week))
         if slot in seen:
@@ -692,7 +848,7 @@ def _week_already_taken(mapping: dict, existing: pd.DataFrame) -> "str | None":
             # anyway raised `ValueError: cannot convert float NaN to
             # integer` from inside the refusal, turning a message the
             # user could act on into a crash that took the tab down.
-            who = (f"Game #{int(game_id)}" if pd.notna(game_id)
+            who = (f"Game #{_format(game_id)}" if pd.notna(game_id)
                    else "Another game")
             return f"{who} is already season {slot[0]} week {slot[1]}."
     return None
@@ -702,16 +858,21 @@ def _valid_placement(mapping: dict, existing: pd.DataFrame) -> "str | None":
     """Why this season/week assignment cannot be written, or None."""
     if not mapping:
         return "No games to place."
-    return (_in_range(mapping, set(_row_numbers_by_id(existing)))
+    return (_in_range(mapping, _known_ids(existing))
             or _week_already_taken(mapping, existing))
 
 
-def _row_numbers_by_id(existing: pd.DataFrame) -> dict:
-    """{GAME_ID: row position}, for locating lines to splice."""
+def _known_ids(existing: pd.DataFrame) -> set:
+    """Every GAME_ID in the log, by value.
+
+    `_row_numbers_by_id` keys on `int(GAME_ID)` and so cannot answer
+    this: it reports 1.5 as 1, which both hid a missing game and let a
+    real week clash through.
+    """
     if existing is None or existing.empty or "GAME_ID" not in existing.columns:
-        return {}
+        return set()
     ids = pd.to_numeric(existing["GAME_ID"], errors="coerce")
-    return {int(v): i for i, v in enumerate(ids) if pd.notna(v)}
+    return {float(v) for v in ids if pd.notna(v)}
 
 
 def assign_season_week(path: str, mapping: dict) -> "tuple[bool, str]":
@@ -719,53 +880,18 @@ def assign_season_week(path: str, mapping: dict) -> "tuple[bool, str]":
 
     One atomic write for the whole mapping rather than a call to
     `update_game` per game: 42 rewrites would be 42 chances to fail
-    partway, and a half-numbered season is worse than an unnumbered one.
+    partway, and a half-numbered season is worse than an unnumbered
+    one. That single write now lives in `update_games`, which the
+    catch-up grid uses too, so both paths obey the same placement
+    rules instead of drifting apart.
     """
-    existing = read_log(path)
-    if not looks_like_a_log(existing):
-        return False, ("The game log could not be read, so nothing was "
-                       "written — overwriting it would lose whatever is "
-                       "in it. Check the CSV.")
-    if "GAME_ID" not in existing.columns:
-        return False, ("This log has no GAME_ID column, so there is no way "
-                       "to say which game to place. Nothing was written.")
-    refusal = _valid_placement(mapping, existing)
-    if refusal:
-        return False, refusal + " Nothing was written."
-
-    try:
-        with open(path, "r", newline="") as handle:
-            lines = handle.read().splitlines(keepends=True)
-        if len(lines) - 1 != len(existing):
-            return False, ("A field in this log spans more than one line, "
-                           "so the rows to edit cannot be located safely. "
-                           "Nothing was written.")
-
-        columns = list(existing.columns)
-        new_columns = [c for c in ("Season", "Week") if c not in columns]
-        if new_columns:
-            _extend_header(path, new_columns)
-            with open(path, "r", newline="") as handle:
-                lines = handle.read().splitlines(keepends=True)
-            columns += new_columns
-
-        positions = _row_numbers_by_id(existing)
-        for game_id, (season, week) in mapping.items():
-            index = positions[int(game_id)] + 1  # the header is line 0
-            raw = lines[index]
-            body = raw.rstrip("\r\n")
-            ending = raw[len(body):]
-            body = _splice(body, columns.index("Season"), _format(int(season)))
-            body = _splice(body, columns.index("Week"), _format(int(week)))
-            lines[index] = body + ending
-
-        _write_atomically(path, "".join(lines))
-    except OSError:
-        return False, ("Could not write the game log — the filesystem is "
-                       "read-only. Download the CSV and edit locally.")
-    except Exception as exc:
-        return False, f"Could not update the game log: {exc}"
-
+    if not mapping:
+        return False, "No games to place. Nothing was written."
+    changes = {game_id: {"Season": int(season), "Week": int(week)}
+               for game_id, (season, week) in mapping.items()}
+    ok, message = update_games(path, changes)
+    if not ok:
+        return ok, message
     seasons = sorted({int(s) for s, _ in mapping.values()})
     return True, (f"Placed {len(mapping)} game(s) in "
                   f"season {', '.join(str(s) for s in seasons)}.")
