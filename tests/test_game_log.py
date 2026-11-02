@@ -1501,3 +1501,28 @@ def test_two_keys_for_one_game_are_refused(tmp_path):
     assert not ok, path.read_text()
     assert "#1" in msg and "once" in msg.lower(), msg
     assert path.read_bytes() == before
+
+
+def test_a_plan_is_submitted_with_the_ids_it_previewed():
+    """The preview and the save must name the same games.
+
+    `plan_season_weeks` keeps ids by value, but the season/week form
+    rebuilt its mapping with `int(r["Game"])`, so 1 and 1.5 collapsed:
+    game 1 took the week shown for 1.5, 1.5 was never placed, and the
+    duplicate key disappeared before validation so the write reported
+    success. A preview that does not say what will be saved is worse
+    than no preview.
+    """
+    rows = [{"Game": 1.0, "Season": 2026, "Week": 1},
+            {"Game": 1.5, "Season": 2026, "Week": 2},
+            {"Game": 2.0, "Season": 2026, "Week": 3}]
+    assert game_log.placement_mapping(rows) == {
+        1.0: (2026, 1), 1.5: (2026, 2), 2.0: (2026, 3)}
+
+
+def test_a_half_filled_plan_row_is_left_out():
+    """A row the user cleared is not a placement."""
+    rows = [{"Game": 1, "Season": 2026, "Week": 1},
+            {"Game": 2, "Season": 2026, "Week": None},
+            {"Game": 3, "Season": None, "Week": 4}]
+    assert game_log.placement_mapping(rows) == {1.0: (2026, 1)}

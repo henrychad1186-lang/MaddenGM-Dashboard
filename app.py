@@ -1463,10 +1463,11 @@ def render_catchup_grid() -> None:
         # row an edit means — so say so, or an edit to one of these
         # rows would appear to save and do nothing.
         _ids = pd.to_numeric(existing["GAME_ID"], errors="coerce").dropna()
-        _dupes = sorted({int(v) for v in _ids[_ids.duplicated(keep=False)]})
+        _dupes = sorted({float(v) for v in _ids[_ids.duplicated(keep=False)]})
         if _dupes:
             st.warning(
-                "Game " + ", ".join(f"#{d}" for d in _dupes) + " appears "
+                "Game " + ", ".join(f"#{game_log._format(d)}" for d in _dupes)
+                + " appears "
                 "more than once in the log, so there is no way to say which "
                 "row an edit means. Those rows can be read here but not "
                 "saved — give them distinct GAME_IDs in the CSV first.")
@@ -1559,7 +1560,9 @@ def render_season_week_form() -> None:
                    "count from there, so **correct the bye** and anything "
                    "else before saving.")
 
-        ids = [int(v) for v in pd.to_numeric(
+        # By value, like the planner and the writer: `int()` here made
+        # game 1.5 unselectable and merged it with game 1.
+        ids = [float(v) for v in pd.to_numeric(
             existing["GAME_ID"], errors="coerce").dropna()]
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -1602,9 +1605,7 @@ def render_season_week_form() -> None:
         if not st.button("Save these weeks", type="primary",
                          key="sw_save"):
             return
-        mapping = {int(r["Game"]): (int(r["Season"]), int(r["Week"]))
-                   for r in edited.to_dict("records")
-                   if pd.notna(r["Season"]) and pd.notna(r["Week"])}
+        mapping = game_log.placement_mapping(edited.to_dict("records"))
         ok, message = game_log.assign_season_week(_GAME_LOGS_CSV, mapping)
         if not ok:
             st.error(message)
@@ -1669,12 +1670,15 @@ def render_backfill_form() -> None:
                    "playbook can be set or changed on any game; clearing "
                    "one records it as not known.")
 
-        missing_ids = [int(v) for v in pd.to_numeric(
+        # By value throughout: `int()` here made game 1.5 unselectable
+        # and listed it as game 1, so correcting it reached the wrong
+        # row — the same mistake as in the planner and the writer.
+        missing_ids = [float(v) for v in pd.to_numeric(
             missing["GAME_ID"], errors="coerce").dropna()]
         ids = missing_ids + [
-            int(v) for v in pd.to_numeric(
+            float(v) for v in pd.to_numeric(
                 existing["GAME_ID"], errors="coerce").dropna()
-            if int(v) not in missing_ids]
+            if float(v) not in missing_ids]
         # Outside the form on purpose. A form batches its widgets until
         # submit, so a picker inside it could not prefill the inputs
         # from the chosen game — and a conversion count already on the
@@ -1684,6 +1688,10 @@ def render_backfill_form() -> None:
             format_func=lambda g: _backfill_label(existing, g)
             + (" — missing" if g in missing_ids else ""))
         current = game_log.row_for_game(existing, gid)
+        # Ids are carried by value, so a raw f-string would rename every
+        # widget key to "..._37.0". `_format` keeps whole ids whole and
+        # still gives 1.5 a key of its own.
+        gkey = game_log._format(gid)
 
         def _prefill(column: str) -> int:
             value = pd.to_numeric(current.get(column), errors="coerce")
@@ -1703,12 +1711,12 @@ def render_backfill_form() -> None:
                 td_att = st.number_input(
                     "3rd down attempts", min_value=0, max_value=40,
                     value=_prefill("Third_Down_Att"), step=1,
-                    key=f"backfill_td_att_{gid}")
+                    key=f"backfill_td_att_{gkey}")
             with b2:
                 td_conv = st.number_input(
                     "3rd down conversions", min_value=0, max_value=40,
                     value=_prefill("Third_Down_Conv"), step=1,
-                    key=f"backfill_td_conv_{gid}",
+                    key=f"backfill_td_conv_{gkey}",
                     help="Prefilled from the log where it is already "
                          "recorded, so supplying attempts cannot write "
                          "an existing count away.")
@@ -1716,14 +1724,14 @@ def render_backfill_form() -> None:
                 rz_att = st.number_input(
                     "Red zone trips", min_value=0, max_value=20,
                     value=_prefill("RZ_Att"), step=1,
-                    key=f"backfill_rz_att_{gid}")
+                    key=f"backfill_rz_att_{gkey}")
 
             # Same reason the number inputs key on the game: a keyed
             # widget keeps its state and ignores a new prefill, so a
             # single key per box would carry the previous game's scheme
             # over and relabel this one with it on Save.
             scheme_values = scheme_inputs(
-                existing, f"relabel_{gid}", current=current)
+                existing, f"relabel_{gkey}", current=current)
 
             saved = st.form_submit_button("Save to this game",
                                           type="primary")

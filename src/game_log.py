@@ -772,6 +772,31 @@ def plan_season_weeks(existing: pd.DataFrame, first_game_id, season,
     return plan
 
 
+def placement_mapping(records) -> dict:
+    """`{game_id: (season, week)}` from the plan rows the user edited.
+
+    Here rather than inline in the form so it can be tested: ids are
+    carried by value, and rebuilding the mapping with `int()` collapsed
+    1 and 1.5 so the preview and the save named different games — the
+    duplicate key vanished before validation, so the write reported
+    success having placed the wrong one. A preview that does not say
+    what will be saved is worse than no preview.
+
+    A row missing either half is left out; `update_games` refuses a
+    half-placement, and a cleared cell means "not this one" rather than
+    "place it anyway".
+    """
+    out = {}
+    for row in records:
+        season = pd.to_numeric(row.get("Season"), errors="coerce")
+        week = pd.to_numeric(row.get("Week"), errors="coerce")
+        game_id = pd.to_numeric(row.get("Game"), errors="coerce")
+        if pd.isna(season) or pd.isna(week) or pd.isna(game_id):
+            continue
+        out[float(game_id)] = (int(season), int(week))
+    return out
+
+
 def _in_range(mapping: dict, known: set) -> "str | None":
     """Every game real and every slot inside the season's bounds.
 
