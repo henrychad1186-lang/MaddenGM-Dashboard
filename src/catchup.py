@@ -21,6 +21,15 @@ NUMERIC = ["Season", "Week", "Third_Down_Att", "Third_Down_Conv",
 COLUMNS = NUMERIC + list(schemes.SCHEME_COLUMNS)
 
 
+def _empty() -> pd.DataFrame:
+    """A frame with the grid's columns and no rows.
+
+    One definition, so the two ways of having nothing to show cannot
+    disagree about the schema.
+    """
+    return pd.DataFrame(columns=["Game", "Matchup"] + COLUMNS)
+
+
 def frame(existing: pd.DataFrame, label) -> pd.DataFrame:
     """One row per logged game, with every editable column present.
 
@@ -30,7 +39,7 @@ def frame(existing: pd.DataFrame, label) -> pd.DataFrame:
     """
     rows = []
     if existing is None or existing.empty or "GAME_ID" not in existing.columns:
-        return pd.DataFrame(columns=["Game", "Matchup"] + COLUMNS)
+        return _empty()
     for game_id in [int(v) for v in pd.to_numeric(
             existing["GAME_ID"], errors="coerce").dropna()]:
         current = game_log.row_for_game(existing, game_id)
@@ -41,6 +50,16 @@ def frame(existing: pd.DataFrame, label) -> pd.DataFrame:
         for column in schemes.SCHEME_COLUMNS:
             row[column] = schemes.normalize(current.get(column), column) or ""
         rows.append(row)
+    if not rows:
+        # The guard above passes for a log that has rows and a GAME_ID
+        # column whose values are all blank or unparseable. The loop
+        # then yields nothing, and a frame built from no rows has no
+        # columns, so the cast below raised KeyError: 'Season'. The
+        # grid is built unconditionally on Franchise Home, inside an
+        # expander whose body runs whether or not it is open, so that
+        # took the dashboard down rather than leaving those games
+        # uneditable.
+        return _empty()
     out = pd.DataFrame(rows)
     # Numeric, so an edit comes back as a number rather than text.
     #

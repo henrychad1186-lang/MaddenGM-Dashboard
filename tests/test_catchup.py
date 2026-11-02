@@ -48,6 +48,24 @@ def test_an_empty_log_still_yields_the_columns(log):
     assert out.empty and "Season" in out.columns
 
 
+def test_a_log_whose_ids_are_all_unusable_still_yields_the_columns():
+    """Rows exist and GAME_ID exists, but no id parses.
+
+    The opening guard passes — the frame is not empty and the column is
+    there — and then the loop produces nothing, so the result had no
+    columns at all and casting raised `KeyError: 'Season'`. The grid is
+    built unconditionally on Franchise Home, inside an expander whose
+    body runs whether or not it is open, so that took the whole
+    dashboard down rather than leaving these games uneditable.
+    """
+    df = pd.DataFrame([{"GAME_ID": "", "Opponent": "CHI"},
+                       {"GAME_ID": "n/a", "Opponent": "DET"}])
+    out = catchup.frame(df, _label)
+    assert out.empty
+    for column in catchup.COLUMNS:
+        assert column in out.columns, column
+
+
 def test_only_edited_cells_are_written(log):
     before = catchup.frame(log, _label)
     after = before.copy()
