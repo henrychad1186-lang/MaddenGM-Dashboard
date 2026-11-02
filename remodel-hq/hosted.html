@@ -406,7 +406,7 @@ function seed() {
       scope: "- Cabinet Repaint – Prep & Prime: Per door/drawer front\n- Cabinet Repaint – Enamel Top Coats: Per door/drawer front, 2 coats\nOwner supplies paint and primer.",
       items: [li("Cabinet Repaint – Prep & Prime",20),li("Cabinet Repaint – Enamel Top Coats",20)] },
     { id: uid(), name: "Handyman Service Call + 2 Hours", description: "Trip minimum (includes travel and setup) plus 2 hours of labor. Edit the hours.",
-      scope: "- Service Call / Trip Minimum: Travel to site, setup, and up to 1 hour of labor\n- Handyman / General Carpentry: Punch-list, framing, fixture swaps, troubleshooting\nMaterials billed separately if needed.",
+      scope: "- Service Call / Trip Minimum: Travel to site and on-site setup\n- Handyman / General Carpentry: Punch-list, framing, fixture swaps, troubleshooting\nMaterials billed separately if needed.",
       items: [li("Service Call / Trip Minimum",1),li("Handyman / General Carpentry",2)] },
   ];
   return {
@@ -465,6 +465,16 @@ function putRemote(key, body) {
   else if (key === "trades") DB.trades = body.items || [];
   else {
     const coll = { q: "quotes", p: "projects", t: "templates" }[key[0]]; if (!coll) return;
+    // Every remote write lands here: both onStore branches and
+    // releaseDoc(), which applies the version held back while an
+    // editor was open. Migrating at this chokepoint covers all
+    // three, instead of a call per caller that the next path
+    // added would miss again.
+    // A correction here is only in DB: lastSent still holds the
+    // stored document, and neither onStore() nor releaseDoc()
+    // schedules a write of its own. Without this the cloud keeps
+    // the old text until some unrelated edit happens to flush.
+    if (migrateDoc(key, body)) save();
     const arr = DB[coll], o = arr.find(x => x.id === body.id);
     if (o) { Object.keys(o).forEach(k => delete o[k]); Object.assign(o, body); } else arr.push(body);
   }
@@ -481,6 +491,11 @@ function onStore(snap) {
     if (snap.empty) { setSync("Saved"); if (hadLocal) flush(); render(); return; }
     const ui = DB.ui; DB = blankDB(); DB.ui = ui;
     for (const d of snap.docs) { const body = d.data(); lastSent[d.id] = canon(body); putRemote(d.id, JSON.parse(lastSent[d.id])); }
+    // The pre-connect fixScopes() ran against local data only; this
+    // branch has just replaced DB with the cloud copy, so the templates
+    // now in hand have never been through it. save() inside it flushes
+    // the corrections back up, since ready is already true here.
+    fixScopes();
     try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {}
     setSync("Saved"); render(); return;
   }
@@ -498,7 +513,16 @@ function onStore(snap) {
     if (seen.has(k) || k === openDocKey) continue;
     delete lastSent[k]; dropRemote(k); changed = true;
   }
-  if (changed) { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {} render(); }
+  if (changed) {
+    // Snapshots arrive cache-first, then server. The cached one can be
+    // non-empty, so the branch above may have migrated it and set
+    // ready; the server copy then lands here and putRemote() swaps the
+    // migrated template back out. Re-run: it is a no-op when nothing
+    // needs fixing, and its save() flushes any correction upward,
+    // since flush() recomputes from DB rather than from lastSent.
+    fixScopes();
+    try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {} render();
+  }
 }
 function releaseDoc() {
   const k = openDocKey; openDocKey = null;
@@ -506,7 +530,26 @@ function releaseDoc() {
   const j = heldRemote[k]; delete heldRemote[k];
   // Apply the other device's version only if nothing was edited here; otherwise this edit wins on the next save.
   const local = docsOf()[k];
-  if (local && canon(local) === lastSent[k]) { lastSent[k] = j; putRemote(k, JSON.parse(j)); }
+  // Compared against the *migrated* form of what the server last sent.
+  // putRemote() corrects a template scope on the way in, and that
+  // automatic rewrite is not a local edit — counting it as one made
+  // this keep the local copy and silently drop a genuine remote change
+  // to any template that happened to need migrating.
+  const prev = k in lastSent ? JSON.parse(lastSent[k]) : null;
+  if (prev) migrateDoc(k, prev);   // mutates the copy; no save
+  const base = prev ? canon(prev) : undefined;
+  if (local && canon(local) === base) { lastSent[k] = j; putRemote(k, JSON.parse(j)); }
+}
+
+// Corrections applied to a document arriving from the store. Keyed on
+// the "t_" prefix rather than a collection name so it is usable before
+// putRemote() has worked out which collection the key belongs to.
+function migrateDoc(key, body) {
+  if (key[0] === "t" && key[1] === "_" && typeof body.scope === "string") {
+    const s = fixScopeText(body.scope);
+    if (s !== body.scope) { body.scope = s; return true; }
+  }
+  return false;
 }
 let dl = null;
 async function connect() {
@@ -1161,7 +1204,7 @@ $("#restore").onclick = () => $("#jsonFile").click();
 $("#jsonFile").onchange = async e => {
   const file = e.target.files[0]; e.target.value = ""; if (!file) return;
   try { const d = JSON.parse(await file.text()); if (!d.pricebook || !d.quotes || !d.projects) throw 0;
-    if (!await ask("Replace all current data with this backup? Everything now in Remodel HQ will be overwritten.", { ok: "Replace data", danger: true })) return; DB = d; DB.ui = DB.ui || { tab: "settings", pView: "board" }; save(); show("settings"); toast("Backup restored"); }
+    if (!await ask("Replace all current data with this backup? Everything now in Remodel HQ will be overwritten.", { ok: "Replace data", danger: true })) return; DB = d; DB.ui = DB.ui || { tab: "settings", pView: "board" }; fixScopes(); save(); show("settings"); toast("Backup restored"); }
   catch { toast("Not a valid Remodel HQ backup"); }
 };
 $("#exportQuotes").onclick = () => download("quotes.csv", [csvRow(["number", "date", "status", "client", "phone", "email", "address", "project", "cost", "markup", "tax", "discount", "total", "your_cost", "profit", "margin_pct"]),
@@ -1191,12 +1234,22 @@ const SCOPE_FIXES = [
   ["Deck Cleaning & Prep Wash: Painting sheet", "Deck Cleaning & Prep Wash: Wood cleaner wash and rinse"],
   ["Deck Floor & Stairs Stain: Painting sheet", "Deck Floor & Stairs Stain: Brush/pad apply penetrating stain"],
   ["Deck Railing & Baluster Stain: Painting sheet", "Deck Railing & Baluster Stain: Hand-brush all sides of rails, posts and balusters"],
-  ["Service Call / Trip Minimum: Minimum service call (Quick Price List, Oct 17). Master guide baseline says $150.", "Service Call / Trip Minimum: Travel to site, setup, and up to 1 hour of labor"],
+  ["Service Call / Trip Minimum: Minimum service call (Quick Price List, Oct 17). Master guide baseline says $150.", "Service Call / Trip Minimum: Travel to site and on-site setup"],
+  // #82 shipped the line below to browsers before the promise was caught, so the note above is already gone from their saved copy and only this pair can still reach it.
+  ["Service Call / Trip Minimum: Travel to site, setup, and up to 1 hour of labor", "Service Call / Trip Minimum: Travel to site and on-site setup"],
 ];
-DB.templates.forEach(t => {
-  const s = SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), t.scope || "");
-  if (s !== (t.scope || "")) { t.scope = s; save(); }
-});
+// A function declaration, so it is hoisted: the hosted build also calls
+// this from onStore(), which is defined far above this point.
+function fixScopeText(s) {
+  return SCOPE_FIXES.reduce((a, [from, to]) => a.split(from).join(to), s || "");
+}
+function fixScopes() {
+  DB.templates.forEach(t => {
+    const s = fixScopeText(t.scope);
+    if (s !== (t.scope || "")) { t.scope = s; save(); }
+  });
+}
+fixScopes();
 
 show(DB.ui.tab || "dash");
 connect();

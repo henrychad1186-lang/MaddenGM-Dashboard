@@ -124,6 +124,16 @@ function putRemote(key, body) {
   else if (key === "trades") DB.trades = body.items || [];
   else {
     const coll = { q: "quotes", p: "projects", t: "templates" }[key[0]]; if (!coll) return;
+    // Every remote write lands here: both onStore branches and
+    // releaseDoc(), which applies the version held back while an
+    // editor was open. Migrating at this chokepoint covers all
+    // three, instead of a call per caller that the next path
+    // added would miss again.
+    // A correction here is only in DB: lastSent still holds the
+    // stored document, and neither onStore() nor releaseDoc()
+    // schedules a write of its own. Without this the cloud keeps
+    // the old text until some unrelated edit happens to flush.
+    if (migrateDoc(key, body)) save();
     const arr = DB[coll], o = arr.find(x => x.id === body.id);
     if (o) { Object.keys(o).forEach(k => delete o[k]); Object.assign(o, body); } else arr.push(body);
   }
@@ -140,6 +150,11 @@ function onStore(snap) {
     if (snap.empty) { setSync("Saved"); if (hadLocal) flush(); render(); return; }
     const ui = DB.ui; DB = blankDB(); DB.ui = ui;
     for (const d of snap.docs) { const body = d.data(); lastSent[d.id] = canon(body); putRemote(d.id, JSON.parse(lastSent[d.id])); }
+    // The pre-connect fixScopes() ran against local data only; this
+    // branch has just replaced DB with the cloud copy, so the templates
+    // now in hand have never been through it. save() inside it flushes
+    // the corrections back up, since ready is already true here.
+    fixScopes();
     try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {}
     setSync("Saved"); render(); return;
   }
@@ -157,7 +172,16 @@ function onStore(snap) {
     if (seen.has(k) || k === openDocKey) continue;
     delete lastSent[k]; dropRemote(k); changed = true;
   }
-  if (changed) { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {} render(); }
+  if (changed) {
+    // Snapshots arrive cache-first, then server. The cached one can be
+    // non-empty, so the branch above may have migrated it and set
+    // ready; the server copy then lands here and putRemote() swaps the
+    // migrated template back out. Re-run: it is a no-op when nothing
+    // needs fixing, and its save() flushes any correction upward,
+    // since flush() recomputes from DB rather than from lastSent.
+    fixScopes();
+    try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch {} render();
+  }
 }
 function releaseDoc() {
   const k = openDocKey; openDocKey = null;
@@ -165,7 +189,26 @@ function releaseDoc() {
   const j = heldRemote[k]; delete heldRemote[k];
   // Apply the other device's version only if nothing was edited here; otherwise this edit wins on the next save.
   const local = docsOf()[k];
-  if (local && canon(local) === lastSent[k]) { lastSent[k] = j; putRemote(k, JSON.parse(j)); }
+  // Compared against the *migrated* form of what the server last sent.
+  // putRemote() corrects a template scope on the way in, and that
+  // automatic rewrite is not a local edit — counting it as one made
+  // this keep the local copy and silently drop a genuine remote change
+  // to any template that happened to need migrating.
+  const prev = k in lastSent ? JSON.parse(lastSent[k]) : null;
+  if (prev) migrateDoc(k, prev);   // mutates the copy; no save
+  const base = prev ? canon(prev) : undefined;
+  if (local && canon(local) === base) { lastSent[k] = j; putRemote(k, JSON.parse(j)); }
+}
+
+// Corrections applied to a document arriving from the store. Keyed on
+// the "t_" prefix rather than a collection name so it is usable before
+// putRemote() has worked out which collection the key belongs to.
+function migrateDoc(key, body) {
+  if (key[0] === "t" && key[1] === "_" && typeof body.scope === "string") {
+    const s = fixScopeText(body.scope);
+    if (s !== body.scope) { body.scope = s; return true; }
+  }
+  return false;
 }
 let dl = null;
 async function connect() {
