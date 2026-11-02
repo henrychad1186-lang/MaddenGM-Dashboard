@@ -112,7 +112,8 @@ section{padding-block:84px}
 
 /* services */
 .svc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-@media (max-width:900px){.svc{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.svc button:last-child:nth-child(3n+1){grid-column:1/-1}
+@media (max-width:900px){.svc{grid-template-columns:repeat(2,minmax(0,1fr))}.svc button:last-child:nth-child(3n+1){grid-column:auto}.svc button:last-child:nth-child(odd){grid-column:1/-1}}
 @media (max-width:560px){.svc{grid-template-columns:1fr}}
 .svc button{all:unset;cursor:pointer;display:grid;gap:10px;align-content:start;padding:22px;border-radius:var(--r);background:var(--panel);border:1px solid var(--stone);transition:border-color .15s,transform .15s,box-shadow .15s}
 .svc button:hover{border-color:var(--sage);transform:translateY(-2px);box-shadow:var(--shadow)}
@@ -477,7 +478,7 @@ function result() {
 const fmtRange = r => !r.lines.length ? "—" : r.lo === r.hi ? $$(r.lo) : `${$$(r.lo)} – ${$$(r.hi)}`;
 
 /* ---------- services grid ---------- */
-el("svcGrid").innerHTML = Object.entries(TYPES).filter(([k]) => k !== "exterior" || true).slice(0, 6).map(([k, t]) => `
+el("svcGrid").innerHTML = Object.entries(TYPES).map(([k, t]) => `
   <button type="button" data-type="${k}">
     <span class="ico"><svg width="24" height="24"><use href="#${t.icon}"/></svg></span>
     <h3>${t.name}</h3><p>${t.blurb}</p><span class="from">From <b>${$$(t.from)}</b> · plan it →</span>
