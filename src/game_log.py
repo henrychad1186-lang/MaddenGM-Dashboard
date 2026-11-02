@@ -742,15 +742,18 @@ def plan_season_weeks(existing: pd.DataFrame, first_game_id, season,
     if existing is None or existing.empty or "GAME_ID" not in existing.columns:
         return {}
     ids = pd.to_numeric(existing["GAME_ID"], errors="coerce").dropna()
-    ordered = [int(v) for v in ids]
+    # By value, not int(): 1 and 1.5 collapsing made the plan skip a
+    # week, misplace the first game and never reach 1.5 at all. The
+    # same mistake as the identity bugs in the writer below.
+    ordered = [float(v) for v in ids]
     wanted = pd.to_numeric(first_game_id, errors="coerce")
-    if pd.isna(wanted) or int(wanted) not in ordered:
+    if pd.isna(wanted) or float(wanted) not in ordered:
         return {}
 
     season = int(pd.to_numeric(season, errors="coerce"))
     week = int(pd.to_numeric(start_week, errors="coerce"))
     plan = {}
-    for game_id in ordered[ordered.index(int(wanted)):]:
+    for game_id in ordered[ordered.index(float(wanted)):]:
         if week > WEEK_MAX:
             break
         plan[game_id] = (season, week)
@@ -809,7 +812,7 @@ def _week_already_taken(mapping: dict, existing: pd.DataFrame) -> "str | None":
             # anyway raised `ValueError: cannot convert float NaN to
             # integer` from inside the refusal, turning a message the
             # user could act on into a crash that took the tab down.
-            who = (f"Game #{int(game_id)}" if pd.notna(game_id)
+            who = (f"Game #{_format(game_id)}" if pd.notna(game_id)
                    else "Another game")
             return f"{who} is already season {slot[0]} week {slot[1]}."
     return None
@@ -834,14 +837,6 @@ def _known_ids(existing: pd.DataFrame) -> set:
         return set()
     ids = pd.to_numeric(existing["GAME_ID"], errors="coerce")
     return {float(v) for v in ids if pd.notna(v)}
-
-
-def _row_numbers_by_id(existing: pd.DataFrame) -> dict:
-    """{GAME_ID: row position}, for locating lines to splice."""
-    if existing is None or existing.empty or "GAME_ID" not in existing.columns:
-        return {}
-    ids = pd.to_numeric(existing["GAME_ID"], errors="coerce")
-    return {int(v): i for i, v in enumerate(ids) if pd.notna(v)}
 
 
 def assign_season_week(path: str, mapping: dict) -> "tuple[bool, str]":

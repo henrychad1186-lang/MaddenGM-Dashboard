@@ -1454,3 +1454,30 @@ class TestUpdateGames:
         ok, msg = game_log.update_games(str(path), {1: {"Third_Down_Conv": 12}})
         assert not ok and "exceed" in msg
         assert path.read_bytes() == before
+
+    def test_the_refusal_names_the_game_that_actually_holds_the_week(
+            self, tmp_path):
+        """A refusal whose job is to say which game to look at."""
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team\n1.5,2026,4,GB\n2,,,GB\n")
+        ok, msg = game_log.update_games(
+            str(path), {2: {"Season": 2026, "Week": 4}})
+        assert not ok
+        assert "#1.5" in msg, msg
+
+
+def test_planning_does_not_merge_games_with_fractional_ids():
+    """Pre-existing, and the same family as the identity bugs above.
+
+    `plan_season_weeks` orders games with `int(GAME_ID)`, so 1 and 1.5
+    collapse: the plan skips a week, misplaces the first game and can
+    never reach 1.5 at all. Untouched by the grid, but it feeds the
+    mapping that now goes through the shared writer, so leaving it on
+    the old rule is the drift everything else here came from.
+    """
+    existing = pd.DataFrame({"GAME_ID": [1, 1.5, 2],
+                             "Season": [None] * 3, "Week": [None] * 3})
+    assert game_log.plan_season_weeks(existing, 1, 2026, 1) == {
+        1: (2026, 1), 1.5: (2026, 2), 2: (2026, 3)}
+    assert game_log.plan_season_weeks(existing, 1.5, 2026, 1) == {
+        1.5: (2026, 1), 2: (2026, 2)}
