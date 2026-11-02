@@ -1408,3 +1408,49 @@ class TestUpdateGames:
         assert not ok, f"both games now sit in week 4: {path.read_text()!r}"
         assert "week 4" in msg
         assert path.read_bytes() == before
+
+    def test_the_writer_identifies_columns_the_way_the_reader_does(
+            self, tmp_path):
+        """A header pandas keeps distinct must not be collapsed here.
+
+        `GAME_ID,Team, RZ_Att,RZ_Att` gives pandas ' RZ_Att' and
+        'RZ_Att' — two columns. Re-parsing the raw header and stripping
+        made them one name, so `columns.index` found the earlier one
+        and the write landed on the wrong column while reporting
+        success, leaving the validated field untouched. Same mistake as
+        the id truncation: a second way of naming a thing that
+        disagrees with the first.
+        """
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Team, RZ_Att,RZ_Att\n1,GB,2,5\n")
+        ok, msg = game_log.update_games(str(path), {1: {"RZ_Att": 3}})
+        assert ok, msg
+        assert path.read_text().splitlines()[1] == "1,GB,2,3", path.read_text()
+
+    def test_placing_a_game_ignores_efficiency_it_does_not_touch(
+            self, tmp_path):
+        """Placement must not be blocked by an unrelated legacy row.
+
+        `assign_season_week` checked only placement before it delegated
+        here. Running the made-cannot-exceed-attempted rule over every
+        row in the batch meant one old game with 7 conversions from 3
+        attempts refused the whole run the season/week form submits —
+        a save that changes neither number.
+        """
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team,Third_Down_Att,"
+                        "Third_Down_Conv\n1,,,GB,3,7\n2,,,GB,10,5\n")
+        ok, msg = game_log.assign_season_week(
+            str(path), {1: (2026, 1), 2: (2026, 2)})
+        assert ok, msg
+        assert pd.read_csv(path)["Week"].tolist() == [1, 2]
+
+    def test_editing_efficiency_is_still_checked(self, tmp_path):
+        """The guard on the other side: scoping it must not disable it."""
+        path = tmp_path / "game_logs.csv"
+        path.write_text("GAME_ID,Season,Week,Team,Third_Down_Att,"
+                        "Third_Down_Conv\n1,,,GB,10,5\n")
+        before = path.read_bytes()
+        ok, msg = game_log.update_games(str(path), {1: {"Third_Down_Conv": 12}})
+        assert not ok and "exceed" in msg
+        assert path.read_bytes() == before

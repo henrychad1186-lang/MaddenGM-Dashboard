@@ -496,6 +496,10 @@ def _row_numbers(existing: pd.DataFrame, game_id) -> "list[int]":
     return [i for i, v in enumerate(ids) if v == wanted]
 
 
+# The counts the made-cannot-exceed-attempted rule reads.
+RATE_FIELDS = ["Third_Down_Att", "Third_Down_Conv",
+               "RZ_Att", "RZ_TD_Made"]
+
 GRID_FIELDS = BACKFILL_FIELDS + ["Season", "Week"]
 
 
@@ -525,7 +529,11 @@ def update_games(path: str, changes: dict) -> "tuple[bool, str]":
         new_columns = [c for c in dict.fromkeys(wanted) if c not in columns]
         if new_columns:
             _extend_header(path, new_columns)
+            # `existing` predates the new columns, so re-reading gives
+            # its names again; the appended ones go on the end, which
+            # is where `_extend_header` put them.
             lines, columns = _lines_and_columns(path, existing)
+            columns = columns + new_columns
 
         for game_id, fields in changes.items():
             # `_row_numbers`, not `_row_numbers_by_id`: that one keys on
@@ -556,17 +564,18 @@ def _lines_and_columns(path: str, existing: pd.DataFrame):
 
     A quoted field may hold a newline, in which case raw line N is not
     row N and splicing by line index writes into the wrong game.
+
+    The names come from `existing.columns`, never from re-parsing the
+    header: a header like `GAME_ID,Team, RZ_Att,RZ_Att` gives pandas
+    two distinct columns, and a parser that strips whitespace collapses
+    them into one, so `columns.index` picks the earlier and the write
+    lands on a column validation never looked at.
     """
     with open(path, "r", newline="") as handle:
         lines = handle.read().splitlines(keepends=True)
     if len(lines) - 1 != len(existing):
         return None, None
-    return lines, list(_header_columns(lines[0]))
-
-
-def _header_columns(header: str) -> "list[str]":
-    line = header.rstrip("\r\n")
-    return [line[a:b].strip().strip('"') for a, b in _field_spans(line)]
+    return lines, list(existing.columns)
 
 
 def _why_not_batch(existing: pd.DataFrame, changes: dict) -> "str | None":
@@ -592,10 +601,15 @@ def _why_not_batch(existing: pd.DataFrame, changes: dict) -> "str | None":
         if len(rows) > 1:
             return (f"Game #{game_id} appears {len(rows)} times, so the one "
                     "to edit is ambiguous.")
-        impossible = _impossible_pair(
-            {**row_for_game(existing, game_id), **fields})
-        if impossible:
-            return impossible
+        # Only when the edit touches those numbers. Checking every row
+        # in the batch made one legacy game with 7 conversions from 3
+        # attempts refuse a placement-only save — and the season/week
+        # form submits a whole run, so that one row blocked all of it.
+        if set(fields) & set(RATE_FIELDS):
+            impossible = _impossible_pair(
+                {**row_for_game(existing, game_id), **fields})
+            if impossible:
+                return impossible
     return _placement_refusal(existing, changes)
 
 
