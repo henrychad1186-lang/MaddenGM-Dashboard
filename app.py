@@ -514,6 +514,12 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
         if _col in df.columns:
             df[_col] = pd.to_numeric(df[_col], errors="coerce").astype("Int64")
 
+    # A single "N/A" or "12%" otherwise leaves the whole column as text, and
+    # the arithmetic on it (the sidebar's Fatigue .sub(), Coach DNA's .mean())
+    # raises and stops the script. See game_log.coerce_stats.
+    df, _stat_notes = game_log.coerce_stats(df)
+    warnings.extend(_stat_notes)
+
     return df, warnings
 
 
@@ -571,9 +577,17 @@ with st.sidebar.expander("📡 Data Import", expanded=True):
             st.error(f"Error loading file: {e}. Falling back to local data.")
 
     if df is None and os.path.exists(_GAME_LOGS_CSV):
-        df, prep_warnings = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
-        _LOG_SOURCE = "local"
-        st.success("📊 Local Franchise Data Loaded!")
+        try:
+            df, prep_warnings = _load_game_log_from_disk(_GAME_LOGS_CSV, os.path.getmtime(_GAME_LOGS_CSV))
+            _LOG_SOURCE = "local"
+            st.success("📊 Local Franchise Data Loaded!")
+        except Exception as e:
+            # Same rule as the upload above: one unreadable file must not
+            # blank the tabs that only need the roster. The file is left
+            # alone, and game_log.append_game refuses to write over one
+            # that holds anything.
+            st.error(f"Couldn't read data/game_logs.csv: {e}. Showing demo "
+                     "data until it's fixed.")
 
     if df is None:
         # Fallback demo data
@@ -2569,6 +2583,13 @@ with tabs[4]:
             for w in ROSTER_WARNINGS:
                 st.markdown(f"- {w}")
 
+    # Up here because the Trade Value Leaderboard uses it too. Defined inside
+    # the position-group table, it didn't exist when the selected group was
+    # empty, and the NameError blanked this tab and every one after it.
+    def style_ovr(val):
+        color = ovr_color(val)
+        return f"color: {color}; font-weight: bold"
+
     rcol1, rcol2 = st.columns([1, 3])
 
     with rcol1:
@@ -2598,10 +2619,6 @@ with tabs[4]:
                 "OVR", ascending=False).reset_index(drop=True)
 
             # Style the dataframe with OVR color coding
-            def style_ovr(val):
-                color = ovr_color(val)
-                return f"color: {color}; font-weight: bold"
-
             def style_tier(val):
                 # Sequential scale: tier is a quality rating, not a call to
                 # action, so it must not share hues with the verdicts below.
