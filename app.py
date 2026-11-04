@@ -23,6 +23,7 @@ from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
 from src import catchup
+from src import charts
 from src import chat_store
 from src import chat_tools
 from src import close_games
@@ -2055,11 +2056,18 @@ with tabs[1]:
     if "Turnovers" in df.columns and "Points_For" in df.columns:
         wt1, wt2 = st.columns(2)
         with wt1:
+            # Plotly refuses a NaN marker size, so one game logged
+            # without its total yards raised here and blanked this tab
+            # and every one after it. The Strategy Map and the Dynasty
+            # timeline already guard their own size columns.
+            _to_df = df.copy()
+            if "Total_Yards" in _to_df.columns:
+                _to_df["_size"] = charts.bubble_size(_to_df["Total_Yards"])
             fig_to = px.scatter(
-                df, x="Turnovers", y="Points_For",
-                color="Result" if "Result" in df.columns else None,
+                _to_df, x="Turnovers", y="Points_For",
+                color="Result" if "Result" in _to_df.columns else None,
                 color_discrete_map={"WIN": "#00e676", "LOSS": "#ff5252"},
-                size="Total_Yards" if "Total_Yards" in df.columns else None,
+                size="_size" if "_size" in _to_df.columns else None,
                 hover_data=_opponent_hover,
                 labels=_CHART_LABELS,
                 title="Turnovers vs Points Scored",
