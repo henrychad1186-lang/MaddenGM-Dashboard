@@ -99,20 +99,57 @@ def test_no_two_columns_share_a_chart_label():
     assert not clashes, "; ".join(clashes)
 
 
-def test_every_derived_size_column_carries_its_own_label():
-    """A size column with no label shows plotly's raw `_yds_size`.
+def test_no_derived_size_column_is_read_back_in_a_hover():
+    """The stand-in size must not be shown as the stat it stands for.
 
-    These are deliberately absent from `_CHART_LABELS`: each is
-    labelled at its own chart, where its label can be read against the
-    axes it will sit beside. One shared entry is what let the turnovers
-    chart inherit the Strategy Map's wording.
+    `bubble_size` fills a missing value so plotly will draw the point;
+    a hover read off that column then prints the fill as the number.
+    A game logged without its yardage read `Total yards=1`. Labelling
+    that column correctly is not enough — the number itself is the
+    fill. It has to be hidden from the hover outright, with
+    `bubble_text` showing the real one in its place.
     """
     source = _app_source()
     shared = _chart_labels()
     derived = set(re.findall(r'size="(_\w+)"', source))
     assert derived, "no derived size columns found — the naming changed"
     for name in derived:
-        assert f'"{name}": "' in source, f'size="{name}" has no label'
+        assert f'"{name}": False' in source, (
+            f'size="{name}" is not hidden from its chart\'s hover, so the '
+            "stand-in it carries for a missing value is on show")
         assert name not in shared, (
-            f"{name} is labelled in _CHART_LABELS, where its label "
-            "cannot be checked against the axes of the chart using it")
+            f"{name} is labelled in _CHART_LABELS, where a reader cannot "
+            "tell it apart from a column holding a real measurement")
+
+
+def test_every_bubble_chart_shows_the_real_column_not_the_size():
+    """Each `bubble_size` call is paired with a `bubble_text` call.
+
+    The pairing is the whole guard: without it the chart is back to
+    showing the fill. Both bubble charts in `app.py` — the Strategy
+    Map and the turnovers scatter — have to do it.
+    """
+    source = _app_source()
+    sizes = source.count("charts.bubble_size(")
+    texts = source.count("charts.bubble_text(")
+    assert sizes >= 2, f"expected both bubble charts, found {sizes}"
+    assert sizes == texts, (
+        f"{sizes} bubble_size call(s) but {texts} bubble_text — a chart "
+        "sizes its bubbles from a filled column without saying so")
+
+
+def test_a_missing_value_reads_as_missing_not_as_a_number():
+    """`not recorded`, not `1` and not `0`: both read as a measurement."""
+    text = charts.bubble_text(pd.Series([380.0, None, "12%", 0]))
+    assert list(text) == ["380", charts.MISSING_TEXT, charts.MISSING_TEXT, "0"]
+
+
+def test_a_whole_number_is_not_shown_with_a_decimal_tail():
+    """`380`, not `380.0` — the log holds whole yards."""
+    assert list(charts.bubble_text(pd.Series([380.0, 412.0]))) == ["380", "412"]
+
+
+def test_the_text_lines_up_with_the_sizes_it_explains():
+    """One entry per point, in the same order, or the hover is wrong."""
+    values = pd.Series([350, None, 420, "oops"])
+    assert len(charts.bubble_text(values)) == len(charts.bubble_size(values))

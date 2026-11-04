@@ -33,3 +33,26 @@ def bubble_size(values) -> pd.Series:
     """
     numeric = pd.to_numeric(pd.Series(values), errors="coerce")
     return numeric.fillna(_MIN_SIZE).clip(lower=_MIN_SIZE)
+
+
+# What the tooltip says in place of a number nobody recorded. Not "0"
+# and not the stand-in size: both read as a measurement.
+MISSING_TEXT = "not recorded"
+
+
+def bubble_text(values) -> pd.Series:
+    """What the hover should say for a column `bubble_size` stands in for.
+
+    `bubble_size` fills a missing value with `_MIN_SIZE` so plotly will
+    draw the point at all, and that stand-in must never reach the
+    tooltip. A hover read off the size column shows a game logged
+    without its yardage as `Total yards=1` — a number nobody recorded,
+    sitting where the recorded one belongs, which is the same mistake
+    as the chart claiming the game was a one-yard afternoon.
+
+    So the chart hides its size column from the hover and shows this
+    instead: the value where there is one, and plainly nothing where
+    there is not.
+    """
+    numeric = pd.to_numeric(pd.Series(values), errors="coerce")
+    return numeric.map(lambda v: MISSING_TEXT if pd.isna(v) else f"{v:g}")
