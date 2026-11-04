@@ -930,6 +930,12 @@ def _scheme_cell(key: str, value) -> str:
     return "—" if value is None else _SCHEME_FMT.get(key, "{:.1f}").format(value)
 
 
+# Every label here must name a different quantity. Plotly builds the
+# hover from these and drops an encoding whose label is already taken,
+# so two columns under one name means one of them silently vanishes
+# from the tooltip with the other standing in for it. A chart's derived
+# size column is therefore labelled at the chart, next to the axes it
+# has to stay distinct from, rather than once for every chart here.
 _CHART_LABELS = {
     "TOP_Mins": "Time of possession (min)",
     "Score_Diff": "Score margin",
@@ -940,7 +946,6 @@ _CHART_LABELS = {
     "Rush_Yards": "Rush yards",
     "Takeaways": "Takeaways",
     "Turnovers": "Turnovers",
-    "_size": "Points scored",
 }
 
 
@@ -1909,7 +1914,7 @@ with tabs[0]:
                 scatter_df = df[df[_dimension].map(
                     lambda v: bool(str(v or "").strip()))].copy()
                 if "Points_For" in scatter_df.columns:
-                    scatter_df["_size"] = pd.to_numeric(
+                    scatter_df["_pts_size"] = pd.to_numeric(
                         scatter_df["Points_For"], errors="coerce"
                     ).fillna(1).clip(lower=1)
                 fig = px.scatter(
@@ -1917,9 +1922,10 @@ with tabs[0]:
                     x="TOP_Mins",
                     y="Score_Diff",
                     color=_dimension,
-                    size="_size" if "Points_For" in scatter_df.columns else None,
+                    size="_pts_size" if "Points_For" in scatter_df.columns else None,
                     hover_data=["Opponent"] if "Opponent" in scatter_df.columns else None,
-                    labels={**_CHART_LABELS, _dimension: _label},
+                    labels={**_CHART_LABELS, _dimension: _label,
+                            "_pts_size": "Points scored"},
                     template="plotly_dark",
                     title="Madden 27 Strategy Map",
                 )
@@ -2062,14 +2068,16 @@ with tabs[1]:
             # timeline already guard their own size columns.
             _to_df = df.copy()
             if "Total_Yards" in _to_df.columns:
-                _to_df["_size"] = charts.bubble_size(_to_df["Total_Yards"])
+                _to_df["_yds_size"] = charts.bubble_size(_to_df["Total_Yards"])
             fig_to = px.scatter(
                 _to_df, x="Turnovers", y="Points_For",
                 color="Result" if "Result" in _to_df.columns else None,
                 color_discrete_map={"WIN": "#00e676", "LOSS": "#ff5252"},
-                size="_size" if "_size" in _to_df.columns else None,
+                size="_yds_size" if "_yds_size" in _to_df.columns else None,
                 hover_data=_opponent_hover,
-                labels=_CHART_LABELS,
+                # "Total yards", not the y axis's "Points scored": a
+                # repeated label drops the y value from the hover.
+                labels={**_CHART_LABELS, "_yds_size": "Total yards"},
                 title="Turnovers vs Points Scored",
                 template="plotly_dark",
             )
