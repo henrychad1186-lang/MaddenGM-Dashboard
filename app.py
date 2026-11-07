@@ -23,6 +23,7 @@ from src.roster_analyzer import analyze_roster
 from src import ai_gm
 from src import ai_client
 from src import catchup
+from src import charts
 from src import chat_store
 from src import chat_tools
 from src import close_games
@@ -929,6 +930,12 @@ def _scheme_cell(key: str, value) -> str:
     return "—" if value is None else _SCHEME_FMT.get(key, "{:.1f}").format(value)
 
 
+# Every label here must name a different quantity. Plotly builds the
+# hover from these and drops an encoding whose label is already taken,
+# so two columns under one name means one of them silently vanishes
+# from the tooltip with the other standing in for it. A chart's derived
+# size column is therefore labelled at the chart, next to the axes it
+# has to stay distinct from, rather than once for every chart here.
 _CHART_LABELS = {
     "TOP_Mins": "Time of possession (min)",
     "Score_Diff": "Score margin",
@@ -939,7 +946,6 @@ _CHART_LABELS = {
     "Rush_Yards": "Rush yards",
     "Takeaways": "Takeaways",
     "Turnovers": "Turnovers",
-    "_size": "Points scored",
 }
 
 
@@ -1907,18 +1913,24 @@ with tabs[0]:
             if "TOP_Mins" in df.columns and "Score_Diff" in df.columns:
                 scatter_df = df[df[_dimension].map(
                     lambda v: bool(str(v or "").strip()))].copy()
+                _map_hover = (["Opponent"]
+                              if "Opponent" in scatter_df.columns else None)
                 if "Points_For" in scatter_df.columns:
-                    scatter_df["_size"] = pd.to_numeric(
-                        scatter_df["Points_For"], errors="coerce"
-                    ).fillna(1).clip(lower=1)
+                    scatter_df["_pts_size"] = charts.bubble_size(
+                        scatter_df["Points_For"])
+                    scatter_df["_pts_text"] = charts.bubble_text(
+                        scatter_df["Points_For"])
+                    _map_hover = {**{c: True for c in (_map_hover or [])},
+                                  "_pts_size": False, "_pts_text": True}
                 fig = px.scatter(
                     scatter_df,
                     x="TOP_Mins",
                     y="Score_Diff",
                     color=_dimension,
-                    size="_size" if "Points_For" in scatter_df.columns else None,
-                    hover_data=["Opponent"] if "Opponent" in scatter_df.columns else None,
-                    labels={**_CHART_LABELS, _dimension: _label},
+                    size="_pts_size" if "Points_For" in scatter_df.columns else None,
+                    hover_data=_map_hover,
+                    labels={**_CHART_LABELS, _dimension: _label,
+                            "_pts_text": "Points scored"},
                     template="plotly_dark",
                     title="Madden 27 Strategy Map",
                 )
@@ -2055,13 +2067,27 @@ with tabs[1]:
     if "Turnovers" in df.columns and "Points_For" in df.columns:
         wt1, wt2 = st.columns(2)
         with wt1:
+            # Plotly refuses a NaN marker size, so one game logged
+            # without its total yards raised here and blanked this tab
+            # and every one after it. `bubble_size` stands a minimum in
+            # for the blank; `bubble_text` is what the hover shows, so
+            # the stand-in is never read back as the game's yardage.
+            _to_df = df.copy()
+            _to_hover = _opponent_hover
+            if "Total_Yards" in _to_df.columns:
+                _to_df["_yds_size"] = charts.bubble_size(_to_df["Total_Yards"])
+                _to_df["_yds_text"] = charts.bubble_text(_to_df["Total_Yards"])
+                _to_hover = {**{c: True for c in (_opponent_hover or [])},
+                             "_yds_size": False, "_yds_text": True}
             fig_to = px.scatter(
-                df, x="Turnovers", y="Points_For",
-                color="Result" if "Result" in df.columns else None,
+                _to_df, x="Turnovers", y="Points_For",
+                color="Result" if "Result" in _to_df.columns else None,
                 color_discrete_map={"WIN": "#00e676", "LOSS": "#ff5252"},
-                size="Total_Yards" if "Total_Yards" in df.columns else None,
-                hover_data=_opponent_hover,
-                labels=_CHART_LABELS,
+                size="_yds_size" if "_yds_size" in _to_df.columns else None,
+                hover_data=_to_hover,
+                # "Total yards", not the y axis's "Points scored": a
+                # repeated label drops the y value from the hover.
+                labels={**_CHART_LABELS, "_yds_text": "Total yards"},
                 title="Turnovers vs Points Scored",
                 template="plotly_dark",
             )
