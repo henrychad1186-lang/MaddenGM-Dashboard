@@ -238,3 +238,12 @@ class TestAgainstTheWriteLayer:
         df = pd.read_csv("data/game_logs.csv")
         opts = schemes.options(df, schemes.OFF_SCHEME)
         assert set(opts[:2]) == {"WestCoast Zone Run", "Vertical Zone Run"}
+
+
+def test_a_blank_cell_is_not_a_scheme():
+    """The Strategy Map filtered with `bool(str(v or "").strip())`, which
+    NaN passes: NaN is truthy and str() makes it "nan"."""
+    assert not schemes.is_labelled(float("nan"))
+    assert not schemes.is_labelled(None)
+    assert not schemes.is_labelled("   ")
+    assert schemes.is_labelled("WestCoast Zone Run")

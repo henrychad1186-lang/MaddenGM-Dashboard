@@ -38,6 +38,7 @@ import ast
 import logging
 import os
 import pathlib
+import re
 import warnings
 
 import pytest
@@ -226,3 +227,29 @@ def test_peak_win_pct_skips_the_opening_games(app):
     assert "Peak Win %" not in labels
     peak = next(v for k, v in labels.items() if k.startswith("Peak Win % (game"))
     assert peak != "100.0%"
+
+
+def test_card_html_escapes_names_and_opponents():
+    """Names, opponents and schemes reach `unsafe_allow_html` cards. A name
+    saved to the roster CSV with markup in it rendered as markup for every
+    later visitor. Parsed: each of these interpolations must go through
+    `_h`, the app's escape helper."""
+    source = pathlib.Path(_APP).read_text(encoding="utf-8")
+    for raw in ("{rep['Name']}", "{rep['blurb']}", "{v['Name']}", "{v['Reason']}",
+                "{p['best_offer_name']}", "{result['counter_offer']}",
+                "{selected_player['Name']}", "{player['Name']}", "{_r['value']}",
+                "{g['Name']}", "{loser['Name']}", '{g.get("Opponent", "?")}'):
+        assert raw not in source, f"{raw} is interpolated into HTML unescaped"
+
+
+def test_an_empty_filtered_view_is_not_called_no_data():
+    """Clearing the Results filter said "No game data loaded yet!" and
+    showed "nan" on the KPI cards."""
+    at = AppTest.from_file(_APP, default_timeout=_TIMEOUT).run()
+    results = next(m for m in at.multiselect if m.label == "Results")
+    at = results.set_value([]).run()
+    assert not at.exception, "\n".join(str(e) for e in at.exception)
+    assert not any("No game data loaded yet" in str(w.value) for w in at.warning)
+    assert any("No games match the Dashboard Filters" in str(i.value) for i in at.info)
+    cards = " ".join(str(m.value) for m in at.markdown)
+    assert not re.search(r'kpi-value">\s*nan', cards), "a KPI card shows nan"
