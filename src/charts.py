@@ -15,6 +15,7 @@ a module a test can import, which `app.py` is not.
 """
 
 import pandas as pd
+import plotly.express as px
 
 # Plotly needs a positive number for every point. 1 is the smallest
 # bubble it will draw, which is the least misleading stand-in: a game
@@ -56,3 +57,28 @@ def bubble_text(values) -> pd.Series:
     """
     numeric = pd.to_numeric(pd.Series(values), errors="coerce")
     return numeric.map(lambda v: MISSING_TEXT if pd.isna(v) else f"{v:g}")
+
+
+def metric_facets(rows: pd.DataFrame, metric_order, colors):
+    """One bar row per metric, each on its own x scale.
+
+    `rows` has Scheme, Metric and Value columns. On one shared axis, PPG
+    (~25) and total yards (~380) put the points bars at a sliver and
+    turnovers (~1) at nothing, so schemes could only be compared on yards.
+    """
+    order = [m for m in metric_order if m in set(rows["Metric"])]
+    fig = px.bar(
+        rows, x="Value", y="Scheme", facet_row="Metric", color="Scheme",
+        orientation="h", category_orders={"Metric": order},
+        facet_row_spacing=0.04, template="plotly_dark",
+        color_discrete_sequence=colors)
+    fig.update_xaxes(matches=None, showticklabels=True, title="")
+    fig.update_yaxes(showticklabels=False, title="")
+    # "Metric=PPG" -> "PPG", level so a narrow column can still read it.
+    fig.for_each_annotation(lambda a: a.update(
+        text=a.text.split("=", 1)[-1], textangle=0))
+    fig.update_layout(
+        height=70 * len(order) + 80,
+        legend=dict(orientation="h", y=-0.05, yanchor="top", title=""),
+        margin=dict(l=0, r=100, t=10, b=0))
+    return fig

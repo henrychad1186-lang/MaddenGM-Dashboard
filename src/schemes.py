@@ -119,6 +119,15 @@ def _clean(text) -> str:
     return " ".join(str(text).split())
 
 
+def is_labelled(value) -> bool:
+    """True if a scheme cell names a scheme.
+
+    For filters outside this module. `bool(str(v or "").strip())` reads
+    NaN as labelled, because NaN is truthy and str() makes it "nan".
+    """
+    return bool(_clean(value))
+
+
 def normalize(text, column: str = None, known=()) -> str:
     """Canonical spelling of one scheme/playbook value.
 

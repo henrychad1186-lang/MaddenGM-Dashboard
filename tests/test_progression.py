@@ -57,3 +57,19 @@ def test_snapshot_appends_and_leaves_no_temp_file(prog_csv):
     second = progression.snapshot_roster(team, 2026, 2)
     assert len(progression.get_progression(team)) == first + second
     assert not (prog_csv.parent / (prog_csv.name + ".tmp")).exists()
+
+
+def test_snapshot_includes_players_added_this_session(prog_csv):
+    """The game-log form and the Progression button snapshot through
+    here. Without the session's additions, a rookie added in the AI GM
+    tab showed on every roster view and never in the progression log."""
+    from src import ai_gm
+    team = roster.TEAMS[0]
+    added = ai_gm.add_player({
+        "Name": "Session Rookie", "Pos": "WR", "Age": 22, "OVR": 71,
+        "Dev": "Normal", "SPD": 90, "ACC": 88, "AGI": 85, "COD": 84,
+        "STR": 60, "AWR": 55, "Savings": "$0", "Penalty": "$0"}, team)
+    assert added["ok"], added["errors"]
+    saved = progression.snapshot_roster(team, 2026, 1, [added["player"]])
+    assert saved == len(roster.get_roster(team)) + 1
+    assert "Session Rookie" in set(progression.get_progression(team)["Name"])

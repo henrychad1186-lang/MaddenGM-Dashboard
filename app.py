@@ -1,4 +1,5 @@
 import hashlib
+import html
 import io
 import json
 import os
@@ -305,6 +306,16 @@ st.markdown("""
 
 # ── SHARED UI HELPERS — keep every tab's header/cards visually consistent ──
 
+def _h(value) -> str:
+    """Escape data for the HTML cards.
+
+    Names, opponents and schemes come from CSVs, Sheets and form input,
+    and `unsafe_allow_html` renders any markup they hold. A name saved to
+    the roster CSV reaches every later visitor.
+    """
+    return html.escape(str(value))
+
+
 def render_tab_header(icon: str, title: str, subtitle: str = "") -> None:
     """Single-line tab header: gradient title with the subtitle inline.
 
@@ -464,14 +475,16 @@ def _prepare_game_log(raw_df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
 
     # Handle Score_Final format (old) or direct Points_For/Points_Against (new)
     if "Score_Final" in df.columns:
-        try:
-            df[["Points_For", "Points_Against"]] = (
-                df["Score_Final"].str.split("-", expand=True).astype(int)
-            )
-            df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
-            df["Result"] = _result_from_margin(df["Score_Diff"])
-        except Exception:
-            warnings.append("Could not parse Score_Final. Ensure format is '35-10'.")
+        # Row by row. A whole-column astype(int) failed on one blank or
+        # "TBD" cell and left every game in the log without a score.
+        df["Points_For"], df["Points_Against"], _score_notes = (
+            game_log.split_score_final(df["Score_Final"]))
+        warnings.extend(_score_notes)
+        df["Score_Diff"] = df["Points_For"] - df["Points_Against"]
+        _from_score = _result_from_margin(df["Score_Diff"])
+        # A game with no readable score keeps the Result it was logged with.
+        df["Result"] = (_from_score.fillna(_normalize_result(df["Result"]))
+                        if "Result" in df.columns else _from_score)
     elif "Points_For" in df.columns and "Points_Against" in df.columns:
         df["Points_For"] = pd.to_numeric(df["Points_For"], errors="coerce")
         df["Points_Against"] = pd.to_numeric(df["Points_Against"], errors="coerce")
@@ -725,8 +738,11 @@ with st.sidebar.expander("🧠 Coach DNA: Live Predictor", expanded=False):
     if "TOP_Mins" not in df.columns or "Result" not in df.columns:
         st.info("Needs TOP and Result columns in your game log.")
     else:
+        # Only games with a recorded result, so this rate has the same
+        # denominator as the KPI row's win rate.
         _comp = df[
-            df["TOP_Mins"].sub(user_top).abs() <= _TOP_WINDOW_MINS
+            (df["TOP_Mins"].sub(user_top).abs() <= _TOP_WINDOW_MINS)
+            & df["Result"].notna()
         ]
         _matched_on = f"TOP within ±{_TOP_WINDOW_MINS} min"
         if "Fatigue" in df.columns:
@@ -752,7 +768,12 @@ with st.sidebar.expander("🧠 Coach DNA: Live Predictor", expanded=False):
             st.caption(f"{_wins} of {len(_comp)} games · matched on {_matched_on}")
 
 # --- EMPTY DATA GUARD ---
-if df.empty or len(df) == 0:
+if df.empty and all_game_count:
+    # The log is fine; the filters hid every game. The import steps below
+    # would send the user to fix something that isn't broken.
+    st.info(f"No games match the Dashboard Filters — 0 of {all_game_count} "
+            "shown. Widen them in the sidebar to bring games back.")
+elif df.empty:
     st.warning("🚀 **No game data loaded yet!**")
     st.markdown("""
     Get started by importing your franchise data:
@@ -768,32 +789,48 @@ if df.empty or len(df) == 0:
 st.markdown("#### 📊 Franchise Key Performance Indicators")
 kpi1, kpi2, kpi3, kpi4, kpi5, kpi6 = st.columns(6)
 
-avg_pts_for = df["Points_For"].mean() if "Points_For" in df.columns else 0
-avg_pts_against = (
-    df["Points_Against"].mean() if "Points_Against" in df.columns else 0
-)
-win_rate = (
-    df["Result"].value_counts(normalize=True).get("WIN", 0) * 100
-    if "Result" in df.columns
-    else 0
-)
-pts_for_delta = avg_pts_for - 24
-pts_against_delta = avg_pts_against - 21
+def _mean_or_none(column: str) -> "float | None":
+    """None when there is nothing to average. It used to be 0 for a missing
+    column, shown as "0.0" with a made-up deficit, and NaN for an empty view,
+    shown as "nan"."""
+    if column not in df.columns:
+        return None
+    value = pd.to_numeric(df[column], errors="coerce").mean()
+    return None if pd.isna(value) else float(value)
+
+
+avg_pts_for = _mean_or_none("Points_For")
+avg_pts_against = _mean_or_none("Points_Against")
+_results = df["Result"].dropna() if "Result" in df.columns else pd.Series(dtype=object)
+win_rate = (_results == "WIN").mean() * 100 if len(_results) else None
 
 with kpi1:
-    st.markdown(_kpi_card_html(
-        "Avg Points Scored", f"{avg_pts_for:.1f}",
-        f"{abs(pts_for_delta):.1f} vs League Avg", pts_for_delta >= 0,
-    ), unsafe_allow_html=True)
+    if avg_pts_for is None:
+        st.markdown(_kpi_card_html("Avg Points Scored", "—", note="no scores in view"),
+                    unsafe_allow_html=True)
+    else:
+        pts_for_delta = avg_pts_for - 24
+        st.markdown(_kpi_card_html(
+            "Avg Points Scored", f"{avg_pts_for:.1f}",
+            f"{abs(pts_for_delta):.1f} vs League Avg", pts_for_delta >= 0,
+        ), unsafe_allow_html=True)
 with kpi2:
-    # Lower points allowed is better — a negative delta (allowing fewer
-    # than league avg) is the "good" direction here, so it's green.
-    st.markdown(_kpi_card_html(
-        "Avg Points Allowed", f"{avg_pts_against:.1f}",
-        f"{abs(pts_against_delta):.1f} vs League Avg", pts_against_delta <= 0,
-    ), unsafe_allow_html=True)
+    if avg_pts_against is None:
+        st.markdown(_kpi_card_html("Avg Points Allowed", "—", note="no scores in view"),
+                    unsafe_allow_html=True)
+    else:
+        # Lower points allowed is better — a negative delta (allowing fewer
+        # than league avg) is the "good" direction here, so it's green.
+        pts_against_delta = avg_pts_against - 21
+        st.markdown(_kpi_card_html(
+            "Avg Points Allowed", f"{avg_pts_against:.1f}",
+            f"{abs(pts_against_delta):.1f} vs League Avg", pts_against_delta <= 0,
+        ), unsafe_allow_html=True)
 with kpi3:
-    st.markdown(_kpi_card_html("Win Rate", f"{win_rate:.1f}%"), unsafe_allow_html=True)
+    st.markdown(_kpi_card_html(
+        "Win Rate", "—" if win_rate is None else f"{win_rate:.1f}%",
+        note="no results in view" if win_rate is None else ""),
+        unsafe_allow_html=True)
 with kpi4:
     st.markdown(_kpi_card_html("Games Tracked", str(len(df))), unsafe_allow_html=True)
 
@@ -842,6 +879,9 @@ def render_franchise_home() -> None:
     """Record, cap exposure, top needs and actionable moves for MY_TEAM."""
     wins = int((df["Result"] == "WIN").sum()) if "Result" in df.columns else 0
     losses = int((df["Result"] == "LOSS").sum()) if "Result" in df.columns else 0
+    ties = int((df["Result"] == "TIE").sum()) if "Result" in df.columns else 0
+    # W-L-T once there is a tie; "10-6" for a 10-6-1 season hid a game.
+    record = f"{wins}-{losses}" + (f"-{ties}" if ties else "")
     cap = roster_view("cap", MY_TEAM, AI_GM_EXTRA)
     needs = [n for n in roster_view("needs", MY_TEAM, AI_GM_EXTRA)
              if n["level"] != "Set"]
@@ -860,7 +900,7 @@ def render_franchise_home() -> None:
         st.markdown(f"""
         <div class="trade-card">
             <div class="card-label">Record &amp; Cap — {MY_TEAM}</div>
-            <div style="font-size:1.8rem; font-weight:800; color:#f1f5f9; margin-top:4px;">{wins}-{losses}</div>
+            <div style="font-size:1.8rem; font-weight:800; color:#f1f5f9; margin-top:4px;">{record}</div>
             <div style="color:var(--text-muted); font-size:0.8rem; margin-top:8px;">If every player were released:</div>
             <div style="color:var(--text-dim); font-size:0.85rem; margin-top:2px;">
                 <span style="color:var(--status-good); font-weight:700;">${cap['total_savings']:.1f}M</span> savings
@@ -893,7 +933,7 @@ def render_franchise_home() -> None:
         if verdicts:
             moves_html = "".join(
                 f'<div style="display:flex; justify-content:space-between; margin-top:6px;">'
-                f'<span style="color:var(--text-dim);">{v["Name"]} '
+                f'<span style="color:var(--text-dim);">{_h(v["Name"])} '
                 f'<span style="color:var(--text-muted); font-size:0.78rem;">({v["Pos"]})</span></span>'
                 f'<span style="color:{VERDICT_COLORS.get(v["Verdict"], "var(--text-muted)")}; '
                 f'font-weight:700; font-size:0.85rem;">{v["Verdict"]}</span>'
@@ -1084,7 +1124,7 @@ def render_close_games() -> None:
         rows_html += (
             f'<div style="display:flex; justify-content:space-between; margin-top:4px; font-size:0.85rem;">'
             f'<span style="color:var(--text-muted); width:4.5rem;">{wk}</span>'
-            f'<span style="color:var(--text-dim); flex:1;">vs {g.get("Opponent", "?")}</span>'
+            f'<span style="color:var(--text-dim); flex:1;">vs {_h(g.get("Opponent", "?"))}</span>'
             f'<span style="color:{color}; font-weight:700; width:1.5rem;">{res[:1]}</span>'
             f'<span style="color:#f1f5f9; width:3.5rem; text-align:right;">{score}</span>'
             f'<span style="color:var(--text-muted); width:3.5rem; text-align:right;">{to_txt}</span>'
@@ -1390,7 +1430,7 @@ def render_game_log_form() -> None:
                 f"vs {opponent}.")
 
         if also_snapshot:
-            saved = snapshot_roster(MY_TEAM, int(season), int(week))
+            saved = snapshot_roster(MY_TEAM, int(season), int(week), AI_GM_EXTRA)
             note += (f" Snapshotted {saved} player OVRs." if saved
                      else " Roster snapshot could not be saved.")
 
@@ -1891,7 +1931,7 @@ with tabs[0]:
                 <div style="background: linear-gradient(135deg, rgba(25,25,55,0.9), rgba(45,45,75,0.7));
                     border: 1px solid rgba(99,102,241,0.3); border-radius: 16px; padding: 1.2rem;">
                     <div style="font-size:1.1rem; font-weight:800; color:#6366f1; margin-bottom:0.2rem;">
-                        {_r['value']}</div>
+                        {_h(_r['value'])}</div>
                     <div style="font-size:0.75rem; color:#888; margin-bottom:0.8rem;">
                         {_r['games']} games{'' if _r['ranked'] else ' — small sample'}</div>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.4rem;">
@@ -1911,8 +1951,10 @@ with tabs[0]:
         with _chart1:
             st.markdown("#### TOP vs Score Differential")
             if "TOP_Mins" in df.columns and "Score_Diff" in df.columns:
+                # schemes.is_labelled, not str(v or ""): NaN is truthy and
+                # became "nan", so every unlabelled game passed.
                 scatter_df = df[df[_dimension].map(
-                    lambda v: bool(str(v or "").strip()))].copy()
+                    schemes_mod.is_labelled)].copy()
                 _map_hover = (["Opponent"]
                               if "Opponent" in scatter_df.columns else None)
                 if "Points_For" in scatter_df.columns:
@@ -1940,8 +1982,8 @@ with tabs[0]:
         with _chart2:
             st.markdown("#### Per-game averages")
             # Points (~25) and yards (~380) on one axis flattened the
-            # points bars to a sliver, so each metric gets its own
-            # normalised facet row instead of a shared scale.
+            # points bars to a sliver, so each metric gets its own facet
+            # row with its own x scale.
             _bar_metrics = [m for m in _metrics
                             if m[0] not in ("win_pct", "margin")]
             _bar_rows = [
@@ -1949,16 +1991,10 @@ with tabs[0]:
                 for r in _rows for m in _bar_metrics
                 if r[m[0]] is not None]
             if _bar_rows:
-                fig_cmp = px.bar(
-                    pd.DataFrame(_bar_rows), x="Value", y="Metric",
-                    color="Scheme", barmode="group", orientation="h",
-                    template="plotly_dark",
-                    color_discrete_sequence=["#6366f1", "#10b981", "#f59e0b",
-                                             "#ef4444", "#8b5cf6"])
-                fig_cmp.update_layout(
-                    xaxis_title="", yaxis_title="",
-                    legend=dict(orientation="h", y=-0.2),
-                    margin=dict(l=0, r=0, t=10, b=0))
+                fig_cmp = charts.metric_facets(
+                    pd.DataFrame(_bar_rows),
+                    [m[1] for m in _bar_metrics],
+                    ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"])
                 st.plotly_chart(fig_cmp, width="stretch")
             else:
                 st.info("No comparable averages recorded yet.")
@@ -1990,7 +2026,8 @@ with tabs[0]:
             line=dict(color="#6366f1", width=3),
             marker=dict(
                 size=10,
-                color=["#00e676" if r == "WIN" else "#ff5252"
+                # A tie or a blank result is grey, not a red loss.
+                color=[{"WIN": "#00e676", "LOSS": "#ff5252"}.get(r, "#94a3b8")
                        for r in momentum_df["Result"]],
                 line=dict(width=1, color="white"),
             ),
@@ -2185,9 +2222,9 @@ def render_trade_machine() -> None:
         sav = selected_player.get('Savings', '')
         pen = selected_player.get('Penalty', '')
         if sav and str(sav).strip():
-            contract_html += f'<span class="stat-pill">💰 Cap Savings: {sav}</span>'
+            contract_html += f'<span class="stat-pill">💰 Cap Savings: {_h(sav)}</span>'
         if pen and str(pen).strip():
-            contract_html += f'<span class="stat-pill">⚠️ Dead Cap: {pen}</span>'
+            contract_html += f'<span class="stat-pill">⚠️ Dead Cap: {_h(pen)}</span>'
 
         st.markdown(f"""
         <div class="player-spotlight">
@@ -2197,7 +2234,7 @@ def render_trade_machine() -> None:
                 <div style="font-size:0.8rem; color:var(--text-muted); text-transform:uppercase;
                             letter-spacing:2px;">OVERALL</div>
                 <div style="font-size:1.6rem; font-weight:700; color:#f1f5f9;
-                            margin-top:8px;">{selected_player['Name']}</div>
+                            margin-top:8px;">{_h(selected_player['Name'])}</div>
                 <div style="margin-top:4px;">
                     <span style="background:{dev_c}20; color:{dev_c}; padding:4px 12px;
                                 border-radius:20px; font-size:0.8rem; font-weight:600;
@@ -2283,14 +2320,14 @@ def render_trade_machine() -> None:
             st.markdown(f"""
             <div class="trade-card">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:1.1rem; font-weight:700; color:#f1f5f9;">{p['team']}</span>
+                    <span style="font-size:1.1rem; font-weight:700; color:#f1f5f9;">{_h(p['team'])}</span>
                     <span style="color:{bar_color}; font-weight:700;">{interest}%{fit_badge}</span>
                 </div>
                 <div class="interest-bar">
                     <div class="interest-fill" style="width:{interest}%; background: linear-gradient(90deg, {bar_color}, {bar_color}aa);"></div>
                 </div>
-                <div style="color:#94a3b8; font-size:0.85rem; margin-bottom:4px;">↳ {p['reason']}</div>
-                <div style="color:#cbd5e1; font-size:0.9rem;">Best offer: <strong>{p['best_offer_name']}</strong>
+                <div style="color:#94a3b8; font-size:0.85rem; margin-bottom:4px;">↳ {_h(p['reason'])}</div>
+                <div style="color:#cbd5e1; font-size:0.9rem;">Best offer: <strong>{_h(p['best_offer_name'])}</strong>
                     <span style="color:var(--text-muted);">({p['best_offer_pos']}, {p['best_offer_ovr']} OVR)</span></div>
             </div>
             """, unsafe_allow_html=True)
@@ -2397,7 +2434,7 @@ def render_trade_machine() -> None:
                     st.markdown(f"""
                     <div class="trade-card" style="border-color: rgba(245,158,11,0.4);">
                         <div style="color:#f59e0b; font-weight:700; margin-bottom:6px;">💡 GM Suggestion</div>
-                        <div style="color:#e2e8f0;">{result['counter_offer']}</div>
+                        <div style="color:#e2e8f0;">{_h(result['counter_offer'])}</div>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -2821,13 +2858,13 @@ with tabs[4]:
                     border-radius: 12px; padding: 0.8rem; margin-bottom: 0.6rem;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <div>
-                            <span style="font-weight:800; color:white;">{v['Name']}</span>
+                            <span style="font-weight:800; color:white;">{_h(v['Name'])}</span>
                             <span style="color:#aaa; font-size:0.85rem;"> {v['Pos']} · {v['Age']}yo · {v['OVR']} OVR</span>
                         </div>
                         <div style="background:{vc}; color:#000; font-weight:800; padding:2px 10px;
                             border-radius:8px; font-size:0.8rem;">{vi} {v['Verdict']}</div>
                     </div>
-                    <div style="color:#bbb; font-size:0.78rem; margin-top:4px;">{v['Reason']}</div>
+                    <div style="color:#bbb; font-size:0.78rem; margin-top:4px;">{_h(v['Reason'])}</div>
                     <div style="color:#888; font-size:0.72rem; margin-top:2px;">TV: {v['Trade_Value']:.0f} · Sav: ${v['Savings']:.1f}M · Dead: ${v['Penalty']:.1f}M · Depth: {v['Depth']}</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -2870,7 +2907,7 @@ with tabs[4]:
                 st.markdown(f"""
                 <div class="dc-card {cls}">
                     <div style="font-weight:700; color:white; font-size:0.85rem;">
-                        {p['Name']}
+                        {_h(p['Name'])}
                     </div>
                     <div style="font-size:1.4rem; font-weight:900; color:{oc};">
                         {ovr} {dev_icon}
@@ -2945,7 +2982,7 @@ with tabs[5]:
                         <div style="font-size: 0.9rem; font-weight: 800; color: {color};
                             margin: 0.3rem 0;">{title.split(' ', 1)[1]}</div>
                         <div style="font-size: 1.1rem; font-weight: 700; color: white;">
-                            {player['Name']}</div>
+                            {_h(player['Name'])}</div>
                         <div style="color: #aaa; font-size: 0.85rem;">
                             {player['Pos']} · {int(player['OVR'])} OVR · Age {int(player['Age'])}</div>
                         <div style="color: var(--text-muted); font-size: 0.7rem; margin-top: 0.4rem;">{desc}</div>
@@ -2978,7 +3015,8 @@ with tabs[6]:
         rush_pct = 100 - pass_pct
 
         wins = (df["Result"] == "WIN").sum()
-        win_pct = wins / len(df) * 100
+        # Over games with a recorded result, like the KPI row.
+        win_pct = wins / max(int(df["Result"].notna().sum()), 1) * 100
         avg_pf = df["Points_For"].mean() if "Points_For" in df.columns else 0
         avg_pa = df["Points_Against"].mean(
         ) if "Points_Against" in df.columns else 0
@@ -3079,7 +3117,7 @@ with tabs[7]:
             value=season_mod.WEEK_MIN, key="snap_week")
     with snap_c3:
         if st.button("📸 Save Current OVR Snapshot", type="primary"):
-            count = snapshot_roster(MY_TEAM, snap_season, snap_week)
+            count = snapshot_roster(MY_TEAM, snap_season, snap_week, AI_GM_EXTRA)
             # 0 is a failed write, not an empty save; it used to read
             # "Saved 0 player OVRs!" as a success.
             if count:
@@ -3099,7 +3137,7 @@ with tabs[7]:
                 st.markdown(f"""
                 <div style="background: rgba(0,230,118,0.1); border-left: 3px solid #00e676;
                     border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.4rem;">
-                    <span style="font-weight:700; color:white;">{g['Name']}</span>
+                    <span style="font-weight:700; color:white;">{_h(g['Name'])}</span>
                     <span style="color:#aaa;"> {g['Pos']}</span>
                     <span style="float:right; color:#00e676; font-weight:800;">+{g['Delta']} ({g['Start_OVR']}→{g['Current_OVR']})</span>
                 </div>
@@ -3110,7 +3148,7 @@ with tabs[7]:
                 st.markdown(f"""
                 <div style="background: rgba(255,82,82,0.1); border-left: 3px solid #ff5252;
                     border-radius: 8px; padding: 0.5rem 0.8rem; margin-bottom: 0.4rem;">
-                    <span style="font-weight:700; color:white;">{loser['Name']}</span>
+                    <span style="font-weight:700; color:white;">{_h(loser['Name'])}</span>
                     <span style="color:#aaa;"> {loser['Pos']}</span>
                     <span style="float:right; color:#ff5252; font-weight:800;">{loser['Delta']} ({loser['Start_OVR']}→{loser['Current_OVR']})</span>
                 </div>
@@ -3315,13 +3353,13 @@ with tabs[9]:
                 <div class="trade-card" style="border-left: 4px solid {vc};">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-size:1.15rem; font-weight:800; color:#f1f5f9;">
-                            {rep['Name']} <span style="color:#94a3b8; font-weight:500; font-size:0.85rem;">
+                            {_h(rep['Name'])} <span style="color:#94a3b8; font-weight:500; font-size:0.85rem;">
                             {rep['Pos']} · {rep['Age']}yo · {rep['OVR']} OVR</span>
                         </span>
                         <span style="background:{vc}; color:#000; font-weight:800; padding:2px 10px;
                             border-radius:8px; font-size:0.75rem; white-space:nowrap;">{rep['verdict']}</span>
                     </div>
-                    <div style="color:#cbd5e1; font-size:0.85rem; margin-top:8px; line-height:1.5;">{rep['blurb']}</div>
+                    <div style="color:#cbd5e1; font-size:0.85rem; margin-top:8px; line-height:1.5;">{_h(rep['blurb'])}</div>
                     <div style="margin-top:6px;">{source_badge}</div>
                 </div>
                 """, unsafe_allow_html=True)

@@ -153,3 +153,20 @@ def test_the_text_lines_up_with_the_sizes_it_explains():
     """One entry per point, in the same order, or the hover is wrong."""
     values = pd.Series([350, None, 420, "oops"])
     assert len(charts.bubble_text(values)) == len(charts.bubble_size(values))
+
+
+def test_each_metric_gets_its_own_scale():
+    """Per-game averages drew PPG (~25) and yards (~380) on one x-axis,
+    while the comment above it said each metric had its own."""
+    rows = pd.DataFrame([
+        {"Scheme": s, "Metric": m, "Value": v}
+        for s, vals in {"A": (24.0, 380.0, 1.1), "B": (27.5, 401.0, 0.8)}.items()
+        for m, v in zip(("PPG", "Total YPG", "TO/G"), vals)])
+    fig = charts.metric_facets(rows, ["PPG", "Total YPG", "TO/G", "RZ TD %"],
+                               ["#6366f1", "#10b981"])
+    xaxes = [k for k in fig.layout.to_plotly_json() if k.startswith("xaxis")]
+    assert len(xaxes) == 3
+    assert all(fig.layout[k].matches is None for k in xaxes)
+    # Labelled by the metric alone, and a metric with no rows has no row.
+    labels = {a.text for a in fig.layout.annotations}
+    assert labels == {"PPG", "Total YPG", "TO/G"}
