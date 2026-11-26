@@ -1,5 +1,6 @@
+# encoding: utf-8
 """
-Single reader for data/packers_roster.csv.
+Single reader for data/packers_roster.csv and data/commanders_roster_WAS.csv.
 
 `roster.py` and `trade_engine.py` each used to call `pd.read_csv` on this
 file and normalise it their own way. That is the same duplication that
@@ -29,6 +30,23 @@ COLUMN_ALIASES = {
     "Dev Trait": "Dev",
     "Cap Savings": "Savings",
     "Cap Penalty": "Penalty",
+    "name": "Name",
+    "pos": "Pos",
+    "age": "Age",
+    "ovr": "OVR",
+    "spd": "SPD",
+    "acc": "ACC",
+    "agi": "AGI",
+    "cod": "COD",
+    "str": "STR",
+    "awr": "AWR",
+    "team": "Team",
+    "dev": "Dev",
+    "savings": "Savings",
+    "penalty": "Penalty",
+    "morale": "Morale",
+    "composite": "Composite",
+    "role": "Role",
 }
 
 # Madden's in-game label for the tier above Superstar. The trade engine's
@@ -62,7 +80,7 @@ def normalize_position(pos) -> str:
     return POSITION_ALIASES.get(pos_upper, pos_upper)
 
 
-def normalize_roster_df(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_roster_df(df: pd.DataFrame, default_team: str = "GB") -> pd.DataFrame:
     """Rename exported columns to canonical ones and normalise Dev values.
 
     Returns a copy; the caller's frame is left alone.
@@ -80,9 +98,9 @@ def normalize_roster_df(df: pd.DataFrame) -> pd.DataFrame:
     if "Dev" in df.columns:
         df["Dev"] = df["Dev"].replace(DEV_ALIASES)
 
-    # The export is a single team's roster and carries no Team column.
+    # The export is a single team's roster and may carry no Team column.
     if "Team" not in df.columns:
-        df["Team"] = "GB"
+        df["Team"] = default_team
     if "Dev" not in df.columns:
         df["Dev"] = "Normal"
 
@@ -117,9 +135,9 @@ def drop_unrated(df: pd.DataFrame) -> "tuple[pd.DataFrame, list[str]]":
     return df, names
 
 
-def load_roster_csv(path: str) -> pd.DataFrame:
+def load_roster_csv(path: str, default_team: str = "GB") -> pd.DataFrame:
     """Read and normalise the roster CSV at `path`."""
-    return normalize_roster_df(pd.read_csv(path))
+    return normalize_roster_df(pd.read_csv(path), default_team=default_team)
 
 
 def missing_required_columns(df: pd.DataFrame) -> "list[str]":

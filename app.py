@@ -1,3 +1,4 @@
+# encoding: utf-8
 import hashlib
 import io
 import json
@@ -33,12 +34,14 @@ from src import schemes as schemes_mod
 from src import season as season_mod
 from src import sheet_fetch
 from src.roster import (
+    ALL_ROSTERS,
     get_roster,
     get_team_summary,
     ovr_color,
     ovr_label,
     get_position_grades,
     get_cap_summary,
+    load_roster_from_csv_bytes,
     POSITION_ORDER,
     TEAMS,
     POSITION_GROUPS,
@@ -357,6 +360,18 @@ def _sheet_cache_path(url: str) -> str:
     return os.path.join(_DATA_DIR, f"game_logs_sheet_cache_{key}.csv")
 
 
+def _roster_sheet_cache_path(url: str) -> str:
+    key = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:16]
+    return os.path.join(_DATA_DIR, f"roster_sheet_cache_{key}.csv")
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_roster_from_url(url: str, default_team: str = "WAS") -> "tuple[pd.DataFrame, list[str], bytes]":
+    payload = sheet_fetch.fetch_csv(url, _sheet_extra_hosts())
+    roster_df, warnings = load_roster_from_csv_bytes(payload, default_team=default_team)
+    return roster_df, warnings, payload
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def _load_game_log_from_url(url: str) -> "tuple[pd.DataFrame, list[str], bytes]":
     """(prepared log, warnings, the sheet's CSV bytes exactly as served).
@@ -529,6 +544,13 @@ with st.sidebar.expander("📡 Data Import", expanded=True):
         "Or upload CSV/Excel", type=["csv", "xlsx"]
     )
 
+    roster_sheet_url = st.text_input(
+        "Roster Google Sheet CSV URL",
+        value="",
+        placeholder="Paste published Roster CSV link (WAS / GB)",
+        help="Publish your Roster Google Sheet (File → Share → Publish to web → CSV) and paste the URL here.",
+    )
+
     df = None  # will be set by one of the branches
     # Which source the dashboard is showing. The entry form only appends
     # to the local file, so it is only offered when that file is what's
@@ -582,6 +604,35 @@ with st.sidebar.expander("📡 Data Import", expanded=True):
         ]
         df, prep_warnings = _prepare_game_log(pd.DataFrame(data))
         st.info("Using Demo Data")
+
+    _sheet_roster_extra: list[dict] = []
+    if roster_sheet_url and roster_sheet_url.strip():
+        try:
+            _r_df, _r_warns, _r_bytes = _load_roster_from_url(roster_sheet_url.strip())
+            _r_cache = _roster_sheet_cache_path(roster_sheet_url)
+            try:
+                with open(_r_cache, "wb") as _rfh:
+                    _rfh.write(_r_bytes)
+            except OSError:
+                pass
+            for _rw in _r_warns:
+                st.warning(_rw)
+            if not _r_df.empty:
+                _existing = {
+                    (str(r.get("Team", "")).strip(), str(r.get("Name", "")).strip(), str(r.get("Pos", "")).strip())
+                    for _, r in ALL_ROSTERS.iterrows()
+                }
+                for _, _r_row in _r_df.iterrows():
+                    _key = (
+                        str(_r_row.get("Team", "")).strip(),
+                        str(_r_row.get("Name", "")).strip(),
+                        str(_r_row.get("Pos", "")).strip(),
+                    )
+                    if _key not in _existing:
+                        _sheet_roster_extra.append(_r_row.to_dict())
+                st.success(f"📡 Live Roster Sheet Synced — {len(_r_df)} players!")
+        except Exception as _re:
+            st.warning(f"Roster sheet sync failed: {_re}")
 
 for _w in prep_warnings:
     st.warning(_w)
@@ -656,7 +707,7 @@ MY_TEAM = st.sidebar.selectbox(
 # so one visitor's additions never leak into another visitor's view.
 if "ai_gm_players" not in st.session_state:
     st.session_state.ai_gm_players = []
-AI_GM_EXTRA = st.session_state.ai_gm_players
+AI_GM_EXTRA = st.session_state.ai_gm_players + _sheet_roster_extra
 
 if AI_GM_EXTRA:
     # Keep _id (unlike the roster/cap paths, which never expose it to the

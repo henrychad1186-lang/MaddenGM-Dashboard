@@ -1,8 +1,10 @@
+# encoding: utf-8
 """
 Roster Explorer — Browse team rosters with position-group filtering.
-Loads real roster data from data/packers_roster.csv when available.
+Loads real roster data from data/packers_roster.csv and data/commanders_roster_WAS.csv when available.
 """
 
+import io
 import os
 import pandas as pd
 
@@ -67,6 +69,7 @@ def _normalize_pos(pos: str) -> str:
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
+_WAS_ROSTER_CSV = os.path.join(_DATA_DIR, "commanders_roster_WAS.csv")
 
 
 def _demo_roster() -> pd.DataFrame:
@@ -139,7 +142,56 @@ def _load_rosters() -> pd.DataFrame:
     # writable, and "Save to roster CSV" replaced the user's roster with
     # the single demo row.
     SOURCE_COLUMNS[:] = list(raw.columns)
+
+    default_gb_csv = os.path.join(_DATA_DIR, "packers_roster.csv")
+    if (os.path.normcase(os.path.abspath(_ROSTER_CSV))
+            == os.path.normcase(os.path.abspath(default_gb_csv))
+            and os.path.exists(_WAS_ROSTER_CSV)):
+        try:
+            was_raw = pd.read_csv(_WAS_ROSTER_CSV)
+            was_df = roster_csv.normalize_roster_df(was_raw, default_team="WAS")
+            if not roster_csv.missing_required_columns(was_df):
+                was_df, _ = roster_csv.drop_unrated(was_df)
+                if not was_df.empty:
+                    was_df["Pos"] = was_df["Pos"].apply(_normalize_pos)
+                    was_df["Group"] = was_df["Pos"].apply(_assign_group)
+                    df = pd.concat([df, was_df], ignore_index=True)
+        except Exception:                          # noqa: BLE001
+            pass
+
     return df
+
+
+def load_roster_from_csv_bytes(
+    payload: bytes,
+    default_team: str = "WAS",
+) -> "tuple[pd.DataFrame, list[str]]":
+    """Parse and normalise a roster CSV fetched from a Google Sheet URL."""
+    warnings: list[str] = []
+    try:
+        raw = pd.read_csv(io.BytesIO(payload))
+    except Exception as exc:                       # noqa: BLE001
+        return pd.DataFrame(), [f"Could not parse roster CSV ({type(exc).__name__}: {exc})."]
+
+    df = roster_csv.normalize_roster_df(raw, default_team=default_team)
+    missing = roster_csv.missing_required_columns(df)
+    if missing:
+        return pd.DataFrame(), [
+            f"Google Sheet roster is missing required column(s): {', '.join(missing)}."
+        ]
+
+    df, unrated = roster_csv.drop_unrated(df)
+    if unrated:
+        warnings.append(
+            f"Skipped {len(unrated)} row(s) with non-numeric OVR or Age: "
+            f"{', '.join(unrated[:5])}."
+        )
+    if df.empty:
+        return pd.DataFrame(), warnings or ["Google Sheet roster contained no valid player rows."]
+
+    df["Pos"] = df["Pos"].apply(_normalize_pos)
+    df["Group"] = df["Pos"].apply(_assign_group)
+    return df, warnings
 
 
 def validate_roster_df(df: pd.DataFrame) -> list[str]:

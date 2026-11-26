@@ -14,6 +14,7 @@ files = [
     "/src",
     "/data/game_logs.csv",
     "/data/packers_roster.csv",
+    "/data/commanders_roster_WAS.csv",
     "/.streamlit/config.toml",
     "/.posit/publish/MaddenGM-Dashboard-2MLU.toml",
     "/.posit/publish/deployments/deployment-3NVV.toml",

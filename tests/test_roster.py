@@ -102,3 +102,45 @@ class TestCalculatePositionRating:
         rating = _calculate_position_rating("WR", [80, 78, 78, 74, 73, 72])
         assert 77.0 <= rating <= 79.5
 
+
+class TestCommandersRosterAndSheetBytes:
+    """Tests for WAS Commanders roster integration and Google Sheet CSV bytes loader."""
+
+    def test_was_in_teams_and_rosters(self):
+        from src.roster import TEAMS, get_roster, get_cap_summary, get_team_summary
+        from src.trade_engine import DEMO_ROSTERS
+        assert "GB" in TEAMS
+        assert "WAS" in TEAMS
+
+        was_df = get_roster(team="WAS")
+        assert len(was_df) == 24
+        assert "J. Daniels" in set(was_df["Name"])
+        assert "T. McLaurin" in set(was_df["Name"])
+        assert "J. Lane" in set(was_df["Name"])
+
+        cap = get_cap_summary("WAS")
+        assert cap["total_savings"] > 0
+        assert cap["total_penalty"] > 0
+
+        summary = get_team_summary("WAS")
+        assert summary["count"] == 24
+        assert summary["best_player"] == "J. Lane"
+
+        was_trade = DEMO_ROSTERS[DEMO_ROSTERS["Team"] == "WAS"]
+        assert len(was_trade) == 24
+
+    def test_load_roster_from_csv_bytes_handles_lowercase_headers(self):
+        from src.roster import load_roster_from_csv_bytes
+        csv_bytes = (
+            b"name,pos,age,ovr,spd,acc,agi,team,dev,savings,penalty\n"
+            b"J. Daniels,QB,25,85,90,92,90,WAS,X-Factor,$0,$37.8M\n"
+        )
+        df, warnings = load_roster_from_csv_bytes(csv_bytes, default_team="WAS")
+        assert not warnings
+        assert len(df) == 1
+        assert df.iloc[0]["Name"] == "J. Daniels"
+        assert df.iloc[0]["Team"] == "WAS"
+        assert df.iloc[0]["Dev"] == "Superstar X"
+        assert int(df.iloc[0]["OVR"]) == 85
+
+

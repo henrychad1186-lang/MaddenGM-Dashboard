@@ -1,6 +1,7 @@
+# encoding: utf-8
 """
 Trade Engine — Trade value calculations, partner finding, and counter-offers.
-Loads real GB roster from data/packers_roster.csv when available.
+Loads real GB and WAS rosters from data/ when available.
 """
 
 import os
@@ -10,11 +11,13 @@ import math
 from src import roster_csv
 
 # ──────────────────────────────────────────────
-# LOAD ROSTER DATA — Real CSV for GB + Demo for CPU teams
+# LOAD ROSTER DATA — Real CSV for GB/WAS + Demo for CPU teams
 # ──────────────────────────────────────────────
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _ROSTER_CSV = os.path.join(_DATA_DIR, "packers_roster.csv")
+_WAS_ROSTER_CSV = os.path.join(_DATA_DIR, "commanders_roster_WAS.csv")
+_CPU_TEAMS = {"DET", "CHI", "MIN"}
 
 # CPU team demo rosters (for trade partner scanning)
 _CPU_DEMO = [
@@ -98,7 +101,25 @@ def _load_trade_rosters() -> pd.DataFrame:
             gb_df["Scheme"] = "WestCoast"
         # Same normalisation roster.py applies (REDG → EDGE, SAM → OLB...)
         gb_df["Pos"] = gb_df["Pos"].apply(roster_csv.normalize_position)
-        return pd.concat([gb_df, cpu_df], ignore_index=True)
+
+        frames = [gb_df]
+        default_gb_csv = os.path.join(_DATA_DIR, "packers_roster.csv")
+        if (os.path.normcase(os.path.abspath(_ROSTER_CSV))
+                == os.path.normcase(os.path.abspath(default_gb_csv))
+                and os.path.exists(_WAS_ROSTER_CSV)):
+            try:
+                was_df = roster_csv.load_roster_csv(_WAS_ROSTER_CSV, default_team="WAS")
+                was_df, _ = roster_csv.drop_unrated(was_df)
+                if not roster_csv.missing_required_columns(was_df) and not was_df.empty:
+                    if "Scheme" not in was_df.columns:
+                        was_df["Scheme"] = "Spread"
+                    was_df["Pos"] = was_df["Pos"].apply(roster_csv.normalize_position)
+                    frames.append(was_df)
+            except Exception:                      # noqa: BLE001
+                pass
+
+        frames.append(cpu_df)
+        return pd.concat(frames, ignore_index=True)
     except Exception:                              # noqa: BLE001 — see docstring
         return cpu_df
 
@@ -295,7 +316,7 @@ def _ensure_trade_values() -> None:
 # position is treated as unknown rather than as evidence of need. If real
 # full rosters are ever imported, gaps in them become informative again
 # and the original behaviour returns on its own.
-_FULL_ENOUGH_TO_HAVE_GAPS = 20
+_FULL_ENOUGH_TO_HAVE_GAPS = 40
 
 
 def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
@@ -311,6 +332,8 @@ def find_trade_partners(player: dict, user_team: str = "GB") -> list[dict]:
     partners = []
     for team in DEMO_ROSTERS["Team"].unique():
         if team == user_team:
+            continue
+        if "Team" not in player and user_team == "GB" and team not in _CPU_TEAMS:
             continue
 
         team_roster = DEMO_ROSTERS[DEMO_ROSTERS["Team"] == team]
