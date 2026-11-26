@@ -34,6 +34,7 @@ too: `test_roster_loading.py` reloads that module against a temp CSV, so
 what its globals hold depends on test ordering.
 """
 
+import ast
 import logging
 import os
 import pathlib
@@ -186,6 +187,37 @@ def test_cap_what_if_is_not_called_a_cap_position(app):
     assert "Net Cap Position" not in labels
     value = labels["Net if All Released"]
     assert value.startswith(("−$", "+$")), value
+
+
+def _app_tree():
+    return ast.parse(pathlib.Path(_APP).read_text(encoding="utf-8"))
+
+
+def test_style_ovr_exists_whichever_position_group_is_selected():
+    """The Trade Value Leaderboard always uses style_ovr, but it was defined
+    in the else of `if roster_df.empty`. Picking a group with no players
+    raised NameError. Parsed, because the shipped roster fills every group
+    and a run of the app can't reach that state."""
+    tree = _app_tree()
+    for branch in (n for n in ast.walk(tree) if isinstance(n, ast.If)):
+        for node in ast.walk(branch):
+            assert not (isinstance(node, ast.FunctionDef)
+                        and node.name == "style_ovr"), (
+                "style_ovr is defined under a condition again")
+
+
+def test_the_local_game_log_load_is_guarded():
+    """A malformed data/game_logs.csv raised in the sidebar, before any tab
+    existed. Parsed for the same reason: this test must not break the
+    shipped file to find out."""
+    tree = _app_tree()
+    guarded = [
+        call for t in ast.walk(tree) if isinstance(t, ast.Try)
+        for stmt in t.body for call in ast.walk(stmt)
+        if isinstance(call, ast.Call)
+        and getattr(call.func, "id", "") == "_load_game_log_from_disk"
+        and getattr(call.args[0], "id", "") == "_GAME_LOGS_CSV"]
+    assert guarded, "_load_game_log_from_disk(_GAME_LOGS_CSV, ...) is not in a try"
 
 
 def test_peak_win_pct_skips_the_opening_games(app):
