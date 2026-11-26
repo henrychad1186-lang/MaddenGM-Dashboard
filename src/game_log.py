@@ -686,6 +686,32 @@ def _why_not(existing: pd.DataFrame, game_id, fields: dict) -> "str | None":
     return _impossible_pair({**row_for_game(existing, game_id), **fields})
 
 
+# "35-10", with the en/em dashes phones and word processors substitute.
+_SCORE_FINAL = r"^\s*(\d+)\s*[-–—]\s*(\d+)\s*$"
+
+
+def split_score_final(col: pd.Series) -> "tuple[pd.Series, pd.Series, list[str]]":
+    """(points for, points against, notes) from a Score_Final column.
+
+    Parsed one cell at a time. A blank cell is a game with no score yet
+    and is not reported; anything else that isn't a score is named in a
+    note, because once it is blank nothing can tell the two apart.
+    """
+    text = col.astype("string").str.strip()
+    parts = text.str.extract(_SCORE_FINAL)
+    points_for = pd.to_numeric(parts[0], errors="coerce").astype(float)
+    points_against = pd.to_numeric(parts[1], errors="coerce").astype(float)
+    lost = (text.notna() & (text != "") & points_for.isna()).fillna(False)
+    notes = []
+    if lost.any():
+        shown = sorted(set(text[lost]))[:3]
+        notes.append(
+            f"{int(lost.sum())} row(s) have a Score_Final that isn't a score "
+            f"like '35-10' ({', '.join(repr(v) for v in shown)}). Those games "
+            f"have no score; the rest of the log is unaffected.")
+    return points_for, points_against, notes
+
+
 def unreadable_placements(df: pd.DataFrame) -> "list[str]":
     """Season/Week cells holding text that loading is about to discard.
 

@@ -20,12 +20,18 @@ def _ensure_log():
             pass  # read-only filesystem (Streamlit Cloud)
 
 
-def snapshot_roster(team: str, season: int, week: int):
-    """Save current roster OVRs as a progression snapshot."""
+def snapshot_roster(team: str, season: int, week: int,
+                    extra_players: "list[dict] | None" = None):
+    """Save current roster OVRs as a progression snapshot.
+
+    `extra_players` are the session's AI GM additions. Every other roster
+    view includes them, so a snapshot without them left an added rookie
+    out of the Progression tab while he showed everywhere else.
+    """
     from src.roster import get_roster
 
     _ensure_log()
-    roster = get_roster(team, "All")
+    roster = get_roster(team, "All", extra_players)
     if roster.empty:
         return 0
 

@@ -1213,6 +1213,26 @@ def test_the_shipped_log_has_no_unreadable_placements():
     assert game_log.unreadable_placements(pd.read_csv("data/game_logs.csv")) == []
 
 
+# ── Score_Final, one cell at a time ──
+
+
+def test_one_bad_score_final_cell_keeps_the_other_scores():
+    """A whole-column astype(int) failed on one blank or "TBD" cell and
+    left every game without points, a margin or a result."""
+    col = pd.Series(["35-10", "TBD", "", None, "21 – 24", " 17-17 "])
+    pf, pa, notes = game_log.split_score_final(col)
+    assert pf.tolist()[:1] == [35.0] and pa.tolist()[:1] == [10.0]
+    assert pf.tolist()[4:] == [21.0, 17.0] and pa.tolist()[4:] == [24.0, 17.0]
+    assert pf.iloc[1:4].isna().all()
+    # Only the cell holding text is named; blanks are games not yet scored.
+    assert len(notes) == 1 and notes[0].startswith("1 row(s)") and "'TBD'" in notes[0]
+
+
+def test_clean_score_final_column_has_no_notes():
+    pf, pa, notes = game_log.split_score_final(pd.Series(["34-10", "20-27"]))
+    assert notes == [] and (pf - pa).tolist() == [24.0, -7.0]
+
+
 # ── Stat columns holding text ──
 
 
